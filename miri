@@ -5,7 +5,7 @@ ROOT_DIR="$(dirname "$0")"
 TARGET_DIR="$ROOT_DIR"/miri-script/target
 # Prepare cargo invocation.
 # We have to overwrite the toolchain since `+miri` might be activated and not installed.
-TOOLCHAIN="+stable"
+# TOOLCHAIN="+stable"
 CARGO_FLAGS=("-q")
 # If we are being invoked for RA, use JSON output and the default toolchain (to make proc-macros
 # work in RA). This needs a different target dir to avoid mixing up the builds.
