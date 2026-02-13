@@ -2,7 +2,7 @@ use std::collections::hash_map::Entry;
 use std::io::Write;
 use std::path::Path;
 
-use rustc_abi::{Align, CanonAbi, Size};
+use rustc_abi::{Align, CanonAbi, ExternAbi, Size};
 use rustc_ast::expand::allocator::NO_ALLOC_SHIM_IS_UNSTABLE;
 use rustc_data_structures::either::Either;
 use rustc_hir::attrs::Linkage;
@@ -21,6 +21,9 @@ use super::alloc::EvalContextExt as _;
 use super::backtrace::EvalContextExt as _;
 use crate::concurrency::GenmcEvalContextExt as _;
 use crate::helpers::EvalContextExt as _;
+use crate::mirch::{
+    PageState, PageTable, TypedKind, free_allocations, insert_init_mask, type_pages_at,
+};
 use crate::*;
 
 /// Type of dynamic symbols (for `dlsym` et al)
@@ -269,7 +272,7 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
         // When adding a new shim, you should follow the following pattern:
         // ```
         // "shim_name" => {
-        //     let [arg1, arg2, arg3] = this.check_shim(abi, CanonAbi::C , link_name, args)?;
+        //     let [arg1, arg2, arg3] = this.check_shim_sig_lenient(abi, CanonAbi::C , link_name, args)?;
         //     let result = this.shim_name(arg1, arg2, arg3)?;
         //     this.write_scalar(result, dest)?;
         // }
@@ -746,6 +749,196 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 let bytes = std::iter::repeat_n(val, n.try_into().unwrap());
                 this.write_bytes_ptr(ptr_dest, bytes)?;
                 this.write_pointer(ptr_dest, dest)?;
+            }
+
+            // kmiri
+            // Used for tests
+            "kern_miri_record_time" => {
+                use std::time::{SystemTime, UNIX_EPOCH};
+                let [test_id] =
+                    this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                let _test_id = this.read_target_usize(test_id)?;
+                let now = SystemTime::now();
+                let since_epoch = now.duration_since(UNIX_EPOCH).unwrap();
+                this.machine.record.push(since_epoch);
+            }
+            // OS thread operations
+            "kern_miri_get_cpu_local_base" => {
+                let current_cpu = this.machine.threads.active_cpu;
+                this.write_scalar(
+                    Scalar::from_target_usize(
+                        this.machine.threads.cpu_local_base[current_cpu] as u64,
+                        this,
+                    ),
+                    dest,
+                )?;
+            }
+            "kern_miri_set_cpu_local_base" => {
+                let [cpu_base] =
+                    this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                let cpu_base = this.read_target_usize(cpu_base)?;
+                let current_cpu = this.machine.threads.active_cpu;
+                this.machine.threads.cpu_local_base[current_cpu] = cpu_base as usize;
+            }
+            "kern_miri_init_ap" => {
+                let [cpu_id, func, args, task, stack_end, stack_size] =
+                    this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                let cpu_id = this.read_target_usize(cpu_id)?;
+                let start_routine = this.read_pointer(func)?;
+                let func_arg = this.read_immediate(args)?;
+                let task = this.deref_pointer(task)?;
+                let stack_end = this.read_target_usize(stack_end)?;
+                let stack_size = this.read_target_usize(stack_size)?;
+                let id = this.start_regular_thread(
+                    None,
+                    start_routine,
+                    ExternAbi::Rust,
+                    func_arg,
+                    this.machine.layouts.unit,
+                    Some(stack_end - stack_size..stack_end),
+                )?;
+                this.set_ap_init_thread(cpu_id as usize, id);
+                this.machine.thread_map.try_insert(task.ptr().addr(), id).unwrap();
+            }
+            "miri_create_new_thread" => {
+                let [func, args, task, stack_end, stack_size] =
+                    this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                let start_routine = this.read_pointer(func)?;
+                let func_arg = this.read_immediate(args)?;
+                let task = this.deref_pointer(task)?;
+                let stack_end = this.read_target_usize(stack_end)?;
+                let stack_size = this.read_target_usize(stack_size)?;
+                let id = this.start_regular_thread(
+                    None,
+                    start_routine,
+                    ExternAbi::Rust,
+                    func_arg,
+                    this.machine.layouts.unit,
+                    Some(stack_end - stack_size..stack_end),
+                )?;
+                this.machine.thread_map.insert(task.ptr().addr(), id);
+            }
+            "miri_switch_to" => {
+                let [task] = this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                let task = this.deref_pointer(task)?;
+                let Some(thread_id) = this.machine.thread_map.get(&task.ptr().addr()) else {
+                    throw_machine_stop!(TerminationInfo::Abort(
+                        "the program aborted execution due to wrong switch".to_owned()
+                    ))
+                };
+                this.machine.threads.switch_to(*thread_id);
+            }
+            // OS memory
+            "kern_miri_alloc_pages" => {
+                let [paddr, count] =
+                    this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                let paddr = this.read_target_usize(paddr)? as usize;
+                let count = this.read_target_usize(count)? as usize;
+                for i in 0..count {
+                    let addr = paddr + i * mirch::page_size();
+                    mirch::check_page_state(addr, PageState::Unused);
+                    mirch::set_page_state(addr, PageState::Untyped);
+                    insert_init_mask(this, addr, this.machine.get_default_alloc_params());
+                }
+            }
+            "kern_miri_dealloc_pages" => {
+                let [paddr, count] =
+                    this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                let paddr = this.read_target_usize(paddr)? as usize;
+                let count = this.read_target_usize(count)? as usize;
+                free_allocations(this, paddr, count)?;
+            }
+            "kern_miri_zero" => {
+                let [paddr, count] =
+                    this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                let paddr = this.read_target_usize(paddr)? as usize;
+                let count = this.read_target_usize(count)? as usize;
+                let actual_ptr = mirch::paddr_to_mem(paddr);
+                unsafe {
+                    core::ptr::write_bytes(actual_ptr, 0, count * 4096);
+                }
+                let page_size = mirch::page_size();
+                for i in 0..count {
+                    let addr = paddr + i * page_size;
+                    let init_masks = &mut mirch::physical_mem_mut().init_masks;
+                    let mask_allocation = init_masks.get_mut(&addr).unwrap();
+                    // Notify the allocation that it has been initialized.
+                    let _ = mask_allocation
+                        .get_bytes_unchecked_for_overwrite_ptr(this, (0..4096).into());
+                }
+            }
+            "kern_miri_retype_pages" => {
+                let [paddr, count, page_type, type_size] =
+                    this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                let paddr = this.read_target_usize(paddr)? as usize;
+                let count = this.read_target_usize(count)? as usize;
+                let page_type = this.read_target_usize(page_type)? as usize;
+                let type_size = this.read_target_usize(type_size)? as usize;
+                let page_size = mirch::page_size();
+                assert_eq!(page_size % type_size, 0);
+                for page_index in 0..count {
+                    mirch::check_page_state(paddr + page_index * page_size, PageState::Untyped);
+                }
+                type_pages_at(paddr, count, type_size, TypedKind::from_usize(page_type).unwrap())?;
+            }
+            "kern_miri_get_root_page_table" => {
+                let root_paddr = mirch::physical_mem().page_table.as_ref().unwrap().root_paddr();
+                this.write_scalar(Scalar::from_target_usize(root_paddr as u64, this), dest)?;
+            }
+            "kern_miri_set_root_page_table" => {
+                let [paddr] = this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                let paddr = this.read_target_usize(paddr)? as usize;
+                mirch::set_page_table(PageTable::new(paddr));
+            }
+            "kern_miri_get_cpu_local_va" => {
+                let [cpu_local_va] =
+                    this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                let vaddr = this.read_target_usize(cpu_local_va)? as usize;
+                this.write_scalar(Scalar::from_target_usize(vaddr as u64, this), dest)?;
+                // let cpu = this.machine.threads.active_cpu;
+                // if cpu == 0 {
+                //     this.write_scalar(
+                //         Scalar::from_target_usize(vaddr as u64, this),
+                //         dest,
+                //     )?;
+                // } else {
+                //     let actual_vaddr = *this.machine.cpu_alloc.borrow().get(&(cpu, vaddr)).unwrap_or_else(|| {
+                //         println!("something wrong: {:x}", vaddr);
+                //         println!("{:?}", this.machine.cpu_alloc);
+                //         panic!();
+                //     });
+                //     this.write_scalar(
+                //         Scalar::from_target_usize(actual_vaddr as u64, this),
+                //         dest,
+                //     )?;
+                //     // else {
+                //     //     let alloc_id = this.alloc_id_from_addr()
+                //     //     let mut global_state = this.machine.alloc_addresses.borrow_mut();
+                //     //     let old_allocation = {
+                //     //         let alloc_id = global_state.base_ad
+                //     //     };
+                //     //     let allocation = Allocation::uninit()
+                //     // }
+                // }
+            }
+            "kern_miri_copy_untyped" => {
+                let [dst, src, len] =
+                    this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                let mut dst = this.read_target_usize(dst)? as usize;
+                let mut src = this.read_target_usize(src)? as usize;
+                let mut len = this.read_target_usize(len)? as usize;
+                while len > 0 {
+                    let dst_remain = mirch::page_size() - dst % mirch::page_size();
+                    let src_remain = mirch::page_size() - src % mirch::page_size();
+                    let remain = core::cmp::min(dst_remain, src_remain);
+                    let real_dst = mirch::page_walk_or(dst, || dst).unwrap();
+                    let real_src = mirch::page_walk_or(src, || src).unwrap();
+                    let real_len = core::cmp::min(len, remain);
+                    mirch::physical_copy(real_dst, real_src, real_len);
+                    len -= real_len;
+                    src += real_len;
+                    dst += real_len;
+                }
             }
 
             // LLVM intrinsics

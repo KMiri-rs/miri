@@ -20,6 +20,7 @@ use rustc_target::spec::Os;
 use crate::concurrency::GenmcCtx;
 use crate::concurrency::thread::TlsAllocAction;
 use crate::diagnostics::report_leaks;
+use crate::mirch::PhysConfig;
 use crate::shims::{global_ctor, tls};
 use crate::*;
 
@@ -117,6 +118,8 @@ pub struct MiriConfig {
     pub short_fd_operations: bool,
     /// A list of crates that are considered user-relevant.
     pub user_relevant_crates: Vec<String>,
+    /// Configurations for pseudo physical memory.
+    pub pseudo_physical_mem_config: PhysConfig,
 }
 
 impl Default for MiriConfig {
@@ -144,7 +147,8 @@ impl Default for MiriConfig {
             backtrace_style: BacktraceStyle::Short,
             provenance_mode: ProvenanceMode::Default,
             mute_stdout_stderr: false,
-            preemption_rate: 0.01, // 1%
+            // preemption_rate: 0.01, // 1%
+            preemption_rate: 0.0,
             report_progress: None,
             native_lib: vec![],
             native_lib_enable_tracing: false,
@@ -160,6 +164,7 @@ impl Default for MiriConfig {
             float_rounding_error: FloatRoundingErrorMode::Random,
             short_fd_operations: true,
             user_relevant_crates: vec![],
+            pseudo_physical_mem_config: PhysConfig::default(),
         }
     }
 }
@@ -461,6 +466,8 @@ pub fn eval_entry<'tcx>(
     config: &MiriConfig,
     genmc_ctx: Option<Rc<GenmcCtx>>,
 ) -> Result<(), NonZeroI32> {
+    mirch::init_pseudo_physical_mem(config.pseudo_physical_mem_config);
+
     // Copy setting before we move `config`.
     let ignore_leaks = config.ignore_leaks;
 
@@ -473,6 +480,11 @@ pub fn eval_entry<'tcx>(
         }
     };
 
+    unsafe {
+        let page_table = mirch::init_boot_pt();
+        mirch::set_page_table(page_table);
+    }
+
     // Perform the main execution.
     let res: thread::Result<InterpResult<'_, !>> =
         panic::catch_unwind(AssertUnwindSafe(|| ecx.run_threads()));
@@ -480,6 +492,13 @@ pub fn eval_entry<'tcx>(
         ecx.handle_ice();
         panic::resume_unwind(panic_payload)
     });
+
+    let mut index = 0;
+    for time_record in &ecx.machine.record {
+        println!("{}, time: {:?}", index, time_record);
+        index += 1;
+    }
+
     // Obtain the result of the execution. This is always an `Err`, but that doesn't necessarily
     // indicate an error.
     let Err(res) = res.report_err();

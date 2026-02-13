@@ -1,6 +1,7 @@
 //! Global machine state as well as implementation of the interpreter engine
 //! `Machine` trait.
 
+use std::alloc::Layout;
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -40,6 +41,7 @@ use crate::concurrency::sync::SyncObj;
 use crate::concurrency::{
     AllocDataRaceHandler, GenmcCtx, GenmcEvalContextExt as _, GlobalDataRaceHandler, weak_memory,
 };
+use crate::mirch::{self, PageState, TypedKind};
 use crate::*;
 
 /// First real-time signal.
@@ -177,6 +179,8 @@ impl VisitProvenance for FrameExtra<'_> {
 /// Extra memory kinds
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum MiriMemoryKind {
+    /// kernel-managed memory, which is located in pseudo physical memory.
+    Kernel,
     /// `__rust_alloc` memory.
     Rust,
     /// `miri_alloc` memory.
@@ -218,7 +222,7 @@ impl MayLeak for MiriMemoryKind {
     fn may_leak(self) -> bool {
         use self::MiriMemoryKind::*;
         match self {
-            Rust | Miri | C | WinHeap | WinLocal | Runtime => false,
+            Rust | Miri | C | WinHeap | WinLocal | Runtime | Kernel => false,
             Machine | Global | ExternStatic | Tls | Mmap => true,
         }
     }
@@ -230,7 +234,7 @@ impl MiriMemoryKind {
         use self::MiriMemoryKind::*;
         match self {
             // Heap allocations are fine since the `Allocation` is created immediately.
-            Rust | Miri | C | WinHeap | WinLocal | Mmap => true,
+            Rust | Miri | C | WinHeap | WinLocal | Mmap | Kernel => true,
             // Everything else is unclear, let's not show potentially confusing spans.
             Machine | Global | ExternStatic | Tls | Runtime => false,
         }
@@ -241,6 +245,7 @@ impl fmt::Display for MiriMemoryKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use self::MiriMemoryKind::*;
         match self {
+            Kernel => write!(f, "Kernel"),
             Rust => write!(f, "Rust heap"),
             Miri => write!(f, "Miri bare-metal heap"),
             C => write!(f, "C heap"),
@@ -477,6 +482,9 @@ impl<'tcx> PrimitiveLayouts<'tcx> {
     }
 }
 
+/// The number of CPUs that KernMiri emulates.
+pub const CPU_NUM: usize = 2;
+
 /// The machine itself.
 ///
 /// If you add anything here that stores machine values, remember to update
@@ -497,6 +505,9 @@ pub struct MiriMachine<'tcx> {
 
     /// Ptr-int-cast module global data.
     pub alloc_addresses: alloc_addresses::GlobalState,
+
+    /// A set that contains `AllocId`s of cpu-local `Allocation`s
+    pub cpu_local_alloc_set: RefCell<FxHashSet<AllocId>>,
 
     /// Environment variables.
     pub(crate) env_vars: EnvVars<'tcx>,
@@ -535,6 +546,9 @@ pub struct MiriMachine<'tcx> {
 
     /// The set of threads.
     pub(crate) threads: ThreadManager<'tcx>,
+
+    /// Task pointer to `ThreadId` mapping.
+    pub(crate) thread_map: FxHashMap<Size, ThreadId>,
 
     /// Stores which thread is eligible to run on which CPUs.
     /// This has no effect at all, it is just tracked to produce the correct result
@@ -613,6 +627,9 @@ pub struct MiriMachine<'tcx> {
     pub(crate) stack_addr: u64,
     pub(crate) stack_size: u64,
 
+    /// This field have not been used yet.
+    pub(crate) pt_checker: Option<usize>,
+
     /// Whether to collect a backtrace when each allocation is created, just in case it leaks.
     pub(crate) collect_leak_backtraces: bool,
 
@@ -653,6 +670,9 @@ pub struct MiriMachine<'tcx> {
 
     /// Whether Miri artifically introduces short reads/writes on file descriptors.
     pub short_fd_operations: bool,
+
+    /// A record of the time spent in each test (A workaround for evaluation).
+    pub(crate) record: Vec<std::time::Duration>,
 }
 
 impl<'tcx> MiriMachine<'tcx> {
@@ -813,6 +833,10 @@ impl<'tcx> MiriMachine<'tcx> {
             float_nondet: config.float_nondet,
             float_rounding_error: config.float_rounding_error,
             short_fd_operations: config.short_fd_operations,
+            cpu_local_alloc_set: RefCell::new(FxHashSet::default()),
+thread_map: FxHashMap::default(),
+            pt_checker: None,
+            record: Vec::new(),
         }
     }
 
@@ -924,7 +948,7 @@ impl<'tcx> MiriMachine<'tcx> {
             .map(Span::data)
     }
 
-    fn init_allocation(
+    pub fn init_allocation(
         ecx: &MiriInterpCx<'tcx>,
         id: AllocId,
         kind: MemoryKind,
@@ -1045,6 +1069,7 @@ impl VisitProvenance for MiriMachine<'_> {
             float_nondet: _,
             float_rounding_error: _,
             short_fd_operations: _,
+            ..
         } = self;
 
         threads.visit_provenance(visit);
@@ -1407,6 +1432,18 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
     ) -> InterpResult<'tcx, interpret::Pointer<Provenance>> {
         let kind = kind.expect("we set our GLOBAL_KIND so this cannot be None");
         let alloc_id = ptr.provenance.alloc_id();
+
+        if kind == MiriMemoryKind::Global.into() {
+            if let Some(GlobalAlloc::Static(def_id)) = ecx.tcx.try_get_global_alloc(alloc_id) {
+                let attrs = ecx.tcx.codegen_fn_attrs(def_id);
+                if let Some(section) = attrs.link_section {
+                    if section.as_str() == ".cpu_local" {
+                        ecx.machine.cpu_local_alloc_set.borrow_mut().insert(alloc_id);
+                    }
+                }
+            }
+        }
+
         if cfg!(debug_assertions) {
             // The machine promises to never call us on thread-local or extern statics.
             match ecx.tcx.try_get_global_alloc(alloc_id) {
@@ -1473,6 +1510,27 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         })
     }
 
+    fn before_access_global(
+        tcx: TyCtxtAt<'tcx>,
+        machine: &Self,
+        alloc_id: AllocId,
+        _alloc: ConstAllocation<'tcx>,
+        static_def_id: Option<DefId>,
+        _is_write: bool,
+    ) -> InterpResult<'tcx> {
+        let Some(id) = static_def_id else {
+            return interp_ok(());
+        };
+        let attrs = tcx.codegen_fn_attrs(id);
+        if let Some(section) = attrs.link_section {
+            if section.as_str() == ".cpu_local" {
+                machine.cpu_local_alloc_set.borrow_mut().insert(alloc_id);
+            }
+        }
+
+        interp_ok(())
+    }
+
     /// Called to adjust global allocations to the Provenance and AllocExtra of this machine.
     ///
     /// If `alloc` contains pointers, then they are all pointing to globals.
@@ -1487,14 +1545,68 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         alloc: &'b Allocation,
     ) -> InterpResult<'tcx, Cow<'b, Allocation<Self::Provenance, Self::AllocExtra, Self::Bytes>>>
     {
-        let alloc = alloc.adjust_from_tcx(
+        let origin_alloc = alloc.adjust_from_tcx(
             &ecx.tcx,
             |bytes, align| ecx.get_global_alloc_bytes(id, bytes, align),
             |ptr| ecx.global_root_pointer(ptr),
         )?;
         let kind = MiriMemoryKind::Global.into();
-        let extra = MiriMachine::init_allocation(ecx, id, kind, alloc.size(), alloc.align)?;
-        interp_ok(Cow::Owned(alloc.with_extra(extra)))
+        let extra =
+            MiriMachine::init_allocation(ecx, id, kind, origin_alloc.size(), origin_alloc.align)?;
+        // interp_ok(Cow::Owned(origin_alloc.with_extra(extra)))
+
+        // Make sure the original allocation has been allocated an address.
+        let _original_addr = {
+            let this = ecx.eval_context_ref();
+            this.addr_from_alloc_id(id, Some(kind)).unwrap()
+        };
+
+        let alloc_size_usize = origin_alloc.size().bytes_usize();
+        let final_paddr = ecx.machine.alloc_addresses.borrow().get_base_addr(id);
+
+        // Return the corresponding allocation in the pseudo physical memory.
+        let final_alloc = if (final_paddr < mirch::kernel_code_end() as u64)
+            && (final_paddr >= mirch::kernel_static_start_addr() as u64)
+            && alloc_size_usize > 0
+        {
+            let mut new_allocation = mirch::create_allocation_at(
+                final_paddr as usize,
+                Layout::from_size_align(alloc_size_usize, origin_alloc.align.bytes_usize())
+                    .unwrap(),
+                ecx.machine.get_default_alloc_params(),
+            );
+
+            let alloc_range =
+                rustc_middle::mir::interpret::alloc_range(Size::ZERO, origin_alloc.size());
+            let init_mask = origin_alloc.init_mask();
+
+            if !init_mask.is_range_initialized(alloc_range).is_err_and(|range| {
+                range.start == alloc_range.start && range.size == alloc_range.size
+            }) {
+                // Copy context
+                let src_ptr = origin_alloc.get_bytes_unchecked_raw();
+                let dst_ptr = new_allocation.get_bytes_unchecked_raw_mut();
+                unsafe {
+                    core::ptr::copy(src_ptr, dst_ptr, alloc_size_usize);
+                }
+
+                // Copy mask
+                let init_copy = init_mask.prepare_copy((0..alloc_size_usize).into());
+                new_allocation.init_mask_apply_copy(init_copy, alloc_range, 1);
+
+                // Copy provenance
+                // FIXME: not sure if the code here is correct, because provenance API has changed.
+                let provenance_copy =
+                    origin_alloc.provenance().prepare_copy(alloc_range, &[0], ecx);
+                new_allocation.provenance_apply_copy(provenance_copy, alloc_range, 1);
+            }
+
+            new_allocation.with_extra(extra)
+        } else {
+            origin_alloc.with_extra(extra)
+        };
+
+        interp_ok(Cow::Owned(final_alloc))
     }
 
     #[inline(always)]
@@ -1575,6 +1687,16 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         if let Some(borrow_tracker) = &mut alloc_extra.borrow_tracker {
             borrow_tracker.before_memory_write(alloc_id, prov_extra, range, machine)?;
         }
+
+        let address = machine.alloc_addresses.borrow().get_base_addr(alloc_id) as usize;
+        if let PageState::Typed { page_type, type_size: _ } =
+            mirch::physical_mem().page_states[address / mirch::page_size()]
+        {
+            if page_type == TypedKind::PageTable {
+                machine.pt_checker = Some(address - address % mirch::PTE_SIZE);
+            }
+        }
+
         // Delete sync objects that don't like writes.
         // Most of the time, we can just skip this.
         if !alloc_extra.sync_objs.is_empty() {
@@ -1757,6 +1879,8 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         // These are our preemption points.
         // (This will only take effect after the terminator has been executed.)
         ecx.maybe_preempt_active_thread();
+        // Random CPU switches.
+        ecx.maybe_switch_cpu();
 
         // Make sure some time passes.
         ecx.machine.monotonic_clock.tick();
@@ -1772,6 +1896,12 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             let stack_len = ecx.active_thread_stack().len();
             ecx.active_thread_mut().set_top_user_relevant_frame(stack_len - 1);
         }
+
+        // Pushes the stack pointer.
+        let thread = ecx.machine.threads.active_thread_mut();
+        let next_stack_addr = *thread.next_stack_addr.borrow();
+        thread.stack_addr_records.push(next_stack_addr);
+
         interp_ok(())
     }
 
@@ -1822,6 +1952,11 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         // (Cc https://github.com/rust-lang/miri/issues/2266)
         if !ecx.active_thread_stack().is_empty() {
             info!("Continuing in {}", ecx.frame().instance());
+        }
+        // Resumes the stack pointer.
+        let thread = ecx.machine.threads.active_thread_mut();
+        if let Some(next_stack_addr) = thread.stack_addr_records.pop() {
+            *thread.next_stack_addr.borrow_mut() = next_stack_addr;
         }
         res
     }

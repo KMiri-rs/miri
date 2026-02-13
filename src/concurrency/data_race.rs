@@ -1029,7 +1029,8 @@ impl VClockAlloc {
                 | MiriMemoryKind::C
                 | MiriMemoryKind::WinHeap
                 | MiriMemoryKind::WinLocal
-                | MiriMemoryKind::Mmap,
+                | MiriMemoryKind::Mmap
+                | MiriMemoryKind::Kernel,
             )
             | MemoryKind::Stack => {
                 let (alloc_index, clocks) = global.active_thread_state(thread_mgr);
@@ -1205,6 +1206,11 @@ impl VClockAlloc {
         ty: Option<Ty<'_>>,
         machine: &MiriMachine<'_>,
     ) -> InterpResult<'tcx> {
+        // FIXME: does kmiri require other read/write, like for FrameState?
+        if machine.cpu_local_alloc_set.borrow().get(&alloc_id).is_some() {
+            return interp_ok(());
+        }
+
         let current_span = machine.current_user_relevant_span();
         let global = machine.data_race.as_vclocks_ref().unwrap();
         if !global.race_detecting() {
@@ -1247,6 +1253,10 @@ impl VClockAlloc {
         ty: Option<Ty<'_>>,
         machine: &mut MiriMachine<'_>,
     ) -> InterpResult<'tcx> {
+        if machine.cpu_local_alloc_set.borrow().get(&alloc_id).is_some() {
+            return interp_ok(());
+        }
+
         let current_span = machine.current_user_relevant_span();
         let global = machine.data_race.as_vclocks_mut().unwrap();
         if !global.race_detecting() {
