@@ -1,9 +1,8 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use crate::mirch::{page_size, paddr_to_mem};
+use crate::mirch::{paddr_to_mem, page_size};
 use crate::*;
-
 
 pub const NR_LEVELS: usize = 4;
 pub const PTE_SIZE: usize = 8;
@@ -21,26 +20,32 @@ pub fn kernel_code_vaddr_to_paddr(vaddr: usize) -> usize {
 }
 
 /// Inits a boot page table to enable paging system at the pseudo physical memory.
-/// 
+///
 /// Boot pagetable support up to 1GB of pseudo physical memory.
 pub unsafe fn init_boot_pt() -> PageTable {
     let page_table = PageTable::new(BOOT_PT_PADDR);
 
     *(paddr_to_mem(BOOT_PT_PADDR) as *mut usize) = BOOT_PT_LINEAR_PDPT_PADDR;
-    
+
     // linear mapping
-    let pt_linear_offset_level_4 = PageTable::pte_index(mirch::boot_pt_linear_mapping_base_vaddr(), 4);
-    let pt_linear_offset_level_3 = PageTable::pte_index(mirch::boot_pt_linear_mapping_base_vaddr(), 3);
-    
-    *(paddr_to_mem(BOOT_PT_PADDR) as *mut usize).add(pt_linear_offset_level_4) = BOOT_PT_LINEAR_PDPT_PADDR;
-    *(paddr_to_mem(BOOT_PT_LINEAR_PDPT_PADDR) as *mut usize).add(pt_linear_offset_level_3) = 0x0 | PageTable::HUGE_BIT_MASK;
+    let pt_linear_offset_level_4 =
+        PageTable::pte_index(mirch::boot_pt_linear_mapping_base_vaddr(), 4);
+    let pt_linear_offset_level_3 =
+        PageTable::pte_index(mirch::boot_pt_linear_mapping_base_vaddr(), 3);
+
+    *(paddr_to_mem(BOOT_PT_PADDR) as *mut usize).add(pt_linear_offset_level_4) =
+        BOOT_PT_LINEAR_PDPT_PADDR;
+    *(paddr_to_mem(BOOT_PT_LINEAR_PDPT_PADDR) as *mut usize).add(pt_linear_offset_level_3) =
+        0x0 | PageTable::HUGE_BIT_MASK;
 
     // kernel code mapping
     let pt_kernel_offset_level_4 = PageTable::pte_index(mirch::kernel_code_base_vaddr(), 4);
     let pt_kernel_offset_level_3 = PageTable::pte_index(mirch::kernel_code_base_vaddr(), 3);
 
-    *(paddr_to_mem(BOOT_PT_PADDR) as *mut usize).add(pt_kernel_offset_level_4) = BOOT_PT_KERNEL_PDPT_PADDR;
-    *(paddr_to_mem(BOOT_PT_KERNEL_PDPT_PADDR) as *mut usize).add(pt_kernel_offset_level_3) = 0x0 | PageTable::HUGE_BIT_MASK;
+    *(paddr_to_mem(BOOT_PT_PADDR) as *mut usize).add(pt_kernel_offset_level_4) =
+        BOOT_PT_KERNEL_PDPT_PADDR;
+    *(paddr_to_mem(BOOT_PT_KERNEL_PDPT_PADDR) as *mut usize).add(pt_kernel_offset_level_3) =
+        0x0 | PageTable::HUGE_BIT_MASK;
 
     super::type_pages_at(BOOT_PT_PADDR, 3, PTE_SIZE, mirch::TypedKind::PageTable).unwrap();
 
@@ -64,22 +69,18 @@ impl PageTable {
     const PTE_INDEX_BITS: usize = Self::PTE_PER_PAGE.ilog2() as usize;
     const LEVEL_MASK: usize = Self::PTE_PER_PAGE - 1;
     const HUGE_BIT_MASK: usize = 1 << 7;
- 
+
     /// The index of a VA's PTE in a page table node at the given level.
     fn pte_index(va: usize, level: usize) -> usize {
-        va >> (page_size().ilog2() as usize + Self::PTE_INDEX_BITS * (level - 1))
-            & Self::LEVEL_MASK
+        va >> (page_size().ilog2() as usize + Self::PTE_INDEX_BITS * (level - 1)) & Self::LEVEL_MASK
     }
 
     /// Creates a new `PageTable` where `root_paddr` is `paddr`.
     /// Used when OS invoking `kern_miri_set_root_page_table`.
     pub fn new(paddr: usize) -> Self {
-        Self {
-            root_paddr: paddr,
-            typed_page_paddr_to_vaddr: RefCell::new(BTreeMap::new()),
-        }
+        Self { root_paddr: paddr, typed_page_paddr_to_vaddr: RefCell::new(BTreeMap::new()) }
     }
-    
+
     /// Gets the root paddr of this `PageTable`.
     /// Used when OS invoking `kern_miri_get_root_page_table`
     pub fn root_paddr(&self) -> usize {
@@ -108,12 +109,13 @@ impl PageTable {
             }
         }
 
-        let page_offset = vaddr & ((super::page_size() << (current_level * Self::PTE_INDEX_BITS)) - 1) ;
+        let page_offset =
+            vaddr & ((super::page_size() << (current_level * Self::PTE_INDEX_BITS)) - 1);
         Some(current_paddr + page_offset)
     }
 
     /// Converts a physical address to a virtual address.
-    /// 
+    ///
     /// TODO: This function is not used in the current implementation.
     /// It needs to work with a mechanism that adds a reverse mapping.
     pub fn paddr_to_vaddr(&self, paddr: usize) -> Option<usize> {
@@ -121,3 +123,4 @@ impl PageTable {
         map.get(&paddr).map(|vaddr| *vaddr)
     }
 }
+
