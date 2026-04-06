@@ -40,6 +40,9 @@
     clippy::needless_lifetimes,
     clippy::too_long_first_doc_paragraph,
     clippy::len_zero,
+    clippy::as_conversions,
+    unsafe_op_in_unsafe_fn,
+    unused,
     // We don't use translatable diagnostics
     rustc::diagnostic_outside_of_impl,
     // We are not implementing queries here so it's fine
