@@ -231,7 +231,7 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 let base_addr = *next_stack_addr - info.size.bytes().max(1);
                 let base_addr = base_addr - base_addr % info.align.bytes();
 
-                if base_addr < thread.stack_bottom as u64 {
+                if base_addr < thread.stack_bottom {
                     throw_exhaust!(AddressSpaceFull);
                 }
                 *next_stack_addr = base_addr;
@@ -515,9 +515,10 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     this.addr_from_alloc_id_uncached(global_state, alloc_id, memory_kind)?;
                 trace!("Assigning base address {:#x} to allocation {:?}", base_vaddr, alloc_id);
 
-                // kmiri: vaddr to paddr
+                // kmiri: vaddr to paddr; or just base address if not appropriate
                 let base_addr = mirch::page_walk_or(base_vaddr as usize, || {
-                    kernel_code_vaddr_to_paddr(base_vaddr as usize)
+                    mirch::try_kernel_code_vaddr_to_paddr(base_vaddr as usize)
+                        .unwrap_or(base_vaddr as usize)
                 })
                 .unwrap() as u64;
 
@@ -757,7 +758,8 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let base_addr = *this.machine.alloc_addresses.borrow().base_addr.get(&alloc_id).unwrap();
 
         let actual_addr = mirch::page_walk_or(addr.bytes_usize(), || {
-            kernel_code_vaddr_to_paddr(addr.bytes_usize())
+            // kernel_code_vaddr_to_paddr(addr.bytes_usize())
+            mirch::try_kernel_code_vaddr_to_paddr(addr.bytes_usize()).unwrap_or(addr.bytes_usize())
         })
         .unwrap() as u64;
 
