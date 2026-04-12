@@ -1901,6 +1901,13 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         let thread = ecx.machine.threads.active_thread_mut();
         let next_stack_addr = *thread.next_stack_addr.borrow();
         thread.stack_addr_records.push(next_stack_addr);
+        let stack = thread
+            .stack_addr_records
+            .iter()
+            .map(|addr| format!("  {addr:#x}"))
+            .collect::<Vec<String>>()
+            .join(",\n");
+        println!("stack (push):\n{stack}");
 
         interp_ok(())
     }
@@ -1958,6 +1965,13 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         if let Some(next_stack_addr) = thread.stack_addr_records.pop() {
             *thread.next_stack_addr.borrow_mut() = next_stack_addr;
         }
+        let stack = thread
+            .stack_addr_records
+            .iter()
+            .map(|addr| format!("  {addr:#x}"))
+            .collect::<Vec<String>>()
+            .join(",\n");
+        println!("stack (pop):\n{stack}");
         res
     }
 
