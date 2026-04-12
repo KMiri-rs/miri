@@ -237,7 +237,7 @@ impl<'tcx> Thread<'tcx> {
     }
 
     /// Get the name of the current thread for display purposes; will include thread ID if not set.
-    fn thread_display_name(&self, id: ThreadId) -> String {
+    pub fn thread_display_name(&self, id: ThreadId) -> String {
         if let Some(ref thread_name) = self.thread_name {
             String::from_utf8_lossy(thread_name).into_owned()
         } else {
