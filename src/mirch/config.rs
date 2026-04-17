@@ -198,4 +198,3 @@ pub fn kernel_code_base_vaddr() -> usize {
 pub fn boot_pt_linear_mapping_base_vaddr() -> usize {
     config().boot_pt_linear_mapping_base_vaddr
 }
-
