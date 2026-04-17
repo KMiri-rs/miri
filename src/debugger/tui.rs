@@ -1045,18 +1045,19 @@ fn render_locals_pane(
         .unwrap_or_else(|| state.locals.as_slice());
 
     let rows = selected_locals.iter().skip(scroll.locals_scroll).map(|local| {
-        let value_style = match local.kind {
+        let value_style = match local.state {
             LocalKind::Dead => Style::default().fg(THEME_DIM),
             LocalKind::Uninitialized => Style::default().fg(THEME_ERR).add_modifier(Modifier::BOLD),
             LocalKind::Pointer => Style::default().fg(THEME_WARN).add_modifier(Modifier::BOLD),
             LocalKind::Initialized => Style::default().fg(THEME_OK),
         };
-        let name_style = if local.kind == LocalKind::Dead {
+        let name_style = if local.state == LocalKind::Dead {
             Style::default().fg(THEME_DIM)
         } else {
             Style::default().fg(THEME_ACCENT_SOFT)
         };
         Row::new([
+            Cell::from(local.idx.clone()).style(name_style),
             Cell::from(local.name.clone()).style(name_style),
             Cell::from(local.ty.clone()).style(Style::default().fg(THEME_DIM)),
             Cell::from(hscroll_text(&local.value, scroll.locals_hscroll)).style(value_style),
@@ -1065,10 +1066,15 @@ fn render_locals_pane(
 
     let table = Table::new(
         rows,
-        [Constraint::Length(10), Constraint::Percentage(20), Constraint::Percentage(70)],
+        [
+            Constraint::Length(10),
+            Constraint::Percentage(15),
+            Constraint::Percentage(20),
+            Constraint::Percentage(55),
+        ],
     )
     .header(
-        Row::new(["Local", "Type", "Value"])
+        Row::new(["Local", "Name", "Type", "Value"])
             .style(Style::default().fg(THEME_ACCENT).add_modifier(Modifier::BOLD)),
     )
     .block(
