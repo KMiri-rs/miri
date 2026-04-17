@@ -1,4 +1,5 @@
 use rustc_data_structures::either::Either;
+use rustc_middle::mir;
 
 use crate::*;
 
@@ -19,10 +20,11 @@ pub struct MirLocation {
 
 #[derive(Clone, Debug)]
 pub struct LocalInfo {
+    pub idx: String,
     pub name: String,
     pub value: String,
     pub ty: String,
-    pub kind: LocalKind,
+    pub state: LocalKind,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,13 +125,33 @@ fn capture_locals(frame: &Frame<'_, Provenance, FrameExtra<'_>>) -> Vec<LocalInf
         .iter()
         .enumerate()
         .map(|(idx, local)| {
-            let local_idx = rustc_middle::mir::Local::from_usize(idx);
-            let local_decl = &frame.body().local_decls[local_idx];
+            let local_idx = mir::Local::from_usize(idx);
+            let body = frame.body();
+            let local_decl = &body.local_decls[local_idx];
             let raw = format!("{local:?}");
             let (value, kind) = prettify_local_value(&raw, &local_decl.ty.to_string());
-            LocalInfo { name: format!("_{idx}"), value, ty: local_decl.ty.to_string(), kind }
+            LocalInfo {
+                idx: format!("_{idx}"),
+                name: find_name_for_local(body, local_idx)
+                    .map(|x| x.to_string())
+                    .unwrap_or_default(),
+                value,
+                ty: local_decl.ty.to_string(),
+                state: kind,
+            }
         })
         .collect()
+}
+
+pub fn find_name_for_local(body: &mir::Body<'_>, local: mir::Local) -> Option<rustc_span::Symbol> {
+    body.var_debug_info.iter().find_map(|var_info| {
+        if let mir::VarDebugInfoContents::Place(place) = var_info.value {
+            if place.local == local && place.projection.as_slice().is_empty() {
+                return Some(var_info.name);
+            }
+        }
+        None
+    })
 }
 
 fn capture_frame(
@@ -193,9 +215,9 @@ fn capture_memory(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<MemoryInf
         });
     }
 
-    for local in locals.iter().filter(|l| l.kind == LocalKind::Pointer).take(16) {
+    for local in locals.iter().filter(|l| l.state == LocalKind::Pointer).take(16) {
         entries
-            .push(MemoryInfo { name: format!("ptr {}", local.name), detail: local.value.clone() });
+            .push(MemoryInfo { name: format!("ptr {}", local.idx), detail: local.value.clone() });
     }
 
     entries
