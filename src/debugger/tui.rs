@@ -1,17 +1,21 @@
 use std::collections::VecDeque;
 use std::io;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseEventKind,
 };
 use crossterm::execute;
-use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode};
-use std::time::{Duration, Instant};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table, Wrap};
+use ratatui::widgets::{
+    Block, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table, Wrap,
+};
 use ratatui::{Frame, Terminal};
 
 use super::channel::{CommandSender, StateReceiver};
@@ -100,7 +104,10 @@ struct RunTargetState {
     query: String,
 }
 
-pub fn spawn_tui(state_rx: StateReceiver, command_tx: CommandSender) -> std::thread::JoinHandle<()> {
+pub fn spawn_tui(
+    state_rx: StateReceiver,
+    command_tx: CommandSender,
+) -> std::thread::JoinHandle<()> {
     std::thread::Builder::new()
         .name("miri-debugger-tui".to_string())
         .spawn(move || {
@@ -160,9 +167,7 @@ fn tui_loop(
         let mut reverse_index: Option<usize> = None;
 
         if matches!(mode, RunMode::RunToFrame)
-            && run_to_frame_target
-                .as_ref()
-                .is_some_and(|target| state_has_frame(&state, target))
+            && run_to_frame_target.as_ref().is_some_and(|target| state_has_frame(&state, target))
         {
             mode = RunMode::Step;
             run_to_frame_target = None;
@@ -173,8 +178,8 @@ fn tui_loop(
             || matches!(mode, RunMode::RunToFrame)
             || matches!(mode, RunMode::RunToEnd)
         {
-            let search_cursor_visible =
-                search.editing && (blink_epoch.elapsed().as_millis() / CURSOR_BLINK_MS).is_multiple_of(2);
+            let search_cursor_visible = search.editing
+                && (blink_epoch.elapsed().as_millis() / CURSOR_BLINK_MS).is_multiple_of(2);
             terminal.draw(|frame| {
                 render(
                     frame,
@@ -209,8 +214,8 @@ fn tui_loop(
         }
 
         loop {
-            let search_cursor_visible =
-                search.editing && (blink_epoch.elapsed().as_millis() / CURSOR_BLINK_MS).is_multiple_of(2);
+            let search_cursor_visible = search.editing
+                && (blink_epoch.elapsed().as_millis() / CURSOR_BLINK_MS).is_multiple_of(2);
             terminal.draw(|frame| {
                 render(
                     frame,
@@ -298,7 +303,9 @@ fn tui_loop(
                         run_target.query.clear();
                     }
                     KeyCode::Char('p') => {
-                        if let Some(target) = selected_stack_fn_name(&display_state, &search, &scroll) {
+                        if let Some(target) =
+                            selected_stack_fn_name(&display_state, &search, &scroll)
+                        {
                             reverse_index = None;
                             run_to_frame_target = Some(target.clone());
                             mode = RunMode::RunToFrame;
@@ -321,22 +328,18 @@ fn tui_loop(
                     KeyCode::Char(']') => {
                         scroll.status_hscroll = scroll.status_hscroll.saturating_add(1);
                     }
-                    KeyCode::Esc => {
+                    KeyCode::Esc =>
                         if !search.query.is_empty() {
                             search = StackSearchState::default();
-                        }
-                    }
+                        },
                     KeyCode::Char('n') | KeyCode::Char(' ') => {
                         if let Some(idx) = reverse_index {
                             if idx + 1 < history.len() {
                                 let next = idx + 1;
                                 if let Some(snapshot) = history.get(next) {
                                     display_state = snapshot.clone();
-                                    reverse_index = if next + 1 == history.len() {
-                                        None
-                                    } else {
-                                        Some(next)
-                                    };
+                                    reverse_index =
+                                        if next + 1 == history.len() { None } else { Some(next) };
                                     refresh_stack_search(&display_state, &mut scroll, &mut search);
                                 }
                                 continue;
@@ -383,50 +386,52 @@ fn tui_loop(
                         break;
                     }
                     KeyCode::Tab => focus = focus.next(),
-                    KeyCode::Up => match focus {
-                        FocusPane::Stack => {
-                            step_stack_selection(&display_state, &search, &mut scroll, false);
-                        }
-                        FocusPane::Mir => {
-                            scroll.mir_scroll = scroll.mir_scroll.saturating_sub(1);
-                        }
-                        FocusPane::Locals => {
-                            scroll.locals_scroll = scroll.locals_scroll.saturating_sub(1);
-                        }
-                        FocusPane::Memory => {
-                            scroll.memory_scroll = scroll.memory_scroll.saturating_sub(1);
-                        }
-                        FocusPane::Output => {
-                            scroll.output_scroll = scroll.output_scroll.saturating_sub(1);
-                        }
-                    },
-                    KeyCode::Down => match focus {
-                        FocusPane::Stack => {
-                            step_stack_selection(&display_state, &search, &mut scroll, true);
-                        }
-                        FocusPane::Mir => {
-                            scroll.mir_scroll = scroll.mir_scroll.saturating_add(1);
-                        }
-                        FocusPane::Locals => {
-                            if !display_state.locals.is_empty() {
-                                let max = display_state.locals.len() - 1;
-                                scroll.locals_scroll = scroll.locals_scroll.saturating_add(1).min(max);
+                    KeyCode::Up =>
+                        match focus {
+                            FocusPane::Stack => {
+                                step_stack_selection(&display_state, &search, &mut scroll, false);
                             }
-                        }
-                        FocusPane::Memory => {
-                            if !display_state.memory.is_empty() {
-                                let max = display_state.memory.len() - 1;
-                                scroll.memory_scroll = scroll.memory_scroll.saturating_add(1).min(max);
+                            FocusPane::Mir => {
+                                scroll.mir_scroll = scroll.mir_scroll.saturating_sub(1);
                             }
-                        }
-                        FocusPane::Output => {
-                            if !display_state.output.is_empty() {
-                                let max = display_state.output.len() - 1;
-                                scroll.output_scroll = scroll.output_scroll.saturating_add(1).min(max);
+                            FocusPane::Locals => {
+                                scroll.locals_scroll = scroll.locals_scroll.saturating_sub(1);
                             }
-                        }
-                    },
-                    KeyCode::Left => {
+                            FocusPane::Memory => {
+                                scroll.memory_scroll = scroll.memory_scroll.saturating_sub(1);
+                            }
+                            FocusPane::Output => {
+                                scroll.output_scroll = scroll.output_scroll.saturating_sub(1);
+                            }
+                        },
+                    KeyCode::Down =>
+                        match focus {
+                            FocusPane::Stack => {
+                                step_stack_selection(&display_state, &search, &mut scroll, true);
+                            }
+                            FocusPane::Mir => {
+                                scroll.mir_scroll = scroll.mir_scroll.saturating_add(1);
+                            }
+                            FocusPane::Locals =>
+                                if !display_state.locals.is_empty() {
+                                    let max = display_state.locals.len() - 1;
+                                    scroll.locals_scroll =
+                                        scroll.locals_scroll.saturating_add(1).min(max);
+                                },
+                            FocusPane::Memory =>
+                                if !display_state.memory.is_empty() {
+                                    let max = display_state.memory.len() - 1;
+                                    scroll.memory_scroll =
+                                        scroll.memory_scroll.saturating_add(1).min(max);
+                                },
+                            FocusPane::Output =>
+                                if !display_state.output.is_empty() {
+                                    let max = display_state.output.len() - 1;
+                                    scroll.output_scroll =
+                                        scroll.output_scroll.saturating_add(1).min(max);
+                                },
+                        },
+                    KeyCode::Left =>
                         match focus {
                             FocusPane::Stack => {
                                 scroll.stack_hscroll = scroll.stack_hscroll.saturating_sub(1);
@@ -443,9 +448,8 @@ fn tui_loop(
                             FocusPane::Output => {
                                 scroll.output_hscroll = scroll.output_hscroll.saturating_sub(1);
                             }
-                        }
-                    }
-                    KeyCode::Right => {
+                        },
+                    KeyCode::Right =>
                         match focus {
                             FocusPane::Stack => {
                                 scroll.stack_hscroll = scroll.stack_hscroll.saturating_add(1);
@@ -462,10 +466,13 @@ fn tui_loop(
                             FocusPane::Output => {
                                 scroll.output_hscroll = scroll.output_hscroll.saturating_add(1);
                             }
-                        }
-                    }
+                        },
                     KeyCode::Char(c)
-                        if c.is_ascii_alphanumeric() || c == '_' || c == ':' || c == '<' || c == '>' =>
+                        if c.is_ascii_alphanumeric()
+                            || c == '_'
+                            || c == ':'
+                            || c == '<'
+                            || c == '>' =>
                     {
                         run_target.editing = true;
                         run_target.query.clear();
@@ -501,7 +508,6 @@ fn tui_loop(
                     _ => {}
                 }
             }
-
         }
     }
 
@@ -512,8 +518,8 @@ fn tui_loop(
         let mut display_state = state.clone();
         let mut reverse_index: Option<usize> = None;
         loop {
-            let search_cursor_visible =
-                search.editing && (blink_epoch.elapsed().as_millis() / CURSOR_BLINK_MS).is_multiple_of(2);
+            let search_cursor_visible = search.editing
+                && (blink_epoch.elapsed().as_millis() / CURSOR_BLINK_MS).is_multiple_of(2);
             terminal.draw(|frame| {
                 render(
                     frame,
@@ -574,22 +580,18 @@ fn tui_loop(
                             refresh_stack_search(&display_state, &mut scroll, &mut search);
                         }
                     }
-                    KeyCode::Char('n') | KeyCode::Char(' ') => {
+                    KeyCode::Char('n') | KeyCode::Char(' ') =>
                         if let Some(idx) = reverse_index {
                             if idx + 1 < history.len() {
                                 let next = idx + 1;
                                 if let Some(snapshot) = history.get(next) {
                                     display_state = snapshot.clone();
-                                    reverse_index = if next + 1 == history.len() {
-                                        None
-                                    } else {
-                                        Some(next)
-                                    };
+                                    reverse_index =
+                                        if next + 1 == history.len() { None } else { Some(next) };
                                     refresh_stack_search(&display_state, &mut scroll, &mut search);
                                 }
                             }
-                        }
-                    }
+                        },
                     KeyCode::Char('/') => {
                         focus = FocusPane::Stack;
                         search.editing = true;
@@ -606,56 +608,57 @@ fn tui_loop(
                     KeyCode::Char(']') => {
                         scroll.status_hscroll = scroll.status_hscroll.saturating_add(1);
                     }
-                    KeyCode::Esc => {
+                    KeyCode::Esc =>
                         if !search.query.is_empty() {
                             search = StackSearchState::default();
-                        }
-                    }
+                        },
                     KeyCode::Tab => focus = focus.next(),
-                    KeyCode::Up => match focus {
-                        FocusPane::Stack => {
-                            step_stack_selection(&display_state, &search, &mut scroll, false);
-                        }
-                        FocusPane::Mir => {
-                            scroll.mir_scroll = scroll.mir_scroll.saturating_sub(1);
-                        }
-                        FocusPane::Locals => {
-                            scroll.locals_scroll = scroll.locals_scroll.saturating_sub(1);
-                        }
-                        FocusPane::Memory => {
-                            scroll.memory_scroll = scroll.memory_scroll.saturating_sub(1);
-                        }
-                        FocusPane::Output => {
-                            scroll.output_scroll = scroll.output_scroll.saturating_sub(1);
-                        }
-                    },
-                    KeyCode::Down => match focus {
-                        FocusPane::Stack => {
-                            step_stack_selection(&display_state, &search, &mut scroll, true);
-                        }
-                        FocusPane::Mir => {
-                            scroll.mir_scroll = scroll.mir_scroll.saturating_add(1);
-                        }
-                        FocusPane::Locals => {
-                            if !display_state.locals.is_empty() {
-                                let max = display_state.locals.len() - 1;
-                                scroll.locals_scroll = scroll.locals_scroll.saturating_add(1).min(max);
+                    KeyCode::Up =>
+                        match focus {
+                            FocusPane::Stack => {
+                                step_stack_selection(&display_state, &search, &mut scroll, false);
                             }
-                        }
-                        FocusPane::Memory => {
-                            if !display_state.memory.is_empty() {
-                                let max = display_state.memory.len() - 1;
-                                scroll.memory_scroll = scroll.memory_scroll.saturating_add(1).min(max);
+                            FocusPane::Mir => {
+                                scroll.mir_scroll = scroll.mir_scroll.saturating_sub(1);
                             }
-                        }
-                        FocusPane::Output => {
-                            if !display_state.output.is_empty() {
-                                let max = display_state.output.len() - 1;
-                                scroll.output_scroll = scroll.output_scroll.saturating_add(1).min(max);
+                            FocusPane::Locals => {
+                                scroll.locals_scroll = scroll.locals_scroll.saturating_sub(1);
                             }
-                        }
-                    },
-                    KeyCode::Left => {
+                            FocusPane::Memory => {
+                                scroll.memory_scroll = scroll.memory_scroll.saturating_sub(1);
+                            }
+                            FocusPane::Output => {
+                                scroll.output_scroll = scroll.output_scroll.saturating_sub(1);
+                            }
+                        },
+                    KeyCode::Down =>
+                        match focus {
+                            FocusPane::Stack => {
+                                step_stack_selection(&display_state, &search, &mut scroll, true);
+                            }
+                            FocusPane::Mir => {
+                                scroll.mir_scroll = scroll.mir_scroll.saturating_add(1);
+                            }
+                            FocusPane::Locals =>
+                                if !display_state.locals.is_empty() {
+                                    let max = display_state.locals.len() - 1;
+                                    scroll.locals_scroll =
+                                        scroll.locals_scroll.saturating_add(1).min(max);
+                                },
+                            FocusPane::Memory =>
+                                if !display_state.memory.is_empty() {
+                                    let max = display_state.memory.len() - 1;
+                                    scroll.memory_scroll =
+                                        scroll.memory_scroll.saturating_add(1).min(max);
+                                },
+                            FocusPane::Output =>
+                                if !display_state.output.is_empty() {
+                                    let max = display_state.output.len() - 1;
+                                    scroll.output_scroll =
+                                        scroll.output_scroll.saturating_add(1).min(max);
+                                },
+                        },
+                    KeyCode::Left =>
                         match focus {
                             FocusPane::Stack => {
                                 scroll.stack_hscroll = scroll.stack_hscroll.saturating_sub(1);
@@ -672,9 +675,8 @@ fn tui_loop(
                             FocusPane::Output => {
                                 scroll.output_hscroll = scroll.output_hscroll.saturating_sub(1);
                             }
-                        }
-                    }
-                    KeyCode::Right => {
+                        },
+                    KeyCode::Right =>
                         match focus {
                             FocusPane::Stack => {
                                 scroll.stack_hscroll = scroll.stack_hscroll.saturating_add(1);
@@ -691,10 +693,13 @@ fn tui_loop(
                             FocusPane::Output => {
                                 scroll.output_hscroll = scroll.output_hscroll.saturating_add(1);
                             }
-                        }
-                    }
+                        },
                     KeyCode::Char(c)
-                        if c.is_ascii_alphanumeric() || c == '_' || c == ':' || c == '<' || c == '>' =>
+                        if c.is_ascii_alphanumeric()
+                            || c == '_'
+                            || c == ':'
+                            || c == '<'
+                            || c == '>' =>
                     {
                         run_target.editing = true;
                         run_target.query.clear();
@@ -734,9 +739,10 @@ fn tui_loop(
     } else {
         // No snapshot was received before the interpreter terminated. Keep a minimal
         // end screen open so users can still quit explicitly.
-        let text = Paragraph::new("Program finished before first debugger snapshot. Press q to close.")
-            .block(Block::default().title("Miri Debugger").borders(Borders::ALL))
-            .wrap(Wrap { trim: true });
+        let text =
+            Paragraph::new("Program finished before first debugger snapshot. Press q to close.")
+                .block(Block::default().title("Miri Debugger").borders(Borders::ALL))
+                .wrap(Wrap { trim: true });
 
         loop {
             terminal.draw(|frame| frame.render_widget(text.clone(), frame.area()))?;
@@ -861,12 +867,11 @@ fn scroll_up(scroll: &mut UiScrollState, pane: FocusPane) {
 
 fn scroll_down(state: &DebuggerState, scroll: &mut UiScrollState, pane: FocusPane) {
     match pane {
-        FocusPane::Stack => {
+        FocusPane::Stack =>
             if !state.stack_frames.is_empty() {
                 let max = state.stack_frames.len() - 1;
                 scroll.stack_index = scroll.stack_index.saturating_add(1).min(max);
-            }
-        }
+            },
         FocusPane::Mir => {
             scroll.mir_scroll = scroll.mir_scroll.saturating_add(1);
         }
@@ -881,18 +886,16 @@ fn scroll_down(state: &DebuggerState, scroll: &mut UiScrollState, pane: FocusPan
                 scroll.locals_scroll = scroll.locals_scroll.saturating_add(1).min(max);
             }
         }
-        FocusPane::Memory => {
+        FocusPane::Memory =>
             if !state.memory.is_empty() {
                 let max = state.memory.len() - 1;
                 scroll.memory_scroll = scroll.memory_scroll.saturating_add(1).min(max);
-            }
-        }
-        FocusPane::Output => {
+            },
+        FocusPane::Output =>
             if !state.output.is_empty() {
                 let max = state.output.len() - 1;
                 scroll.output_scroll = scroll.output_scroll.saturating_add(1).min(max);
-            }
-        }
+            },
     }
 }
 
@@ -914,11 +917,7 @@ fn render_stack_pane(
     search_cursor_visible: bool,
 ) {
     let search_display = if search.editing {
-        if search_cursor_visible {
-            format!("{}|", search.query)
-        } else {
-            search.query.clone()
-        }
+        if search_cursor_visible { format!("{}|", search.query) } else { search.query.clone() }
     } else {
         search.query.clone()
     };
@@ -932,8 +931,7 @@ fn render_stack_pane(
             "Stack (thread {}) search:{} [{}{}]",
             state.current_thread.to_u32(),
             search_display,
-            search.matches.len()
-            ,
+            search.matches.len(),
             if search.editing { ", editing" } else { "" }
         )
     };
@@ -946,10 +944,8 @@ fn render_stack_pane(
             let info = &state.stack_frames[idx];
             let is_match = search.matches.contains(&idx);
             let first = hscroll_text(&format!("#{idx} {}", info.fn_name), scroll.stack_hscroll);
-            let second = hscroll_text(
-                &format!("{}:{}", info.source_file, info.line),
-                scroll.stack_hscroll,
-            );
+            let second =
+                hscroll_text(&format!("{}:{}", info.source_file, info.line), scroll.stack_hscroll);
             ListItem::new(vec![
                 Line::from(first).style(Style::default().fg(THEME_ACCENT_SOFT)),
                 Line::from(second).style(Style::default().fg(THEME_DIM)),
@@ -975,10 +971,7 @@ fn render_stack_pane(
 
     let mut list_state = ListState::default();
     if !visible.is_empty() {
-        let selected = visible
-            .iter()
-            .position(|idx| *idx == scroll.stack_index)
-            .unwrap_or(0);
+        let selected = visible.iter().position(|idx| *idx == scroll.stack_index).unwrap_or(0);
         list_state.select(Some(selected));
     }
     frame.render_stateful_widget(list, area, &mut list_state);
@@ -1003,20 +996,15 @@ fn render_mir_pane(
 
     lines.push(Line::from(""));
     lines.push(
-        Line::from("CFG:")
-            .style(Style::default().fg(THEME_ACCENT).add_modifier(Modifier::BOLD)),
+        Line::from("CFG:").style(Style::default().fg(THEME_ACCENT).add_modifier(Modifier::BOLD)),
     );
     lines.extend(state.cfg_lines.iter().map(|line| {
         let mut diagram = format!("bb{}", line.block);
         if line.successors.is_empty() {
             diagram.push_str(" ─┤ END");
         } else {
-            let succs = line
-                .successors
-                .iter()
-                .map(|s| format!("bb{s}"))
-                .collect::<Vec<_>>()
-                .join(" │ ");
+            let succs =
+                line.successors.iter().map(|s| format!("bb{s}")).collect::<Vec<_>>().join(" │ ");
             diagram.push_str(" ─┬─> ");
             diagram.push_str(&succs);
         }
@@ -1056,40 +1044,32 @@ fn render_locals_pane(
         .map(|f| f.locals.as_slice())
         .unwrap_or_else(|| state.locals.as_slice());
 
-    let rows = selected_locals
-        .iter()
-        .skip(scroll.locals_scroll)
-        .map(|local| {
-            let value_style = match local.kind {
-                LocalKind::Dead => Style::default().fg(THEME_DIM),
-                LocalKind::Uninitialized => Style::default().fg(THEME_ERR).add_modifier(Modifier::BOLD),
-                LocalKind::Pointer => Style::default().fg(THEME_WARN).add_modifier(Modifier::BOLD),
-                LocalKind::Initialized => Style::default().fg(THEME_OK),
-            };
-            let name_style = if local.kind == LocalKind::Dead {
-                Style::default().fg(THEME_DIM)
-            } else {
-                Style::default().fg(THEME_ACCENT_SOFT)
-            };
-            Row::new([
-                Cell::from(local.name.clone()).style(name_style),
-                Cell::from(local.ty.clone()).style(Style::default().fg(THEME_DIM)),
-                Cell::from(hscroll_text(&local.value, scroll.locals_hscroll)).style(value_style),
-            ])
-        });
+    let rows = selected_locals.iter().skip(scroll.locals_scroll).map(|local| {
+        let value_style = match local.kind {
+            LocalKind::Dead => Style::default().fg(THEME_DIM),
+            LocalKind::Uninitialized => Style::default().fg(THEME_ERR).add_modifier(Modifier::BOLD),
+            LocalKind::Pointer => Style::default().fg(THEME_WARN).add_modifier(Modifier::BOLD),
+            LocalKind::Initialized => Style::default().fg(THEME_OK),
+        };
+        let name_style = if local.kind == LocalKind::Dead {
+            Style::default().fg(THEME_DIM)
+        } else {
+            Style::default().fg(THEME_ACCENT_SOFT)
+        };
+        Row::new([
+            Cell::from(local.name.clone()).style(name_style),
+            Cell::from(local.ty.clone()).style(Style::default().fg(THEME_DIM)),
+            Cell::from(hscroll_text(&local.value, scroll.locals_hscroll)).style(value_style),
+        ])
+    });
 
     let table = Table::new(
         rows,
-        [
-            Constraint::Length(16),
-            Constraint::Percentage(30),
-            Constraint::Percentage(70),
-        ],
+        [Constraint::Length(10), Constraint::Percentage(20), Constraint::Percentage(70)],
     )
     .header(
-        Row::new(["Local", "Type", "Value"]).style(
-            Style::default().fg(THEME_ACCENT).add_modifier(Modifier::BOLD),
-        ),
+        Row::new(["Local", "Type", "Value"])
+            .style(Style::default().fg(THEME_ACCENT).add_modifier(Modifier::BOLD)),
     )
     .block(
         Block::default()
@@ -1180,11 +1160,8 @@ fn render_status_bar(
     };
     let finished_text = if program_finished { "  status=finished" } else { "" };
     let mode_text = if reverse_mode { "reverse" } else { mode.as_str() };
-    let target_text = if run_target.editing {
-        format!("  target={}|", run_target.query)
-    } else {
-        String::new()
-    };
+    let target_text =
+        if run_target.editing { format!("  target={}|", run_target.query) } else { String::new() };
     let text = format!(
         "mode={}  steps={}  thread={}  focus={}  history={}/{}  {}{}{}  {}",
         mode_text,
@@ -1204,7 +1181,11 @@ fn render_status_bar(
     frame.render_widget(bar, area);
 }
 
-fn refresh_stack_search(state: &DebuggerState, scroll: &mut UiScrollState, search: &mut StackSearchState) {
+fn refresh_stack_search(
+    state: &DebuggerState,
+    scroll: &mut UiScrollState,
+    search: &mut StackSearchState,
+) {
     if search.query.is_empty() {
         search.matches.clear();
         search.current_match = 0;
@@ -1217,12 +1198,9 @@ fn refresh_stack_search(state: &DebuggerState, scroll: &mut UiScrollState, searc
         .iter()
         .enumerate()
         .filter_map(|(idx, frame)| {
-            let hay = format!("{} {}:{}", frame.fn_name, frame.source_file, frame.line).to_ascii_lowercase();
-            if hay.contains(&query) {
-                Some(idx)
-            } else {
-                None
-            }
+            let hay = format!("{} {}:{}", frame.fn_name, frame.source_file, frame.line)
+                .to_ascii_lowercase();
+            if hay.contains(&query) { Some(idx) } else { None }
         })
         .collect();
 
@@ -1256,10 +1234,7 @@ fn step_stack_selection(
         return;
     }
 
-    let current_pos = visible
-        .iter()
-        .position(|idx| *idx == scroll.stack_index)
-        .unwrap_or(0);
+    let current_pos = visible.iter().position(|idx| *idx == scroll.stack_index).unwrap_or(0);
     let next_pos = if forward {
         (current_pos + 1).min(visible.len() - 1)
     } else {
@@ -1270,10 +1245,7 @@ fn step_stack_selection(
 
 fn state_has_frame(state: &DebuggerState, target: &str) -> bool {
     let target_lc = target.to_ascii_lowercase();
-    state
-        .stack_frames
-        .iter()
-        .any(|frame| frame.fn_name.to_ascii_lowercase().contains(&target_lc))
+    state.stack_frames.iter().any(|frame| frame.fn_name.to_ascii_lowercase().contains(&target_lc))
 }
 
 fn selected_stack_fn_name(
@@ -1285,11 +1257,7 @@ fn selected_stack_fn_name(
     if visible.is_empty() {
         return None;
     }
-    let idx = if visible.contains(&scroll.stack_index) {
-        scroll.stack_index
-    } else {
-        visible[0]
-    };
+    let idx = if visible.contains(&scroll.stack_index) { scroll.stack_index } else { visible[0] };
     state.stack_frames.get(idx).map(|f| f.fn_name.clone())
 }
 
