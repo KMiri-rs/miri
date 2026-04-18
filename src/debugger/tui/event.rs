@@ -6,8 +6,9 @@ use crossterm::event::{
 };
 
 use crate::debugger::channel::CommandSender;
+use crate::debugger::tui::pane::FocusPane;
 use crate::debugger::tui::pane::panes::Panes;
-use crate::debugger::tui::{FocusPane, Meta, RunMode};
+use crate::debugger::tui::{Meta, RunMode};
 use crate::{DebuggerCommand, DebuggerState};
 
 /// An action for an event result in a loop.
