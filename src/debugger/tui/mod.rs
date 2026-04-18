@@ -23,7 +23,7 @@ use ratatui::{Frame, Terminal};
 use super::channel::{CommandSender, StateReceiver};
 use super::state::LocalKind;
 use super::{DebuggerCommand, DebuggerState};
-use crate::debugger::tui::pane::panes::{Meta, Panes};
+use crate::debugger::tui::pane::panes::Panes;
 use crate::debugger::tui::pane::status_bar::StatusBar;
 
 mod pane;
@@ -32,7 +32,7 @@ mod theme;
 const EVENT_POLL_MS: u64 = 100;
 const HISTORY_CAPACITY: usize = 1000;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum FocusPane {
     Stack,
     Mir,
@@ -135,13 +135,13 @@ fn tui_loop(
     state_rx: StateReceiver,
     command_tx: CommandSender,
 ) -> io::Result<()> {
-    let mut meta = Meta::new();
     let mut mode = RunMode::Step;
     let mut panes = Panes::new(Rect::default());
     let mut run_target = RunTargetState::default();
     let mut run_to_frame_target: Option<String> = None;
     let mut last_state: Option<DebuggerState> = None;
     let mut history: VecDeque<DebuggerState> = VecDeque::with_capacity(HISTORY_CAPACITY);
+    let mut blink_epoch = Instant::now();
 
     while let Ok(state) = state_rx.recv() {
         history.push_back(state.clone());
@@ -173,19 +173,14 @@ fn tui_loop(
             || matches!(mode, RunMode::RunToEnd)
         {
             terminal.draw(|frame| {
-                render(
-                    &mut panes,
-                    frame,
-                    &state,
-                    &meta,
-                    &run_target,
-                    StatusBar {
-                        program_finished: false,
-                        reverse_mode: false,
-                        mode,
-                        history_len: history.len(),
-                    },
-                )
+                let status_bar = StatusBar {
+                    run_target: &run_target,
+                    program_finished: false,
+                    reverse_mode: false,
+                    mode,
+                    history_len: history.len(),
+                };
+                render(&mut panes, frame, &display_state, blink_epoch, &status_bar)
             })?;
 
             // Still allow immediate quit while fast-forwarding.
@@ -207,19 +202,14 @@ fn tui_loop(
 
         loop {
             terminal.draw(|frame| {
-                render(
-                    &mut panes,
-                    frame,
-                    &display_state,
-                    &meta,
-                    &run_target,
-                    StatusBar {
-                        program_finished: false,
-                        reverse_mode: reverse_index.is_some(),
-                        mode,
-                        history_len: history.len(),
-                    },
-                )
+                let status_bar = StatusBar {
+                    run_target: &run_target,
+                    program_finished: false,
+                    reverse_mode: reverse_index.is_some(),
+                    mode,
+                    history_len: history.len(),
+                };
+                render(&mut panes, frame, &display_state, blink_epoch, &status_bar)
             })?;
 
             if !event::poll(Duration::from_millis(EVENT_POLL_MS))? {
@@ -266,7 +256,7 @@ fn tui_loop(
                         return Ok(());
                     }
                     KeyCode::Char('/') => {
-                        meta.focus = FocusPane::Stack;
+                        panes.focus = FocusPane::Stack;
                         panes.stack.search.editing = true;
                     }
                     KeyCode::Char('P') => {
@@ -350,18 +340,18 @@ fn tui_loop(
                         let _ = command_tx.send(DebuggerCommand::RunToMain);
                         break;
                     }
-                    KeyCode::BackTab => meta.focus = meta.focus.previous(),
+                    KeyCode::BackTab => panes.focus = panes.focus.previous(),
                     KeyCode::Tab => {
-                        meta.focus = if key.modifiers == KeyModifiers::SHIFT {
-                            meta.focus.previous()
+                        panes.focus = if key.modifiers == KeyModifiers::SHIFT {
+                            panes.focus.previous()
                         } else {
-                            meta.focus.next()
+                            panes.focus.next()
                         };
                     }
-                    KeyCode::Up => panes.navigate_up(&display_state, meta.focus),
-                    KeyCode::Down => panes.navigate_down(&display_state, meta.focus),
-                    KeyCode::Left => panes.scroll_left(meta.focus),
-                    KeyCode::Right => panes.scroll_right(meta.focus),
+                    KeyCode::Up => panes.navigate_up(&display_state),
+                    KeyCode::Down => panes.navigate_down(&display_state),
+                    KeyCode::Left => panes.scroll_left(panes.focus),
+                    KeyCode::Right => panes.scroll_right(panes.focus),
                     KeyCode::Char(c)
                         if c.is_ascii_alphanumeric()
                             || c == '_'
@@ -393,14 +383,14 @@ fn tui_loop(
                 let hovered = area.pane_at(mouse.column, mouse.row);
                 match mouse.kind {
                     MouseEventKind::ScrollUp => {
-                        meta.focus = hovered;
-                        panes.scroll_up(hovered);
+                        panes.focus = hovered;
+                        panes.scroll_up();
                     }
                     MouseEventKind::ScrollDown => {
-                        meta.focus = hovered;
-                        panes.scroll_down(&display_state, hovered);
+                        panes.focus = hovered;
+                        panes.scroll_down(&display_state);
                     }
-                    MouseEventKind::Down(_) => meta.focus = hovered,
+                    MouseEventKind::Down(_) => panes.focus = hovered,
                     _ => {}
                 }
             }
@@ -415,19 +405,14 @@ fn tui_loop(
         let mut reverse_index: Option<usize> = None;
         loop {
             terminal.draw(|frame| {
-                render(
-                    &mut panes,
-                    frame,
-                    &display_state,
-                    &meta,
-                    &run_target,
-                    StatusBar {
-                        program_finished: true,
-                        reverse_mode: reverse_index.is_some(),
-                        mode,
-                        history_len: todo!(),
-                    },
-                )
+                let status_bar = StatusBar {
+                    run_target: &run_target,
+                    program_finished: true,
+                    reverse_mode: reverse_index.is_some(),
+                    mode,
+                    history_len: todo!(),
+                };
+                render(&mut panes, frame, &display_state, blink_epoch, &status_bar)
             })?;
             if !event::poll(Duration::from_millis(EVENT_POLL_MS))? {
                 continue;
@@ -468,7 +453,7 @@ fn tui_loop(
                             }
                         },
                     KeyCode::Char('/') => {
-                        meta.focus = FocusPane::Stack;
+                        panes.focus = FocusPane::Stack;
                         panes.stack.search.editing = true;
                     }
                     KeyCode::Char('.') => panes.stack.goto_next_search_match(),
@@ -483,11 +468,11 @@ fn tui_loop(
                         if !panes.stack.search.query.is_empty() {
                             panes.stack.search = Default::default();
                         },
-                    KeyCode::Tab => meta.focus = meta.focus.next(),
-                    KeyCode::Up => panes.navigate_up(&display_state, meta.focus),
-                    KeyCode::Down => panes.navigate_down(&display_state, meta.focus),
-                    KeyCode::Left => panes.scroll_left(meta.focus),
-                    KeyCode::Right => panes.scroll_right(meta.focus),
+                    KeyCode::Tab => panes.focus = panes.focus.next(),
+                    KeyCode::Up => panes.navigate_up(&display_state),
+                    KeyCode::Down => panes.navigate_down(&display_state),
+                    KeyCode::Left => panes.scroll_left(panes.focus),
+                    KeyCode::Right => panes.scroll_right(panes.focus),
                     KeyCode::Char(c)
                         if c.is_ascii_alphanumeric()
                             || c == '_'
@@ -519,12 +504,12 @@ fn tui_loop(
                 let hovered = area.pane_at(mouse.column, mouse.row);
                 match mouse.kind {
                     MouseEventKind::ScrollUp => {
-                        meta.focus = hovered;
-                        panes.scroll_up(hovered);
+                        panes.focus = hovered;
+                        panes.scroll_up();
                     }
                     MouseEventKind::ScrollDown => {
-                        meta.focus = hovered;
-                        panes.scroll_down(&display_state, hovered);
+                        panes.focus = hovered;
+                        panes.scroll_down(&display_state);
                     }
                     _ => {}
                 }
@@ -557,19 +542,17 @@ fn render(
     panes: &mut Panes,
     frame: &mut Frame<'_>,
     state: &DebuggerState,
-    meta: &Meta,
-    run_target: &RunTargetState,
-    status_bar: StatusBar,
+    blink_epoch: Instant,
+    status_bar: &StatusBar<'_>,
 ) {
     panes.update_area(frame.area());
 
-    let &Meta { focus, blink_epoch } = meta;
-    panes.render_stack(frame, state, focus, blink_epoch);
-    panes.render_mir(frame, state, focus);
-    panes.render_locals(frame, state, focus);
-    panes.render_memory(frame, state, focus);
-    panes.render_output(frame, state, focus);
-    panes.render_status_bar(frame, state, focus, run_target, &status_bar);
+    panes.render_stack(frame, state, blink_epoch);
+    panes.render_mir(frame, state);
+    panes.render_locals(frame, state);
+    panes.render_memory(frame, state);
+    panes.render_output(frame, state);
+    panes.render_status_bar(frame, state, status_bar);
 }
 
 fn state_has_frame(state: &DebuggerState, target: &str) -> bool {
