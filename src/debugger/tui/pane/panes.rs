@@ -12,19 +12,9 @@ use crate::debugger::tui::pane::stack::PaneStack;
 use crate::debugger::tui::pane::status_bar::{PaneStatusBar, StatusBar};
 use crate::debugger::tui::{FocusPane, RunTargetState};
 
-pub struct Meta {
-    pub focus: FocusPane,
-    pub blink_epoch: Instant,
-}
-
-impl Meta {
-    pub fn new() -> Self {
-        Self { focus: FocusPane::Stack, blink_epoch: Instant::now() }
-    }
-}
-
 #[derive(Debug)]
 pub struct Panes {
+    pub focus: FocusPane,
     pub stack: PaneStack,
     pub mir: PaneMir,
     pub locals: PaneLocals,
@@ -65,6 +55,7 @@ impl Panes {
         };
 
         Panes {
+            focus: FocusPane::Stack,
             stack: PaneStack::new(left),
             mir: PaneMir::new(mir),
             locals: PaneLocals::new(locals),
@@ -103,35 +94,33 @@ impl Panes {
         }
     }
 
-    pub fn render_stack(
-        &self,
-        frame: &mut Frame<'_>,
-        state: &DebuggerState,
-        focus: FocusPane,
-        blink_epoch: Instant,
-    ) {
+    fn is_focused(&self, pane: FocusPane) -> bool {
+        matches!(self.focus, pane)
+    }
+
+    pub fn render_stack(&self, frame: &mut Frame<'_>, state: &DebuggerState, blink_epoch: Instant) {
         let (list, mut list_state) =
-            self.stack.widget(state, matches!(focus, FocusPane::Stack), blink_epoch);
+            self.stack.widget(state, self.is_focused(FocusPane::Stack), blink_epoch);
         frame.render_stateful_widget(list, self.stack.rect, &mut list_state);
     }
 
-    pub fn render_mir(&self, frame: &mut Frame<'_>, state: &DebuggerState, focus: FocusPane) {
-        let paragraph = self.mir.widget(state, matches!(focus, FocusPane::Mir));
+    pub fn render_mir(&self, frame: &mut Frame<'_>, state: &DebuggerState) {
+        let paragraph = self.mir.widget(state, self.is_focused(FocusPane::Mir));
         frame.render_widget(paragraph, self.mir.rect);
     }
 
-    pub fn render_locals(&self, frame: &mut Frame<'_>, state: &DebuggerState, focus: FocusPane) {
-        let table = self.locals.widget(state, matches!(focus, FocusPane::Locals), self.stack.index);
+    pub fn render_locals(&self, frame: &mut Frame<'_>, state: &DebuggerState) {
+        let table = self.locals.widget(state, self.is_focused(FocusPane::Locals), self.stack.index);
         frame.render_widget(table, self.locals.rect);
     }
 
-    pub fn render_memory(&self, frame: &mut Frame<'_>, state: &DebuggerState, focus: FocusPane) {
-        let list = self.memory.widget(state, matches!(focus, FocusPane::Memory));
+    pub fn render_memory(&self, frame: &mut Frame<'_>, state: &DebuggerState) {
+        let list = self.memory.widget(state, self.is_focused(FocusPane::Memory));
         frame.render_widget(list, self.memory.rect);
     }
 
-    pub fn render_output(&self, frame: &mut Frame<'_>, state: &DebuggerState, focus: FocusPane) {
-        let list = self.output.widget(state, matches!(focus, FocusPane::Output));
+    pub fn render_output(&self, frame: &mut Frame<'_>, state: &DebuggerState) {
+        let list = self.output.widget(state, self.is_focused(FocusPane::Output));
         frame.render_widget(list, self.output.rect);
     }
 
@@ -139,22 +128,15 @@ impl Panes {
         &self,
         frame: &mut Frame<'_>,
         state: &DebuggerState,
-        focus: FocusPane,
-        run_target: &RunTargetState,
-        status_bar: &StatusBar,
+        status_bar: &StatusBar<'_>,
     ) {
-        let list = self.status_bar.widget(
-            state,
-            focus.as_str(),
-            &self.stack.search,
-            run_target,
-            status_bar,
-        );
+        let list =
+            self.status_bar.widget(state, self.focus.as_str(), &self.stack.search, status_bar);
         frame.render_widget(list, self.status_bar.rect);
     }
 
-    fn up(&mut self, pane: FocusPane, on_stack: impl FnOnce(&mut PaneStack)) {
-        match pane {
+    fn up(&mut self, on_stack: impl FnOnce(&mut PaneStack)) {
+        match self.focus {
             FocusPane::Stack => on_stack(&mut self.stack),
             FocusPane::Mir => {
                 self.mir.scroll = self.mir.scroll.saturating_sub(1);
@@ -173,21 +155,16 @@ impl Panes {
 
     /// This is a slightly different with scroll_up, because stack pane will scroll in the list items,
     /// instead of scroll the view of list.
-    pub fn navigate_up(&mut self, state: &DebuggerState, focus: FocusPane) {
-        self.up(focus, |stack| stack.step_stack_selection(state, false));
+    pub fn navigate_up(&mut self, state: &DebuggerState) {
+        self.up(|stack| stack.step_stack_selection(state, false));
     }
 
-    pub fn scroll_up(&mut self, focus: FocusPane) {
-        self.up(focus, |stack| stack.index = stack.index.saturating_sub(1));
+    pub fn scroll_up(&mut self) {
+        self.up(|stack| stack.index = stack.index.saturating_sub(1));
     }
 
-    fn down(
-        &mut self,
-        state: &DebuggerState,
-        pane: FocusPane,
-        on_stack: impl FnOnce(&mut PaneStack),
-    ) {
-        match pane {
+    fn down(&mut self, state: &DebuggerState, on_stack: impl FnOnce(&mut PaneStack)) {
+        match self.focus {
             FocusPane::Stack => on_stack(&mut self.stack),
             FocusPane::Mir => {
                 self.mir.scroll = self.mir.scroll.saturating_add(1);
@@ -216,12 +193,12 @@ impl Panes {
         }
     }
 
-    pub fn navigate_down(&mut self, state: &DebuggerState, focus: FocusPane) {
-        self.up(focus, |stack| stack.step_stack_selection(state, true));
+    pub fn navigate_down(&mut self, state: &DebuggerState) {
+        self.up(|stack| stack.step_stack_selection(state, true));
     }
 
-    pub fn scroll_down(&mut self, state: &DebuggerState, pane: FocusPane) {
-        self.down(state, pane, |stack| {
+    pub fn scroll_down(&mut self, state: &DebuggerState) {
+        self.down(state, |stack| {
             if !state.stack_frames.is_empty() {
                 let max = state.stack_frames.len() - 1;
                 stack.index = stack.index.saturating_add(1).min(max);
