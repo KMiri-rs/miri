@@ -1,16 +1,13 @@
 use super::*;
 use crate::debugger::state::LocalKind;
 use crate::debugger::tui::pane::stack::StackSearchState;
-use crate::debugger::tui::{RunMode, RunTargetState};
+use crate::debugger::tui::{Meta, RunMode, RunTargetState};
 
 const HISTORY_CAPACITY: usize = 1000;
 
 pub struct StatusBar<'a> {
-    pub run_target: &'a RunTargetState,
+    pub meta: &'a Meta,
     pub program_finished: bool,
-    pub reverse_mode: bool,
-    pub mode: RunMode,
-    pub history_len: usize,
 }
 
 #[derive(Default, Debug)]
@@ -40,7 +37,7 @@ impl PaneStatusBar {
         } else {
             format!("search=/{}, matches={}", search.query, search.matches.len())
         };
-        let keys_text = if status.run_target.editing {
+        let keys_text = if status.meta.run_target.editing {
             "keys: type function name  enter run-to-frame  esc cancel  backspace delete"
         } else if search.editing {
             "keys: type to filter stack  enter/esc// exit search  backspace delete  [ ] scroll-cmds  q quit"
@@ -50,9 +47,10 @@ impl PaneStatusBar {
             "keys: n/space step  b step-back  p run-to-selected  P run-to-name  c continue  m run-to-main  e run-to-end  / search  . next  , prev  [ ] scroll-cmds  q quit  tab switch  arrows scroll"
         };
         let finished_text = if status.program_finished { "  status=finished" } else { "" };
-        let mode_text = if status.reverse_mode { "reverse" } else { status.mode.as_str() };
-        let target_text = if status.run_target.editing {
-            format!("  target={}|", status.run_target.query)
+        let reverse_mode = status.meta.reverse_index.is_some();
+        let mode_text = if reverse_mode { "reverse" } else { status.meta.mode.as_str() };
+        let target_text = if status.meta.run_target.editing {
+            format!("  target={}|", status.meta.run_target.query)
         } else {
             String::new()
         };
@@ -62,7 +60,7 @@ impl PaneStatusBar {
             state.step_count,
             state.current_thread.to_u32(),
             focus_name,
-            status.history_len,
+            status.meta.history.len(),
             HISTORY_CAPACITY,
             search_text,
             finished_text,
