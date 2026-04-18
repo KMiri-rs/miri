@@ -5,7 +5,8 @@ use crate::debugger::tui::{RunMode, RunTargetState};
 
 const HISTORY_CAPACITY: usize = 1000;
 
-pub struct StatusBar {
+pub struct StatusBar<'a> {
+    pub run_target: &'a RunTargetState,
     pub program_finished: bool,
     pub reverse_mode: bool,
     pub mode: RunMode,
@@ -28,8 +29,7 @@ impl PaneStatusBar {
         state: &DebuggerState,
         focus_name: &str,
         search: &StackSearchState,
-        run_target: &RunTargetState,
-        status: &StatusBar,
+        status: &StatusBar<'_>,
     ) -> Paragraph<'static> {
         let search_text = if search.editing && search.query.is_empty() {
             "search=editing".to_string()
@@ -40,7 +40,7 @@ impl PaneStatusBar {
         } else {
             format!("search=/{}, matches={}", search.query, search.matches.len())
         };
-        let keys_text = if run_target.editing {
+        let keys_text = if status.run_target.editing {
             "keys: type function name  enter run-to-frame  esc cancel  backspace delete"
         } else if search.editing {
             "keys: type to filter stack  enter/esc// exit search  backspace delete  [ ] scroll-cmds  q quit"
@@ -51,8 +51,8 @@ impl PaneStatusBar {
         };
         let finished_text = if status.program_finished { "  status=finished" } else { "" };
         let mode_text = if status.reverse_mode { "reverse" } else { status.mode.as_str() };
-        let target_text = if run_target.editing {
-            format!("  target={}|", run_target.query)
+        let target_text = if status.run_target.editing {
+            format!("  target={}|", status.run_target.query)
         } else {
             String::new()
         };
