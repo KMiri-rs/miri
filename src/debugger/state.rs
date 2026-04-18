@@ -1,5 +1,8 @@
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span as RatatuiSpan};
 use rustc_data_structures::either::Either;
 use rustc_middle::mir;
+use rustc_span::source_map::SourceMap;
 
 use crate::*;
 
@@ -7,15 +10,17 @@ use crate::*;
 pub struct FrameInfo {
     pub fn_name: String,
     pub source_file: String,
-    pub line: u32,
+    pub line_start: u32,
+    pub line_end: u32,
     pub locals: Vec<LocalInfo>,
 }
 
 #[derive(Clone, Debug)]
-pub struct MirLocation {
-    pub statement: String,
-    pub source_file: String,
-    pub line: u32,
+pub struct CurrentLocation {
+    // Full source code with current location highlighted.
+    pub render: Vec<Line<'static>>,
+    pub line_start: u32,
+    pub line_end: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -61,7 +66,7 @@ pub struct DebuggerState {
     pub step_count: u64,
     pub in_user_code: bool,
     pub stack_frames: Vec<FrameInfo>,
-    pub current_location: MirLocation,
+    pub current_location: CurrentLocation,
     pub cfg_lines: Vec<CfgLine>,
     pub locals: Vec<LocalInfo>,
     pub memory: Vec<MemoryInfo>,
@@ -76,10 +81,12 @@ impl DebuggerState {
         let stack_frames = stack.iter().rev().map(|frame| capture_frame(sm, frame)).collect();
 
         let current_location =
-            stack.last().map(|frame| capture_location(ecx, frame)).unwrap_or(MirLocation {
-                statement: "<no active frame>".to_string(),
-                source_file: "<none>".to_string(),
-                line: 0,
+            stack.last().map(|frame| capture_location(ecx, frame)).unwrap_or_else(|| {
+                CurrentLocation {
+                    render: vec!["No stack frame found.".into()],
+                    line_start: 0,
+                    line_end: 0,
+                }
             });
 
         let locals = stack.last().map(capture_locals).unwrap_or_default();
@@ -92,7 +99,8 @@ impl DebuggerState {
             .iter()
             .map(|(is_stderr, text)| OutputLine { is_stderr: *is_stderr, text: text.clone() })
             .collect();
-        let in_user_code = is_user_code_path(&current_location.source_file);
+        // let in_user_code = is_user_code_path(&current_location.source_file);
+        let in_user_code = false;
 
         Self {
             current_thread: ecx.active_thread(),
@@ -154,16 +162,18 @@ pub fn find_name_for_local(body: &mir::Body<'_>, local: mir::Local) -> Option<ru
     })
 }
 
-fn capture_frame(
-    sm: &rustc_span::source_map::SourceMap,
-    frame: &Frame<'_, Provenance, FrameExtra<'_>>,
-) -> FrameInfo {
+fn pos_to_line_nr(sm: &SourceMap, pos: rustc_span::BytePos) -> u32 {
+    let loc = sm.lookup_char_pos(pos);
+    u32::try_from(loc.line).unwrap_or(0)
+}
+
+fn capture_frame(sm: &SourceMap, frame: &Frame<'_, Provenance, FrameExtra<'_>>) -> FrameInfo {
     let span = frame.current_span();
-    let pos = sm.lookup_char_pos(span.lo());
     FrameInfo {
         fn_name: frame.instance().to_string(),
-        source_file: pos.file.name.prefer_remapped_unconditionally().to_string(),
-        line: u32::try_from(pos.line).unwrap_or(u32::MAX),
+        source_file: sm.span_to_filename(span).prefer_remapped_unconditionally().to_string(),
+        line_start: pos_to_line_nr(sm, span.lo()),
+        line_end: pos_to_line_nr(sm, span.hi()),
         locals: capture_locals(frame),
     }
 }
@@ -281,34 +291,110 @@ fn compact_debug(raw: &str) -> String {
         .to_string()
 }
 
+/// Renders the source code of a MIR Body and highlights the source range
+/// corresponding to a specific MIR Location using Ratatui styles.
 fn capture_location(
     ecx: &MiriInterpCx<'_>,
     frame: &Frame<'_, Provenance, FrameExtra<'_>>,
-) -> MirLocation {
+) -> CurrentLocation {
     let sm = ecx.tcx.sess.source_map();
-    let current_span = frame.current_span();
-    let char_pos = sm.lookup_char_pos(current_span.lo());
-
-    let statement = match frame.current_loc() {
-        Either::Left(loc) => {
-            let block = &frame.body().basic_blocks[loc.block];
-            if let Some(stmt) = block.statements.get(loc.statement_index) {
-                format!("{stmt:?}")
-            } else if let Some(term) = &block.terminator {
-                format!("{:?}", term.kind)
-            } else {
-                "<no statement>".to_string()
-            }
-        }
-        Either::Right(span) => {
-            let span = sm.span_to_diagnostic_string(span);
-            format!("external span: {span}")
-        }
+    let body = frame.body();
+    let current_loc = match frame.current_loc() {
+        Either::Left(loc) => loc,
+        Either::Right(span) => todo!(),
     };
 
-    MirLocation {
-        statement,
-        source_file: char_pos.file.name.prefer_remapped_unconditionally().to_string(),
-        line: u32::try_from(char_pos.line).unwrap_or(u32::MAX),
+    // 1. Get the source range of the entire MIR Body
+    let body_span = body.span;
+
+    // 2. Get the Span corresponding to the current MIR Location (Statement or Terminator)
+    let highlight_span =
+        if current_loc.statement_index < body.basic_blocks[current_loc.block].statements.len() {
+            body.basic_blocks[current_loc.block].statements[current_loc.statement_index]
+                .source_info
+                .span
+        } else {
+            body.basic_blocks[current_loc.block].terminator().source_info.span
+        };
+
+    // Use source_callsite() to resolve the span to the actual physical file
+    // instead of inside a macro expansion if possible.
+    let body_span = body_span.source_callsite();
+    let highlight_span = highlight_span.source_callsite();
+
+    let line_start = pos_to_line_nr(sm, highlight_span.lo());
+    let line_end = pos_to_line_nr(sm, highlight_span.hi());
+
+    // 3. Extract the raw source text snippet
+    let Ok(source_text) = sm.span_to_snippet(body_span) else {
+        return CurrentLocation {
+            render: vec![Line::from("Could not load source snippet")],
+            line_start,
+            line_end,
+        };
+    };
+
+    // Get the absolute byte positions for relative calculations
+    let body_lo = body_span.lo();
+    let highlight_lo = highlight_span.lo();
+    let highlight_hi = highlight_span.hi();
+
+    let mut lines = Vec::new();
+
+    let mut current_pos = body_lo;
+
+    // Split the source by lines and construct Ratatui Line/Span structures
+    for text_line in source_text.lines() {
+        let line_len = text_line.len().try_into().unwrap();
+        let line_end = current_pos + rustc_span::BytePos(line_len);
+
+        let mut line_spans = Vec::new();
+
+        // Check if the current line intersects with the highlight_span
+        // Case A: The line is entirely before the highlight
+        // Case B: The line is entirely after the highlight
+        if line_end <= highlight_lo || current_pos >= highlight_hi {
+            // No intersection: add as plain text
+            line_spans.push(RatatuiSpan::raw(text_line.to_string()));
+        } else {
+            // Intersection exists: split the line into parts
+            let line_start_pos = current_pos;
+
+            // Calculate relative start and end indices for the highlight within this specific line
+            let h_start_in_line = if highlight_lo > line_start_pos {
+                highlight_lo.0.checked_sub(line_start_pos.0).unwrap().to_usize()
+            } else {
+                0
+            };
+
+            let h_end_in_line = if highlight_hi < line_end {
+                highlight_hi.0.checked_sub(line_start_pos.0).unwrap().to_usize()
+            } else {
+                text_line.len()
+            };
+
+            // Part 1: Text before the highlight
+            if h_start_in_line > 0 {
+                line_spans.push(RatatuiSpan::raw(text_line[..h_start_in_line].to_string()));
+            }
+
+            // Part 2: The highlighted text (Styled with BOLD and UNDERLINE)
+            line_spans.push(RatatuiSpan::styled(
+                text_line[h_start_in_line..h_end_in_line].to_string(),
+                Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan),
+            ));
+
+            // Part 3: Text after the highlight
+            if h_end_in_line < text_line.len() {
+                line_spans.push(RatatuiSpan::raw(text_line[h_end_in_line..].to_string()));
+            }
+        }
+
+        lines.push(Line::from(line_spans));
+
+        // Update current position for the next iteration (+1 to account for the '\n' character)
+        current_pos = line_end + rustc_span::BytePos(1);
     }
+
+    CurrentLocation { render: lines, line_start, line_end }
 }
