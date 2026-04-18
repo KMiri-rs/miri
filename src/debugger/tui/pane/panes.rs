@@ -80,10 +80,11 @@ impl Panes {
         // NOTE: x and y point to the left angle of rect, we use neightborhood to determin pane
         // here, so be careful when the neightborhood changes.
         // (We can use width and height to clearly compute the range as an alternative way tho.)
-        if x < self.mir.rect.x {
-            return FocusPane::Stack;
-        }
-        if y < self.locals.rect.y {
+        if y == self.status_bar.rect.y + 1 {
+            FocusPane::StatusBar
+        } else if x < self.mir.rect.x {
+            FocusPane::Stack
+        } else if y < self.locals.rect.y {
             FocusPane::Mir
         } else if y < self.memory.rect.y {
             FocusPane::Locals
@@ -150,6 +151,9 @@ impl Panes {
             FocusPane::Output => {
                 self.output.scroll = self.output.scroll.saturating_sub(1);
             }
+            FocusPane::StatusBar => {
+                self.status_bar.hscroll = self.status_bar.hscroll.saturating_sub(1);
+            }
         }
     }
 
@@ -190,6 +194,9 @@ impl Panes {
                     let max = u16::try_from(state.output.len()).unwrap() - 1;
                     self.output.scroll = self.output.scroll.saturating_add(1).min(max);
                 },
+            FocusPane::StatusBar => {
+                self.status_bar.hscroll = self.status_bar.hscroll.saturating_add(1);
+            }
         }
     }
 
@@ -206,8 +213,8 @@ impl Panes {
         });
     }
 
-    pub fn scroll_right(&mut self, focus: FocusPane) {
-        match focus {
+    pub fn scroll_right(&mut self) {
+        match self.focus {
             FocusPane::Stack => {
                 self.stack.hscroll = self.stack.hscroll.saturating_add(1);
             }
@@ -223,11 +230,14 @@ impl Panes {
             FocusPane::Output => {
                 self.output.hscroll = self.output.hscroll.saturating_add(1);
             }
+            FocusPane::StatusBar => {
+                self.status_bar.hscroll = self.status_bar.hscroll.saturating_add(1);
+            }
         }
     }
 
-    pub fn scroll_left(&mut self, focus: FocusPane) {
-        match focus {
+    pub fn scroll_left(&mut self) {
+        match self.focus {
             FocusPane::Stack => {
                 self.stack.hscroll = self.stack.hscroll.saturating_sub(1);
             }
@@ -242,6 +252,9 @@ impl Panes {
             }
             FocusPane::Output => {
                 self.output.hscroll = self.output.hscroll.saturating_sub(1);
+            }
+            FocusPane::StatusBar => {
+                self.status_bar.hscroll = self.status_bar.hscroll.saturating_sub(1);
             }
         }
     }
