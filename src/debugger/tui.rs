@@ -944,8 +944,17 @@ fn render_stack_pane(
             let info = &state.stack_frames[idx];
             let is_match = search.matches.contains(&idx);
             let first = hscroll_text(&format!("#{idx} {}", info.fn_name), scroll.stack_hscroll);
-            let second =
-                hscroll_text(&format!("{}:{}", info.source_file, info.line), scroll.stack_hscroll);
+            let src_file = {
+                let file = &info.source_file;
+                let start = info.line_start;
+                let end = info.line_end;
+                if start == end {
+                    format!("{file}:{start}")
+                } else {
+                    format!("{file}:{start}:{end}")
+                }
+            };
+            let second = hscroll_text(&src_file, scroll.stack_hscroll);
             ListItem::new(vec![
                 Line::from(first).style(Style::default().fg(THEME_ACCENT_SOFT)),
                 Line::from(second).style(Style::default().fg(THEME_DIM)),
@@ -984,15 +993,19 @@ fn render_mir_pane(
     focus: FocusPane,
     scroll: &UiScrollState,
 ) {
-    let mut lines = vec![
-        Line::from(format!(
-            "{}:{}",
-            state.current_location.source_file, state.current_location.line
-        )),
-        Line::from(""),
-        Line::from(state.current_location.statement.clone())
-            .style(Style::default().fg(THEME_ACCENT_SOFT)),
-    ];
+    let source_file = state
+        .stack_frames
+        .last()
+        .map(|frame| {
+            let file = &frame.source_file;
+            let start = state.current_location.line_start;
+            let end = state.current_location.line_end;
+            if start == end { format!("{file}:{start}") } else { format!("{file}:{start}:{end}") }
+        })
+        .unwrap_or_else(|| "<none>".to_string());
+    let mut lines = vec![Line::from(source_file), Line::from("")];
+
+    lines.extend_from_slice(&state.current_location.render);
 
     lines.push(Line::from(""));
     lines.push(
@@ -1067,9 +1080,9 @@ fn render_locals_pane(
     let table = Table::new(
         rows,
         [
-            Constraint::Length(10),
-            Constraint::Percentage(15),
-            Constraint::Percentage(20),
+            Constraint::Length(5),
+            Constraint::Percentage(10),
+            Constraint::Percentage(30),
             Constraint::Percentage(55),
         ],
     )
@@ -1204,7 +1217,7 @@ fn refresh_stack_search(
         .iter()
         .enumerate()
         .filter_map(|(idx, frame)| {
-            let hay = format!("{} {}:{}", frame.fn_name, frame.source_file, frame.line)
+            let hay = format!("{} {}:{}", frame.fn_name, frame.source_file, frame.line_start)
                 .to_ascii_lowercase();
             if hay.contains(&query) { Some(idx) } else { None }
         })
