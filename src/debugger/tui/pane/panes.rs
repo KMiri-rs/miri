@@ -4,13 +4,14 @@ use crossterm::event::KeyCode;
 use ratatui::prelude::*;
 
 use crate::DebuggerState;
+use crate::debugger::tui::RunTargetState;
+use crate::debugger::tui::pane::FocusPane;
 use crate::debugger::tui::pane::locals::PaneLocals;
 use crate::debugger::tui::pane::memory::PaneMemory;
 use crate::debugger::tui::pane::mir::PaneMir;
 use crate::debugger::tui::pane::output::PaneOutput;
 use crate::debugger::tui::pane::stack::PaneStack;
 use crate::debugger::tui::pane::status_bar::{PaneStatusBar, StatusBar};
-use crate::debugger::tui::{FocusPane, RunTargetState};
 
 #[derive(Debug)]
 pub struct Panes {
