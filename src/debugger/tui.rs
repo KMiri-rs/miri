@@ -523,6 +523,7 @@ fn tui_loop(
                         focus = hovered;
                         scroll_down(&display_state, &mut scroll, hovered);
                     }
+                    MouseEventKind::Down(_) => focus = hovered,
                     _ => {}
                 }
             }
