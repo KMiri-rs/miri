@@ -2,7 +2,6 @@ use ratatui::prelude::*;
 use ratatui::widgets::*;
 
 use crate::DebuggerState;
-use crate::debugger::tui::hscroll_text;
 use crate::debugger::tui::theme::*;
 
 pub mod panes;
@@ -19,5 +18,54 @@ fn pane_border_style(focus: bool) -> Style {
         Style::default().fg(THEME_ACCENT).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(THEME_DIM)
+    }
+}
+
+fn hscroll_text(text: &str, offset: u16) -> String {
+    text.chars().skip(usize::from(offset)).collect()
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum FocusPane {
+    Stack,
+    Mir,
+    Locals,
+    Memory,
+    Output,
+    StatusBar,
+}
+
+impl FocusPane {
+    pub fn next(self) -> Self {
+        match self {
+            FocusPane::Stack => FocusPane::Mir,
+            FocusPane::Mir => FocusPane::Locals,
+            FocusPane::Locals => FocusPane::Memory,
+            FocusPane::Memory => FocusPane::Output,
+            FocusPane::Output => FocusPane::Stack,
+            FocusPane::StatusBar => unreachable!(),
+        }
+    }
+
+    pub fn previous(self) -> Self {
+        match self {
+            FocusPane::Stack => FocusPane::Output,
+            FocusPane::Mir => FocusPane::Stack,
+            FocusPane::Locals => FocusPane::Mir,
+            FocusPane::Memory => FocusPane::Locals,
+            FocusPane::Output => FocusPane::Memory,
+            FocusPane::StatusBar => unreachable!(),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FocusPane::Stack => "stack",
+            FocusPane::Mir => "mir",
+            FocusPane::Locals => "locals",
+            FocusPane::Memory => "memory",
+            FocusPane::Output => "output",
+            FocusPane::StatusBar => "status_bar",
+        }
     }
 }
