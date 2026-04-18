@@ -3,7 +3,8 @@ use std::io;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseEventKind,
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+    MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -39,6 +40,16 @@ impl FocusPane {
             FocusPane::Locals => FocusPane::Memory,
             FocusPane::Memory => FocusPane::Output,
             FocusPane::Output => FocusPane::Stack,
+        }
+    }
+
+    fn previous(self) -> Self {
+        match self {
+            FocusPane::Stack => FocusPane::Output,
+            FocusPane::Mir => FocusPane::Stack,
+            FocusPane::Locals => FocusPane::Mir,
+            FocusPane::Memory => FocusPane::Locals,
+            FocusPane::Output => FocusPane::Memory,
         }
     }
 }
@@ -385,7 +396,14 @@ fn tui_loop(
                         let _ = command_tx.send(DebuggerCommand::RunToMain);
                         break;
                     }
-                    KeyCode::Tab => focus = focus.next(),
+                    KeyCode::BackTab => focus = focus.previous(),
+                    KeyCode::Tab => {
+                        focus = if key.modifiers == KeyModifiers::SHIFT {
+                            focus.previous()
+                        } else {
+                            focus.next()
+                        };
+                    }
                     KeyCode::Up =>
                         match focus {
                             FocusPane::Stack => {
