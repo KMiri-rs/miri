@@ -1,15 +1,15 @@
 use super::*;
 
 #[derive(Default, Debug)]
-pub struct PaneMir {
+pub struct PaneSrc {
     pub rect: Rect,
     pub scroll: u16,
     pub hscroll: u16,
 }
 
-impl PaneMir {
+impl PaneSrc {
     pub fn new(rect: Rect) -> Self {
-        PaneMir { rect, ..Default::default() }
+        PaneSrc { rect, ..Default::default() }
     }
 
     pub fn widget(&self, state: &DebuggerState, focus: bool) -> Paragraph<'static> {
@@ -63,7 +63,7 @@ impl PaneMir {
         Paragraph::new(lines)
             .block(
                 Block::default()
-                    .title("Current MIR")
+                    .title("Source")
                     .borders(Borders::ALL)
                     .border_style(pane_border_style(focus)),
             )
