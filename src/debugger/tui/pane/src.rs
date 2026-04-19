@@ -13,7 +13,7 @@ impl PaneSrc {
     }
 
     pub fn widget(&self, state: &DebuggerState, focus: bool) -> Paragraph<'static> {
-        let source_file = state
+        let fpath = state
             .stack_frames
             .last()
             .map(|frame| {
@@ -27,43 +27,14 @@ impl PaneSrc {
                 }
             })
             .unwrap_or_else(|| "<none>".to_string());
-        let mut lines = vec![Line::from(source_file), Line::from("")];
 
-        lines.extend_from_slice(&state.current_location.render);
-
-        lines.push(Line::from(""));
-        lines.push(
-            Line::from("CFG:")
-                .style(Style::default().fg(THEME_ACCENT).add_modifier(Modifier::BOLD)),
-        );
-        lines.extend(state.cfg_lines.iter().map(|line| {
-            let mut diagram = format!("bb{}", line.block);
-            if line.successors.is_empty() {
-                diagram.push_str(" ─┤ END");
-            } else {
-                let succs = line
-                    .successors
-                    .iter()
-                    .map(|s| format!("bb{s}"))
-                    .collect::<Vec<_>>()
-                    .join(" │ ");
-                diagram.push_str(" ─┬─> ");
-                diagram.push_str(&succs);
-            }
-
-            if line.is_current {
-                Line::from(hscroll_text(&format!("▣ {}", diagram), self.hscroll))
-                    .style(Style::default().fg(THEME_OK).add_modifier(Modifier::BOLD))
-            } else {
-                Line::from(hscroll_text(&format!("□ {}", diagram), self.hscroll))
-                    .style(Style::default().fg(THEME_DIM))
-            }
-        }));
+        let lines = state.current_location.render_src.clone();
 
         Paragraph::new(lines)
             .block(
                 Block::default()
                     .title("Source")
+                    .title(Line::from(fpath).right_aligned())
                     .borders(Borders::ALL)
                     .border_style(pane_border_style(focus)),
             )

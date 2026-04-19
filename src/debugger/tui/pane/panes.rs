@@ -7,6 +7,7 @@ use crate::DebuggerState;
 use crate::debugger::tui::pane::FocusPane;
 use crate::debugger::tui::pane::locals::PaneLocals;
 use crate::debugger::tui::pane::memory::PaneMemory;
+use crate::debugger::tui::pane::mir::PaneMir;
 use crate::debugger::tui::pane::output::PaneOutput;
 use crate::debugger::tui::pane::src::PaneSrc;
 use crate::debugger::tui::pane::stack::PaneStack;
@@ -16,6 +17,7 @@ use crate::debugger::tui::{Context, RunTargetState};
 #[derive(Debug)]
 pub struct Panes {
     pub focus: FocusPane,
+    pub mir: PaneMir,
     pub stack: PaneStack,
     pub src: PaneSrc,
     pub locals: PaneLocals,
@@ -42,6 +44,14 @@ impl Panes {
             unreachable!()
         };
 
+        let [mir, stack] = *Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(left)
+        else {
+            unreachable!()
+        };
+
         let [src, locals, memory, output] = *Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -56,8 +66,9 @@ impl Panes {
         };
 
         Panes {
-            focus: FocusPane::Stack,
-            stack: PaneStack::new(left),
+            focus: FocusPane::Mir,
+            mir: PaneMir::new(mir),
+            stack: PaneStack::new(stack),
             src: PaneSrc::new(src),
             locals: PaneLocals::new(locals),
             memory: PaneMemory::new(memory),
@@ -68,6 +79,7 @@ impl Panes {
 
     pub fn update_area(&mut self, area: Rect) {
         let new_layout = Self::new(area);
+        self.mir.rect = new_layout.mir.rect;
         self.stack.rect = new_layout.stack.rect;
         self.src.rect = new_layout.src.rect;
         self.locals.rect = new_layout.locals.rect;
@@ -78,26 +90,32 @@ impl Panes {
 
     /// Find the pane as per the given point.
     pub fn pane_at(&self, x: u16, y: u16) -> FocusPane {
-        // NOTE: x and y point to the left angle of rect, we use neightborhood to determin pane
-        // here, so be careful when the neightborhood changes.
-        // (We can use width and height to clearly compute the range as an alternative way tho.)
-        if y == self.status_bar.rect.y + 1 {
-            FocusPane::StatusBar
-        } else if x < self.src.rect.x {
+        let position = Position { x, y };
+        let is_in = |rect: Rect| rect.contains(position);
+        if is_in(self.mir.rect) {
+            FocusPane::Mir
+        } else if is_in(self.stack.rect) {
             FocusPane::Stack
-        } else if y < self.locals.rect.y {
+        } else if is_in(self.src.rect) {
             FocusPane::Src
-        } else if y < self.memory.rect.y {
+        } else if is_in(self.locals.rect) {
             FocusPane::Locals
-        } else if y < self.output.rect.y {
+        } else if is_in(self.memory.rect) {
             FocusPane::Memory
-        } else {
+        } else if is_in(self.output.rect) {
             FocusPane::Output
+        } else {
+            FocusPane::StatusBar
         }
     }
 
     fn is_focused(&self, pane: FocusPane) -> bool {
         self.focus == pane
+    }
+
+    pub fn render_mir(&self, frame: &mut Frame<'_>, state: &DebuggerState) {
+        let paragraph = self.mir.widget(state, self.is_focused(FocusPane::Mir));
+        frame.render_widget(paragraph, self.mir.rect);
     }
 
     pub fn render_stack(&self, frame: &mut Frame<'_>, state: &DebuggerState, blink_epoch: Instant) {
@@ -133,6 +151,7 @@ impl Panes {
 
     fn up(&mut self, on_stack: impl FnOnce(&mut PaneStack)) {
         match self.focus {
+            FocusPane::Mir => self.mir.scroll = self.mir.scroll.saturating_sub(1),
             FocusPane::Stack => on_stack(&mut self.stack),
             FocusPane::Src => {
                 self.src.scroll = self.src.scroll.saturating_sub(1);
@@ -164,6 +183,7 @@ impl Panes {
 
     fn down(&mut self, state: &DebuggerState, on_stack: impl FnOnce(&mut PaneStack)) {
         match self.focus {
+            FocusPane::Mir => self.mir.scroll = self.mir.scroll.saturating_add(1),
             FocusPane::Stack => on_stack(&mut self.stack),
             FocusPane::Src => {
                 self.src.scroll = self.src.scroll.saturating_add(1);
@@ -210,6 +230,9 @@ impl Panes {
 
     pub fn scroll_right(&mut self) {
         match self.focus {
+            FocusPane::Mir => {
+                self.mir.hscroll = self.mir.hscroll.saturating_add(1);
+            }
             FocusPane::Stack => {
                 self.stack.hscroll = self.stack.hscroll.saturating_add(1);
             }
@@ -233,6 +256,9 @@ impl Panes {
 
     pub fn scroll_left(&mut self) {
         match self.focus {
+            FocusPane::Mir => {
+                self.mir.hscroll = self.mir.hscroll.saturating_sub(1);
+            }
             FocusPane::Stack => {
                 self.stack.hscroll = self.stack.hscroll.saturating_sub(1);
             }
