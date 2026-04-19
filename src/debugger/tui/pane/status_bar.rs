@@ -1,14 +1,9 @@
 use super::*;
 use crate::debugger::state::LocalKind;
 use crate::debugger::tui::pane::stack::StackSearchState;
-use crate::debugger::tui::{Meta, RunMode, RunTargetState};
+use crate::debugger::tui::{Context, RunMode, RunTargetState};
 
 const HISTORY_CAPACITY: usize = 1000;
-
-pub struct StatusBar<'a> {
-    pub meta: &'a Meta,
-    pub program_finished: bool,
-}
 
 #[derive(Default, Debug)]
 pub struct PaneStatusBar {
@@ -26,7 +21,7 @@ impl PaneStatusBar {
         state: &DebuggerState,
         focus_name: &str,
         search: &StackSearchState,
-        status: &StatusBar<'_>,
+        ctx: &Context,
     ) -> Paragraph<'static> {
         let search_text = if search.editing && search.query.is_empty() {
             "search=editing".to_string()
@@ -37,20 +32,20 @@ impl PaneStatusBar {
         } else {
             format!("search=/{}, matches={}", search.query, search.matches.len())
         };
-        let keys_text = if status.meta.run_target.editing {
+        let keys_text = if ctx.run_target.editing {
             "keys: type function name  enter run-to-frame  esc cancel  backspace delete"
         } else if search.editing {
             "keys: type to filter stack  enter/esc// exit search  backspace delete  [ ] scroll-cmds  q quit"
-        } else if status.program_finished {
+        } else if ctx.program_finished {
             "keys: q quit  / search  . next  , prev  b step-back  [ ] scroll-cmds  esc clear  tab switch  arrows scroll"
         } else {
             "keys: n/space step  b step-back  p run-to-selected  P run-to-name  c continue  m run-to-main  e run-to-end  / search  . next  , prev  [ ] scroll-cmds  q quit  tab switch  arrows scroll"
         };
-        let finished_text = if status.program_finished { "  status=finished" } else { "" };
-        let reverse_mode = status.meta.reverse_index.is_some();
-        let mode_text = if reverse_mode { "reverse" } else { status.meta.mode.as_str() };
-        let target_text = if status.meta.run_target.editing {
-            format!("  target={}|", status.meta.run_target.query)
+        let finished_text = if ctx.program_finished { "  status=finished" } else { "" };
+        let reverse_mode = ctx.reverse_index.is_some();
+        let mode_text = if reverse_mode { "reverse" } else { ctx.mode.as_str() };
+        let target_text = if ctx.run_target.editing {
+            format!("  target={}|", ctx.run_target.query)
         } else {
             String::new()
         };
@@ -60,7 +55,7 @@ impl PaneStatusBar {
             state.step_count,
             state.current_thread.to_u32(),
             focus_name,
-            status.meta.history.len(),
+            ctx.history.len(),
             HISTORY_CAPACITY,
             search_text,
             finished_text,
