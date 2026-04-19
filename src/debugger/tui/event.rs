@@ -8,7 +8,7 @@ use crossterm::event::{
 use crate::debugger::channel::CommandSender;
 use crate::debugger::tui::pane::FocusPane;
 use crate::debugger::tui::pane::panes::Panes;
-use crate::debugger::tui::{Meta, RunMode};
+use crate::debugger::tui::{Context, RunMode};
 use crate::{DebuggerCommand, DebuggerState};
 
 /// An action for an event result in a loop.
@@ -24,14 +24,14 @@ pub fn handle(
     panes: &mut Panes,
     display_state: &mut DebuggerState,
     state: &DebuggerState,
-    meta: &mut Meta,
+    ctx: &mut Context,
     command_tx: &CommandSender,
 ) -> io::Result<Action> {
     if !event::poll(Duration::from_millis(EVENT_POLL_MS))? {
         return Ok(Action::Continue);
     }
 
-    let Meta {
+    let Context {
         mode,
         run_target,
         run_to_frame_target,
@@ -39,7 +39,8 @@ pub fn handle(
         history,
         blink_epoch,
         reverse_index,
-    } = meta;
+        ..
+    } = ctx;
 
     let ev = event::read()?;
     if let Event::Key(key) = ev {
