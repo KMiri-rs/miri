@@ -240,7 +240,7 @@ fn render(panes: &mut Panes, frame: &mut Frame<'_>, state: &DebuggerState, ctx: 
     panes.update_area(frame.area());
 
     panes.render_stack(frame, state, ctx.blink_epoch);
-    panes.render_mir(frame, state);
+    panes.render_src(frame, state);
     panes.render_locals(frame, state);
     panes.render_memory(frame, state);
     panes.render_output(frame, state);

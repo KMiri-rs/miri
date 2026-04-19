@@ -8,8 +8,8 @@ pub mod panes;
 
 pub mod locals;
 pub mod memory;
-pub mod mir;
 pub mod output;
+pub mod src;
 pub mod stack;
 pub mod status_bar;
 
@@ -28,7 +28,7 @@ fn hscroll_text(text: &str, offset: u16) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FocusPane {
     Stack,
-    Mir,
+    Src,
     Locals,
     Memory,
     Output,
@@ -38,8 +38,8 @@ pub enum FocusPane {
 impl FocusPane {
     pub fn next(self) -> Self {
         match self {
-            FocusPane::Stack => FocusPane::Mir,
-            FocusPane::Mir => FocusPane::Locals,
+            FocusPane::Stack => FocusPane::Src,
+            FocusPane::Src => FocusPane::Locals,
             FocusPane::Locals => FocusPane::Memory,
             FocusPane::Memory => FocusPane::Output,
             FocusPane::Output => FocusPane::Stack,
@@ -50,8 +50,8 @@ impl FocusPane {
     pub fn previous(self) -> Self {
         match self {
             FocusPane::Stack => FocusPane::Output,
-            FocusPane::Mir => FocusPane::Stack,
-            FocusPane::Locals => FocusPane::Mir,
+            FocusPane::Src => FocusPane::Stack,
+            FocusPane::Locals => FocusPane::Src,
             FocusPane::Memory => FocusPane::Locals,
             FocusPane::Output => FocusPane::Memory,
             FocusPane::StatusBar => unreachable!(),
@@ -61,7 +61,7 @@ impl FocusPane {
     pub fn as_str(self) -> &'static str {
         match self {
             FocusPane::Stack => "stack",
-            FocusPane::Mir => "mir",
+            FocusPane::Src => "src",
             FocusPane::Locals => "locals",
             FocusPane::Memory => "memory",
             FocusPane::Output => "output",
