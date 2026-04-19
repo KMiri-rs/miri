@@ -25,7 +25,7 @@ use crate::debugger::tui::pane::panes::Panes;
 
 mod event;
 mod pane;
-mod theme;
+pub mod theme;
 
 const HISTORY_CAPACITY: usize = 1000;
 type Terminal = ratatui::Terminal<CrosstermBackend<io::Stdout>>;
@@ -239,6 +239,7 @@ fn finished_without_snapshot(terminal: &mut Terminal) -> io::Result<()> {
 fn render(panes: &mut Panes, frame: &mut Frame<'_>, state: &DebuggerState, ctx: &Context) {
     panes.update_area(frame.area());
 
+    panes.render_mir(frame, state);
     panes.render_stack(frame, state, ctx.blink_epoch);
     panes.render_src(frame, state);
     panes.render_locals(frame, state);

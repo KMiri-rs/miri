@@ -1,9 +1,10 @@
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Modifier, Style, Styled};
 use ratatui::text::{Line, Span as RatatuiSpan};
 use rustc_data_structures::either::Either;
-use rustc_middle::mir;
+use rustc_middle::mir::{self, BasicBlockData};
 use rustc_span::source_map::SourceMap;
 
+use crate::debugger::tui::theme::STYLE_HIGHTLIGHTED;
 use crate::*;
 
 #[derive(Clone, Debug)]
@@ -17,10 +18,13 @@ pub struct FrameInfo {
 
 #[derive(Clone, Debug)]
 pub struct CurrentLocation {
-    // Full source code with current location highlighted.
-    pub render: Vec<Line<'static>>,
+    /// Full source code with current location highlighted.
+    pub render_src: Vec<Line<'static>>,
     pub line_start: u32,
     pub line_end: u32,
+    /// A basic block with current location highlighted.
+    pub render_mir: Vec<String>,
+    pub render_mir_highlighted_idx: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -78,18 +82,23 @@ impl DebuggerState {
         let sm = ecx.tcx.sess.source_map();
         let stack = ecx.active_thread_stack();
 
-        let stack_frames = stack.iter().rev().map(|frame| capture_frame(sm, frame)).collect();
+        let stack_frames: Vec<_> =
+            stack.iter().rev().map(|frame| capture_frame(sm, frame)).collect();
 
         let current_location =
             stack.last().map(|frame| capture_location(ecx, frame)).unwrap_or_else(|| {
                 CurrentLocation {
-                    render: vec!["No stack frame found.".into()],
+                    render_src: vec!["No stack frame found.".into()],
                     line_start: 0,
                     line_end: 0,
+                    render_mir: vec!["No basic block found.".into()],
+                    render_mir_highlighted_idx: 0,
                 }
             });
 
         let locals = stack.last().map(capture_locals).unwrap_or_default();
+        let in_user_code =
+            stack_frames.last().map(|frame| is_user_code_path(&frame.source_file)).unwrap_or(true);
         let cfg_lines = stack.last().map(capture_cfg_lines).unwrap_or_default();
         let memory = capture_memory(ecx, &locals);
         let output = ecx
@@ -99,8 +108,6 @@ impl DebuggerState {
             .iter()
             .map(|(is_stderr, text)| OutputLine { is_stderr: *is_stderr, text: text.clone() })
             .collect();
-        // let in_user_code = is_user_code_path(&current_location.source_file);
-        let in_user_code = false;
 
         Self {
             current_thread: ecx.active_thread(),
@@ -336,9 +343,11 @@ fn capture_location(
     // 3. Extract the raw source text snippet
     let Ok(source_text) = sm.span_to_snippet(body_span) else {
         return CurrentLocation {
-            render: vec![Line::from("Could not load source snippet")],
+            render_src: vec!["Could not load source snippet.".into()],
             line_start,
             line_end,
+            render_mir: vec!["Could not load basic block.".into()],
+            render_mir_highlighted_idx: 0,
         };
     };
 
@@ -389,7 +398,7 @@ fn capture_location(
             // Part 2: The highlighted text (Styled with BOLD and UNDERLINE)
             line_spans.push(RatatuiSpan::styled(
                 text_line[h_start_in_line..h_end_in_line].to_string(),
-                Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan),
+                STYLE_HIGHTLIGHTED,
             ));
 
             // Part 3: Text after the highlight
@@ -404,5 +413,24 @@ fn capture_location(
         current_pos = line_end + rustc_span::BytePos(1);
     }
 
-    CurrentLocation { render: lines, line_start, line_end }
+    let bb = body.basic_blocks.get(current_loc.block).unwrap();
+    let (render_mir, render_mir_highlighted_idx) = current_mir(bb, current_loc.statement_index);
+
+    CurrentLocation {
+        render_src: lines,
+        line_start,
+        line_end,
+        render_mir,
+        render_mir_highlighted_idx,
+    }
+}
+
+fn current_mir(bb: &BasicBlockData<'_>, stmt_idx: usize) -> (Vec<String>, u32) {
+    let stmt_len = bb.statements.len();
+    let hightlighted = if stmt_idx < stmt_len { stmt_idx } else { stmt_len };
+
+    let mut v = Vec::with_capacity(stmt_len + 1);
+    v.extend(bb.statements.iter().map(|stmt| format!("{:?}", stmt.kind)));
+    v.push(format!("{:?}", bb.terminator().kind));
+    (v, hightlighted.try_into().unwrap())
 }
