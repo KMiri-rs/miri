@@ -216,7 +216,7 @@ impl Panes {
     }
 
     pub fn navigate_down(&mut self, state: &DebuggerState) {
-        self.up(|stack| stack.step_stack_selection(state, true));
+        self.down(state, |stack| stack.step_stack_selection(state, true));
     }
 
     pub fn scroll_down(&mut self, state: &DebuggerState) {
