@@ -25,7 +25,7 @@ fn hscroll_text(text: &str, offset: u16) -> String {
     text.chars().skip(usize::from(offset)).collect()
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FocusPane {
     Stack,
     Mir,
