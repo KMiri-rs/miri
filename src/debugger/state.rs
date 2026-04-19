@@ -84,6 +84,8 @@ impl DebuggerState {
 
         let stack_frames: Vec<_> =
             stack.iter().rev().map(|frame| capture_frame(sm, frame)).collect();
+        let in_user_code =
+            stack_frames.first().map(|frame| is_user_code_path(&frame.source_file)).unwrap_or(true);
 
         let current_location =
             stack.last().map(|frame| capture_location(ecx, frame)).unwrap_or_else(|| {
@@ -97,8 +99,6 @@ impl DebuggerState {
             });
 
         let locals = stack.last().map(capture_locals).unwrap_or_default();
-        let in_user_code =
-            stack_frames.last().map(|frame| is_user_code_path(&frame.source_file)).unwrap_or(true);
         let cfg_lines = stack.last().map(capture_cfg_lines).unwrap_or_default();
         let memory = capture_memory(ecx, &locals);
         let output = ecx

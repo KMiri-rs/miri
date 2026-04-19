@@ -15,7 +15,7 @@ impl PaneSrc {
     pub fn widget(&self, state: &DebuggerState, focus: bool) -> Paragraph<'static> {
         let fpath = state
             .stack_frames
-            .last()
+            .first()
             .map(|frame| {
                 let file = &frame.source_file;
                 let start = state.current_location.line_start;
