@@ -4,14 +4,14 @@ use crossterm::event::KeyCode;
 use ratatui::prelude::*;
 
 use crate::DebuggerState;
-use crate::debugger::tui::RunTargetState;
 use crate::debugger::tui::pane::FocusPane;
 use crate::debugger::tui::pane::locals::PaneLocals;
 use crate::debugger::tui::pane::memory::PaneMemory;
 use crate::debugger::tui::pane::mir::PaneMir;
 use crate::debugger::tui::pane::output::PaneOutput;
 use crate::debugger::tui::pane::stack::PaneStack;
-use crate::debugger::tui::pane::status_bar::{PaneStatusBar, StatusBar};
+use crate::debugger::tui::pane::status_bar::PaneStatusBar;
+use crate::debugger::tui::{Context, RunTargetState};
 
 #[derive(Debug)]
 pub struct Panes {
@@ -97,7 +97,7 @@ impl Panes {
     }
 
     fn is_focused(&self, pane: FocusPane) -> bool {
-        matches!(self.focus, pane)
+        self.focus == pane
     }
 
     pub fn render_stack(&self, frame: &mut Frame<'_>, state: &DebuggerState, blink_epoch: Instant) {
@@ -126,14 +126,8 @@ impl Panes {
         frame.render_widget(list, self.output.rect);
     }
 
-    pub fn render_status_bar(
-        &self,
-        frame: &mut Frame<'_>,
-        state: &DebuggerState,
-        status_bar: &StatusBar<'_>,
-    ) {
-        let list =
-            self.status_bar.widget(state, self.focus.as_str(), &self.stack.search, status_bar);
+    pub fn render_status_bar(&self, frame: &mut Frame<'_>, state: &DebuggerState, ctx: &Context) {
+        let list = self.status_bar.widget(state, self.focus.as_str(), &self.stack.search, ctx);
         frame.render_widget(list, self.status_bar.rect);
     }
 

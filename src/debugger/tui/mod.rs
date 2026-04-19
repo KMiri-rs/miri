@@ -22,7 +22,6 @@ use super::state::LocalKind;
 use super::{DebuggerCommand, DebuggerState};
 use crate::debugger::tui::event::Action;
 use crate::debugger::tui::pane::panes::Panes;
-use crate::debugger::tui::pane::status_bar::StatusBar;
 
 mod event;
 mod pane;
@@ -63,7 +62,7 @@ struct RunTargetState {
     query: String,
 }
 
-pub struct Meta {
+pub struct Context {
     mode: RunMode,
     run_target: RunTargetState,
     run_to_frame_target: Option<String>,
@@ -71,11 +70,12 @@ pub struct Meta {
     history: VecDeque<DebuggerState>,
     blink_epoch: Instant,
     reverse_index: Option<usize>,
+    program_finished: bool,
 }
 
-impl Meta {
-    fn new() -> Meta {
-        Meta {
+impl Context {
+    fn new() -> Context {
+        Context {
             mode: RunMode::Step,
             run_target: RunTargetState::default(),
             run_to_frame_target: None,
@@ -83,6 +83,7 @@ impl Meta {
             history: VecDeque::with_capacity(HISTORY_CAPACITY),
             blink_epoch: Instant::now(),
             reverse_index: None,
+            program_finished: false,
         }
     }
 
@@ -148,10 +149,10 @@ fn tui_loop(
     command_tx: CommandSender,
 ) -> io::Result<()> {
     let mut panes = Panes::new(Rect::default());
-    let mut meta = Meta::new();
+    let mut ctx = Context::new();
 
     while let Ok(state) = state_rx.recv() {
-        meta.on_new_state(&state);
+        ctx.on_new_state(&state);
 
         panes.stack.refresh(&state);
         if !state.stack_frames.is_empty() {
@@ -162,17 +163,14 @@ fn tui_loop(
 
         let mut display_state = state.clone();
 
-        if meta.reached_target_frame(&state) {
-            meta.mode = RunMode::Step;
-            meta.run_to_frame_target = None;
+        if ctx.reached_target_frame(&state) {
+            ctx.mode = RunMode::Step;
+            ctx.run_to_frame_target = None;
         }
 
         // In fast-forward mode, keep rendering every step without waiting for input.
-        if meta.mode.is_fast_mode(state.in_user_code) {
-            terminal.draw(|frame| {
-                let status_bar = StatusBar { meta: &meta, program_finished: false };
-                render(&mut panes, frame, &display_state, &status_bar)
-            })?;
+        if ctx.mode.is_fast_mode(state.in_user_code) {
+            terminal.draw(|frame| render(&mut panes, frame, &display_state, &ctx))?;
 
             if event::fast_quit()? {
                 let _ = command_tx.send(DebuggerCommand::Quit);
@@ -181,17 +179,14 @@ fn tui_loop(
             continue;
         }
 
-        if matches!(meta.mode, RunMode::RunToMain) && state.in_user_code {
-            meta.mode = RunMode::Step;
+        if matches!(ctx.mode, RunMode::RunToMain) && state.in_user_code {
+            ctx.mode = RunMode::Step;
         }
 
         loop {
-            terminal.draw(|frame| {
-                let status_bar = StatusBar { meta: &meta, program_finished: false };
-                render(&mut panes, frame, &display_state, &status_bar)
-            })?;
+            terminal.draw(|frame| render(&mut panes, frame, &display_state, &ctx))?;
 
-            match event::handle(&mut panes, &mut display_state, &state, &mut meta, &command_tx)? {
+            match event::handle(&mut panes, &mut display_state, &state, &mut ctx, &command_tx)? {
                 Action::Continue => (),
                 Action::Break => break,
                 Action::Return => return Ok(()),
@@ -200,8 +195,9 @@ fn tui_loop(
     }
 
     // Program is done; keep the final snapshot visible until the user explicitly quits.
-    if let Some(state) = meta.last_state.take() {
-        finished(terminal, panes, state, meta, command_tx)
+    ctx.program_finished = true;
+    if let Some(state) = ctx.last_state.take() {
+        finished(terminal, panes, state, ctx, command_tx)
     } else {
         finished_without_snapshot(terminal)
     }
@@ -211,20 +207,17 @@ fn finished(
     terminal: &mut Terminal,
     mut panes: Panes,
     state: DebuggerState,
-    mut meta: Meta,
+    mut ctx: Context,
     command_tx: CommandSender,
 ) -> io::Result<()> {
-    meta.mode = RunMode::Step;
-    meta.reverse_index = None;
+    ctx.mode = RunMode::Step;
+    ctx.reverse_index = None;
     panes.stack.search.editing = false;
     let mut display_state = state.clone();
     loop {
-        terminal.draw(|frame| {
-            let status_bar = StatusBar { meta: &meta, program_finished: true };
-            render(&mut panes, frame, &display_state, &status_bar)
-        })?;
+        terminal.draw(|frame| render(&mut panes, frame, &display_state, &ctx))?;
 
-        match event::handle(&mut panes, &mut display_state, &state, &mut meta, &command_tx)? {
+        match event::handle(&mut panes, &mut display_state, &state, &mut ctx, &command_tx)? {
             Action::Continue => (),
             Action::Break | Action::Return => return Ok(()),
         }
@@ -243,18 +236,13 @@ fn finished_without_snapshot(terminal: &mut Terminal) -> io::Result<()> {
     }
 }
 
-fn render(
-    panes: &mut Panes,
-    frame: &mut Frame<'_>,
-    state: &DebuggerState,
-    status_bar: &StatusBar<'_>,
-) {
+fn render(panes: &mut Panes, frame: &mut Frame<'_>, state: &DebuggerState, ctx: &Context) {
     panes.update_area(frame.area());
 
-    panes.render_stack(frame, state, status_bar.meta.blink_epoch);
+    panes.render_stack(frame, state, ctx.blink_epoch);
     panes.render_mir(frame, state);
     panes.render_locals(frame, state);
     panes.render_memory(frame, state);
     panes.render_output(frame, state);
-    panes.render_status_bar(frame, state, status_bar);
+    panes.render_status_bar(frame, state, ctx);
 }
