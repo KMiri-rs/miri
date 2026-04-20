@@ -24,6 +24,9 @@ pub struct Panes {
     pub memory: PaneMemory,
     pub output: PaneOutput,
     pub status_bar: PaneStatusBar,
+    /// The default value is true to disable manual scrolling for panes (like mir and src)
+    /// where the contents are preferred to centering.
+    pub freeze: bool,
 }
 
 impl Panes {
@@ -74,6 +77,7 @@ impl Panes {
             memory: PaneMemory::new(memory),
             output: PaneOutput::new(output),
             status_bar: PaneStatusBar::new(status_bar),
+            freeze: true,
         }
     }
 
@@ -113,7 +117,10 @@ impl Panes {
         self.focus == pane
     }
 
-    pub fn render_mir(&self, frame: &mut Frame<'_>, state: &DebuggerState) {
+    pub fn render_mir(&mut self, frame: &mut Frame<'_>, state: &DebuggerState) {
+        if self.freeze {
+            self.mir.view_centering(state);
+        }
         let paragraph = self.mir.widget(state, self.is_focused(FocusPane::Mir));
         frame.render_widget(paragraph, self.mir.rect);
     }
@@ -124,7 +131,10 @@ impl Panes {
         frame.render_stateful_widget(list, self.stack.rect, &mut list_state);
     }
 
-    pub fn render_src(&self, frame: &mut Frame<'_>, state: &DebuggerState) {
+    pub fn render_src(&mut self, frame: &mut Frame<'_>, state: &DebuggerState) {
+        if self.freeze {
+            self.src.view_centering(state);
+        }
         let paragraph = self.src.widget(state, self.is_focused(FocusPane::Src));
         frame.render_widget(paragraph, self.src.rect);
     }

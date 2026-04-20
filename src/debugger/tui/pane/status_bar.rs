@@ -35,11 +35,11 @@ impl PaneStatusBar {
         let keys_text = if ctx.run_target.editing {
             "keys: type function name  enter run-to-frame  esc cancel  backspace delete"
         } else if search.editing {
-            "keys: type to filter stack  enter/esc// exit search  backspace delete  [ ] scroll-cmds  q quit"
+            "keys: type to filter stack  enter/esc// exit search  backspace delete  [ ] scroll-cmds  F toggle-freeze  q quit"
         } else if ctx.program_finished {
-            "keys: q quit  / search  . next  , prev  b step-back  [ ] scroll-cmds  esc clear  tab switch  arrows scroll"
+            "keys: q quit  / search  . next  , prev  b step-back  [ ] scroll-cmds  F toggle-freeze  esc clear  tab switch  arrows scroll"
         } else {
-            "keys: n/space step  b step-back  p run-to-selected  P run-to-name  c continue  m run-to-main  e run-to-end  / search  . next  , prev  [ ] scroll-cmds  q quit  tab switch  arrows scroll"
+            "keys: n/space step  b step-back  p run-to-selected  P run-to-name  c continue  m run-to-main  e run-to-end  / search  . next  , prev  [ ] scroll-cmds F toggle-freeze  q quit  tab switch  arrows scroll"
         };
         let finished_text = if ctx.program_finished { "  status=finished" } else { "" };
         let reverse_mode = ctx.reverse_index.is_some();

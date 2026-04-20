@@ -103,6 +103,7 @@ pub fn handle(
                 },
             KeyCode::Char('.') => panes.stack.goto_next_search_match(),
             KeyCode::Char(',') => panes.stack.goto_prev_search_match(),
+            KeyCode::Char('F') => panes.freeze ^= true,
             KeyCode::Char('[') => {
                 panes.status_bar.hscroll = panes.status_bar.hscroll.saturating_sub(1);
             }
