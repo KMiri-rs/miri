@@ -121,7 +121,7 @@ pub fn spawn_tui(
         .name("miri-debugger-tui".to_string())
         .spawn(move || {
             if let Err(err) = run_tui(state_rx, command_tx) {
-                eprintln!("debugger TUI error: {err}");
+                panic!("debugger TUI error: {err}");
             }
         })
         .expect("failed to spawn debugger TUI thread")
