@@ -14,9 +14,29 @@ impl PaneMir {
         PaneMir { rect, ..Default::default() }
     }
 
+    /// Center highlighted mir in view scope. Should be called prior to widget being rendered.
+    pub fn view_centering(&mut self, state: &DebuggerState) {
+        let height: usize = self.rect.height.into();
+        let scroll: usize = self.scroll.into();
+        let mir_idx: usize = state.current_location.render_mir_highlighted_idx.into();
+        let rendered_lines_before_mir = Self::rendered_lines_before_mir(state);
+
+        self.scroll =
+            (rendered_lines_before_mir + mir_idx).saturating_sub(height / 2).try_into().unwrap();
+    }
+
+    fn rendered_lines_before_mir(state: &DebuggerState) -> usize {
+        state.cfg_lines.len() + 1
+    }
+
+    /// The exact number of lines to render the widget.
+    fn rendered_lines(state: &DebuggerState) -> usize {
+        Self::rendered_lines_before_mir(state) + state.current_location.render_mir.len()
+    }
+
     pub fn widget(&self, state: &DebuggerState, focus: bool) -> Paragraph<'static> {
-        let mut lines =
-            Vec::with_capacity(1 + state.cfg_lines.len() + state.current_location.render_mir.len());
+        let rendered_lines = Self::rendered_lines(state);
+        let mut lines = Vec::with_capacity(rendered_lines);
 
         lines.extend(state.cfg_lines.iter().map(|line| {
             let mut diagram = format!("bb{}", line.block);
@@ -43,16 +63,20 @@ impl PaneMir {
         }));
 
         lines.push(Line::default());
+        assert_eq!(lines.len(), Self::rendered_lines_before_mir(state));
+
         let len = state.current_location.render_mir.len();
+        let highlighted_idx: usize = state.current_location.render_mir_highlighted_idx.into();
         lines.extend(state.current_location.render_mir.iter().enumerate().map(|(idx, mir)| {
             let line = Line::from(hscroll_text(mir, self.hscroll));
-            if idx == state.current_location.render_mir_highlighted_idx.to_usize() {
+            if idx == highlighted_idx {
                 line.style(if idx + 1 == len { STYLE_TERMINATOR } else { STYLE_HIGHTLIGHTED })
             } else {
                 line
             }
         }));
 
+        assert_eq!(lines.len(), rendered_lines);
         Paragraph::new(lines)
             .block(
                 Block::default()

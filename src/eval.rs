@@ -609,7 +609,7 @@ pub fn eval_entry<'tcx>(
         // (There could still be errors in the session if there are other interpreters.)
         ecx.machine.debugger = None;
         if let Some(join_handle) = debugger_tui.take() {
-            let _ = join_handle.join();
+            join_handle.join().unwrap();
         }
         return match NonZeroI32::new(return_code) {
             None => Ok(()),
@@ -621,7 +621,7 @@ pub fn eval_entry<'tcx>(
     assert!(tcx.dcx().has_errors().is_some());
     ecx.machine.debugger = None;
     if let Some(join_handle) = debugger_tui.take() {
-        let _ = join_handle.join();
+        join_handle.join().unwrap();
     }
     Err(NonZeroI32::new(rustc_driver::EXIT_FAILURE).unwrap())
 }
