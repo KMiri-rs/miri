@@ -11,20 +11,28 @@ use crate::*;
 pub struct FrameInfo {
     pub fn_name: String,
     pub source_file: String,
-    pub line_start: u32,
-    pub line_end: u32,
+    pub line_start: u16,
+    pub line_end: u16,
     pub locals: Vec<LocalInfo>,
 }
 
 #[derive(Clone, Debug)]
 pub struct CurrentLocation {
     /// Full source code with current location highlighted.
-    pub render_src: Vec<Line<'static>>,
-    pub line_start: u32,
-    pub line_end: u32,
+    pub render_src: RenderSrc,
+    /// The line number of start and end in source file.
+    pub line_start: u16,
+    pub line_end: u16,
     /// A basic block with current location highlighted.
     pub render_mir: Vec<String>,
-    pub render_mir_highlighted_idx: u32,
+    pub render_mir_highlighted_idx: u16,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RenderSrc {
+    /// Full source code with current location highlighted.
+    pub lines: Vec<Line<'static>>,
+    pub highlighted_idx: Option<[u16; 2]>,
 }
 
 #[derive(Clone, Debug)]
@@ -90,7 +98,10 @@ impl DebuggerState {
         let current_location =
             stack.last().map(|frame| capture_location(ecx, frame)).unwrap_or_else(|| {
                 CurrentLocation {
-                    render_src: vec!["No stack frame found.".into()],
+                    render_src: RenderSrc {
+                        lines: vec!["No stack frame found.".into()],
+                        highlighted_idx: None,
+                    },
                     line_start: 0,
                     line_end: 0,
                     render_mir: vec!["No basic block found.".into()],
@@ -169,9 +180,9 @@ pub fn find_name_for_local(body: &mir::Body<'_>, local: mir::Local) -> Option<ru
     })
 }
 
-fn pos_to_line_nr(sm: &SourceMap, pos: rustc_span::BytePos) -> u32 {
+fn pos_to_line_nr(sm: &SourceMap, pos: rustc_span::BytePos) -> u16 {
     let loc = sm.lookup_char_pos(pos);
-    u32::try_from(loc.line).unwrap_or(0)
+    u16::try_from(loc.line).unwrap_or(0)
 }
 
 fn capture_frame(sm: &SourceMap, frame: &Frame<'_, Provenance, FrameExtra<'_>>) -> FrameInfo {
@@ -343,7 +354,10 @@ fn capture_location(
     // 3. Extract the raw source text snippet
     let Ok(source_text) = sm.span_to_snippet(body_span) else {
         return CurrentLocation {
-            render_src: vec!["Could not load source snippet.".into()],
+            render_src: RenderSrc {
+                lines: vec!["Could not load source snippet.".into()],
+                highlighted_idx: None,
+            },
             line_start,
             line_end,
             render_mir: vec!["Could not load basic block.".into()],
@@ -356,12 +370,13 @@ fn capture_location(
     let highlight_lo = highlight_span.lo();
     let highlight_hi = highlight_span.hi();
 
-    let mut lines = Vec::new();
+    let mut render_src = RenderSrc::default();
+    let lines = &mut render_src.lines;
 
     let mut current_pos = body_lo;
 
     // Split the source by lines and construct Ratatui Line/Span structures
-    for text_line in source_text.lines() {
+    for (idx, text_line) in source_text.lines().enumerate() {
         let line_len = text_line.len().try_into().unwrap();
         let line_end = current_pos + rustc_span::BytePos(line_len);
 
@@ -405,6 +420,13 @@ fn capture_location(
             if h_end_in_line < text_line.len() {
                 line_spans.push(RatatuiSpan::raw(text_line[h_end_in_line..].to_string()));
             }
+
+            // Update highlighted_idx
+            let idx = u16::try_from(idx).unwrap();
+            render_src.highlighted_idx = Some(match render_src.highlighted_idx {
+                Some([start, end]) => [start.min(idx), end.max(idx)],
+                None => [idx; 2],
+            });
         }
 
         lines.push(Line::from(line_spans));
@@ -416,16 +438,10 @@ fn capture_location(
     let bb = body.basic_blocks.get(current_loc.block).unwrap();
     let (render_mir, render_mir_highlighted_idx) = current_mir(bb, current_loc.statement_index);
 
-    CurrentLocation {
-        render_src: lines,
-        line_start,
-        line_end,
-        render_mir,
-        render_mir_highlighted_idx,
-    }
+    CurrentLocation { render_src, line_start, line_end, render_mir, render_mir_highlighted_idx }
 }
 
-fn current_mir(bb: &BasicBlockData<'_>, stmt_idx: usize) -> (Vec<String>, u32) {
+fn current_mir(bb: &BasicBlockData<'_>, stmt_idx: usize) -> (Vec<String>, u16) {
     let stmt_len = bb.statements.len();
     let hightlighted = if stmt_idx < stmt_len { stmt_idx } else { stmt_len };
 
