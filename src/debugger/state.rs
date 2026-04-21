@@ -42,6 +42,7 @@ pub struct LocalInfo {
     pub value: String,
     pub ty: String,
     pub state: LocalKind,
+    pub alloc_id: Option<AllocId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,9 +62,16 @@ pub struct CfgLine {
 }
 
 #[derive(Clone, Debug)]
-pub struct MemoryInfo {
-    pub name: String,
-    pub detail: String,
+pub struct AllocInfo {
+    pub alloc_id: AllocId,
+    pub base_addr: u64,
+    pub alive: bool,
+    pub kind: MemoryKind,
+    /// Allocation size in bytes.
+    pub size: usize,
+    pub align: u64,
+    pub provenance_exposed: bool,
+    pub locals: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -81,7 +89,7 @@ pub struct DebuggerState {
     pub current_location: CurrentLocation,
     pub cfg_lines: Vec<CfgLine>,
     pub locals: Vec<LocalInfo>,
-    pub memory: Vec<MemoryInfo>,
+    pub alloc: Vec<AllocInfo>,
     pub output: Vec<OutputLine>,
 }
 
@@ -128,7 +136,7 @@ impl DebuggerState {
             current_location,
             cfg_lines,
             locals,
-            memory,
+            alloc: memory,
             output,
         }
     }
@@ -156,6 +164,20 @@ fn capture_locals(frame: &Frame<'_, Provenance, FrameExtra<'_>>) -> Vec<LocalInf
             let local_decl = &body.local_decls[local_idx];
             let raw = format!("{local:?}");
             let (value, kind) = prettify_local_value(&raw, &local_decl.ty.to_string());
+            let alloc_id = match local.as_mplace_or_imm() {
+                Some(Either::Left((ptr, _))) => ptr.provenance.and_then(|prov| prov.get_alloc_id()),
+                Some(Either::Right(imm)) => {
+                    match imm {
+                        Immediate::Scalar(Scalar::Ptr(ptr, _)) => ptr.provenance.get_alloc_id(),
+                        // FIXME: we only extract the alloc id of data pointer here, but miss
+                        // the vtable ptr for dyn pointer here.
+                        Immediate::ScalarPair(Scalar::Ptr(ptr, _), _) =>
+                            ptr.provenance.get_alloc_id(),
+                        _ => None,
+                    }
+                }
+                None => None,
+            };
             LocalInfo {
                 idx: format!("_{idx}"),
                 name: find_name_for_local(body, local_idx)
@@ -164,6 +186,7 @@ fn capture_locals(frame: &Frame<'_, Provenance, FrameExtra<'_>>) -> Vec<LocalInf
                 value,
                 ty: local_decl.ty.to_string(),
                 state: kind,
+                alloc_id,
             }
         })
         .collect()
@@ -235,27 +258,34 @@ fn capture_cfg_lines(frame: &Frame<'_, Provenance, FrameExtra<'_>>) -> Vec<CfgLi
         .collect()
 }
 
-fn capture_memory(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<MemoryInfo> {
+fn capture_memory(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<AllocInfo> {
     let mut entries = Vec::new();
 
+    let alloc_map = ecx.memory.alloc_map();
+    let alloc_state = &*ecx.machine.alloc_addresses.borrow();
     let alloc_spans = ecx.machine.allocation_spans.borrow();
-    entries.push(MemoryInfo {
-        name: "allocations".to_string(),
-        detail: alloc_spans.len().to_string(),
-    });
 
-    for (alloc_id, (_alloc, dealloc)) in alloc_spans.iter().take(32) {
-        entries.push(MemoryInfo {
-            name: format!("{alloc_id:?}"),
-            detail: if dealloc.is_some() { "deallocated" } else { "live" }.to_string(),
+    for (&alloc_id, (_alloc, dealloc)) in alloc_spans.iter().take(32) {
+        let (kind, allocation) = alloc_map.get(alloc_id).unwrap();
+        let base_addr = *alloc_state.base_addr.get(&alloc_id).unwrap();
+        entries.push(AllocInfo {
+            alloc_id,
+            base_addr,
+            alive: dealloc.is_none(),
+            kind: *kind,
+            size: allocation.len(),
+            align: allocation.align.bytes(),
+            provenance_exposed: alloc_state.exposed.contains(&alloc_id),
+            locals: locals
+                .iter()
+                .filter(|local| local.alloc_id == Some(alloc_id))
+                .map(|local| if local.name.is_empty() { &local.idx } else { &local.name })
+                .cloned()
+                .collect(),
         });
     }
 
-    for local in locals.iter().filter(|l| l.state == LocalKind::Pointer).take(16) {
-        entries
-            .push(MemoryInfo { name: format!("ptr {}", local.idx), detail: local.value.clone() });
-    }
-
+    entries.sort_unstable_by_key(|e| e.alloc_id);
     entries
 }
 
