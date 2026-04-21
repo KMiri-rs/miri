@@ -210,8 +210,8 @@ impl Panes {
                 }
             }
             FocusPane::Memory =>
-                if !state.memory.is_empty() {
-                    let max = u16::try_from(state.memory.len()).unwrap() - 1;
+                if !state.alloc.is_empty() {
+                    let max = u16::try_from(state.alloc.len()).unwrap() - 1;
                     self.memory.scroll = self.memory.scroll.saturating_add(1).min(max);
                 },
             FocusPane::Output =>

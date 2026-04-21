@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use super::*;
 use crate::debugger::state::LocalKind;
 
@@ -13,34 +15,60 @@ impl PaneMemory {
         PaneMemory { rect, ..Default::default() }
     }
 
-    pub fn widget(&self, state: &DebuggerState, focus: bool) -> List<'static> {
-        let items: Vec<ListItem<'_>> = state
-            .memory
+    pub fn widget(&self, state: &DebuggerState, focus: bool) -> Table<'static> {
+        let rows: Vec<_> = state
+            .alloc
             .iter()
-            .skip(self.scroll.into())
-            .map(|mem| {
-                let live = mem.detail.contains("live") || mem.name.contains("ptr");
-                let blocks = if live { "■■■■■■" } else { "□□□□□□" };
-                let block_style = if live {
-                    Style::default().fg(THEME_ACCENT)
-                } else {
-                    Style::default().fg(THEME_DIM)
-                };
-                let line = format!(
-                    "{}  {} => {}",
-                    blocks,
-                    hscroll_text(&mem.name, self.hscroll),
-                    hscroll_text(&mem.detail, self.hscroll)
-                );
-                ListItem::new(Line::from(line).style(block_style))
+            .map(|alloc| {
+                let alive = alloc.alive;
+                Row::new([
+                    right_cell_with_alive(format!("{}", alloc.alloc_id.0), alive),
+                    right_cell_with_alive(format!("0x{:x}", alloc.base_addr), alive),
+                    right_cell_with_alive(format!("{alive:?}"), alive),
+                    right_cell_with_alive(format!("{:?}", alloc.kind), alive),
+                    right_cell_with_alive(hsize(alloc.size), alive),
+                    right_cell_with_alive(hsize(alloc.align), alive),
+                    right_cell_with_alive(format!("{}", alloc.provenance_exposed), alive),
+                    right_cell_with_alive(alloc.locals.join(","), alive),
+                ])
             })
             .collect();
 
-        List::new(items).block(
-            Block::default()
-                .title("Memory")
-                .borders(Borders::ALL)
-                .border_style(pane_border_style(focus)),
-        )
+        let header =
+            ["AllocID", "BaseAddr", "Alive", "Kind", "Size", "Align", "ProvExposed", "Locals"];
+        let widths = {
+            let widths = [10u16, 15, 8, 12, 10, 10, 12, 0];
+            let sum: u16 = widths.iter().sum();
+            let mut widths = widths.map(|w| Constraint::Percentage(w * 80 / sum));
+            *widths.last_mut().unwrap() = Constraint::Fill(1);
+            widths
+        };
+        Table::new(rows, widths)
+            .header(
+                Row::new(header.map(right_cell))
+                    .style(Style::default().add_modifier(Modifier::BOLD)),
+            )
+            .block(
+                Block::default()
+                    .title("Allocations")
+                    .borders(Borders::ALL)
+                    .border_style(pane_border_style(focus)),
+            )
     }
+}
+
+fn right_cell_with_alive(s: impl Into<Cow<'static, str>>, alive: bool) -> Cell<'static> {
+    let mut text = Text::from(s.into()).right_aligned();
+    if !alive {
+        text = text.fg(THEME_DIM);
+    }
+    Cell::from(text)
+}
+
+fn right_cell(s: impl Into<Cow<'static, str>>) -> Cell<'static> {
+    Cell::from(Text::from(s.into()).right_aligned())
+}
+
+fn hsize(n: impl humansize::ToF64 + humansize::Unsigned) -> String {
+    humansize::format_size(n, humansize::BINARY)
 }
