@@ -1,6 +1,7 @@
 use ratatui::style::{Color, Modifier, Style, Styled};
 use ratatui::text::{Line, Span as RatatuiSpan};
 use rustc_data_structures::either::Either;
+use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{self, BasicBlockData};
 use rustc_span::source_map::SourceMap;
 
@@ -71,6 +72,7 @@ pub struct AllocInfo {
     pub size: Option<usize>,
     pub align: Option<u64>,
     pub provenance_exposed: bool,
+    pub global: Option<String>,
     pub locals: Vec<String>,
 }
 
@@ -274,6 +276,14 @@ fn capture_allocs(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<AllocInfo
             .collect();
         let provenance_exposed = alloc_state.exposed.contains(&alloc_id);
         let base_addr = alloc_state.base_addr.get(&alloc_id).copied();
+        let global = ecx.tcx.try_get_global_alloc(alloc_id).and_then(|ga| {
+            let item_name = |did: DefId| ecx.tcx.item_name(did).as_str().to_owned();
+            Some(match ga {
+                GlobalAlloc::Function { instance } => item_name(instance.def_id()),
+                GlobalAlloc::Static(did) => item_name(did),
+                _ => return None,
+            })
+        });
 
         let (kind, size, align) = if let Some((kind, allocation)) = alloc_map.get(alloc_id) {
             (Some(*kind), Some(allocation.len()), Some(allocation.align.bytes()))
@@ -289,6 +299,7 @@ fn capture_allocs(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<AllocInfo
             size,
             align,
             provenance_exposed,
+            global,
             locals,
         });
     }
