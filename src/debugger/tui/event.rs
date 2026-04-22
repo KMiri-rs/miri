@@ -79,7 +79,7 @@ pub fn handle(
         }
         match key.code {
             KeyCode::Char('q') => {
-                // let _ = command_tx.send(DebuggerCommand::Quit);
+                let _ = command_tx.send(DebuggerCommand::Quit);
                 return Ok(Action::Return);
             }
             KeyCode::Char('/') => {
@@ -165,6 +165,13 @@ pub fn handle(
                 *run_to_frame_target = None;
                 *mode = RunMode::RunToMain;
                 let _ = command_tx.send(DebuggerCommand::RunToMain);
+                return Ok(Action::Break);
+            }
+            KeyCode::Char('t') => {
+                *reverse_index = None;
+                *run_to_frame_target = None;
+                *mode = RunMode::RunToTerminator;
+                let _ = command_tx.send(DebuggerCommand::RunToTerminator);
                 return Ok(Action::Break);
             }
             KeyCode::BackTab => panes.focus = panes.focus.previous(),

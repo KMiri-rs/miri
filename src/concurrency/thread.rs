@@ -1509,10 +1509,9 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     if let Some(handle) = &this.machine.debugger {
                         let stack = this.active_thread_stack();
                         if !stack.is_empty() {
-                            let state = DebuggerState::capture(this);
-                            handle.send(state);
+                            handle.send(this);
 
-                            match handle.wait_for_continue() {
+                            match handle.wait_for_continue(this) {
                                 DebuggerCommand::Quit => {
                                     this.machine.handle_abnormal_termination();
                                     throw_machine_stop!(TerminationInfo::Interrupted)

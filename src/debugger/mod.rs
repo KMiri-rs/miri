@@ -6,12 +6,15 @@ use std::cell::RefCell;
 
 use self::channel::{CommandReceiver, StateSender};
 pub use self::state::DebuggerState;
+use crate::MiriInterpCx;
+use crate::concurrency::thread::EvalContextExt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DebuggerCommand {
     Continue,
     StepOver,
     StepBack,
+    RunToTerminator,
     RunToFrame(String),
     RunToMain,
     RunToEnd,
@@ -23,6 +26,7 @@ pub enum DebuggerCommand {
 enum DebuggerMode {
     Step,
     Continue,
+    RunToTerminator,
     RunToFrame(String),
     RunToMain,
     RunToEnd,
@@ -39,13 +43,29 @@ impl MiriDebuggerHandle {
         Self { state_tx, cmd_rx, mode: RefCell::new(DebuggerMode::Step) }
     }
 
-    pub fn send(&self, state: DebuggerState) {
-        let current_mode = self.mode.borrow().clone();
-        match current_mode {
-            DebuggerMode::Step => {
-                let _ = self.state_tx.send(state);
-            }
-            DebuggerMode::Continue => {}
+    fn current_mode(&self) -> DebuggerMode {
+        self.mode.borrow().clone()
+    }
+
+    fn reached_terminator_or_step(&self, ecx: &MiriInterpCx<'_>) -> bool {
+        match self.current_mode() {
+            DebuggerMode::RunToTerminator => reached_terminator(ecx),
+            DebuggerMode::Step => true,
+            _ => false,
+        }
+    }
+
+    pub fn send(&self, ecx: &MiriInterpCx<'_>) {
+        let mode = self.current_mode();
+        if mode == DebuggerMode::Continue
+            || (mode == DebuggerMode::RunToTerminator && !reached_terminator(ecx))
+        {
+            return;
+        }
+
+        let state = DebuggerState::capture(ecx);
+        match mode {
+            DebuggerMode::Step | DebuggerMode::RunToTerminator | DebuggerMode::RunToEnd => (),
             DebuggerMode::RunToFrame(ref target) => {
                 let target_lc = target.to_ascii_lowercase();
                 if state
@@ -55,52 +75,50 @@ impl MiriDebuggerHandle {
                 {
                     *self.mode.borrow_mut() = DebuggerMode::Step;
                 }
-                let _ = self.state_tx.send(state);
+                return;
             }
             DebuggerMode::RunToMain => {
                 if state.in_user_code {
                     *self.mode.borrow_mut() = DebuggerMode::Step;
                 }
-                let _ = self.state_tx.send(state);
+                return;
             }
-            DebuggerMode::RunToEnd => {
-                let _ = self.state_tx.send(state);
-            }
+            DebuggerMode::Continue => unreachable!(),
         }
+
+        self.state_tx.send(state).unwrap();
     }
 
-    pub fn wait_for_continue(&self) -> DebuggerCommand {
-        if !matches!(&*self.mode.borrow(), DebuggerMode::Step) {
+    pub fn wait_for_continue(&self, ecx: &MiriInterpCx<'_>) -> DebuggerCommand {
+        if !self.reached_terminator_or_step(ecx) {
             return DebuggerCommand::Continue;
         }
 
-        match self.cmd_rx.recv().unwrap_or(DebuggerCommand::Continue) {
-            DebuggerCommand::Continue => {
-                *self.mode.borrow_mut() = DebuggerMode::Continue;
-                DebuggerCommand::Continue
-            }
-            DebuggerCommand::StepOver => {
-                *self.mode.borrow_mut() = DebuggerMode::Step;
-                DebuggerCommand::StepOver
-            }
-            DebuggerCommand::StepBack => {
+        let cmd = self.cmd_rx.recv().unwrap_or(DebuggerCommand::Continue);
+        'm: {
+            *self.mode.borrow_mut() = match cmd {
+                DebuggerCommand::Continue => DebuggerMode::Continue,
+                DebuggerCommand::StepOver => DebuggerMode::Step,
                 // Reverse stepping is handled entirely in the TUI thread.
-                DebuggerCommand::Continue
+                DebuggerCommand::StepBack => DebuggerMode::Continue,
+                DebuggerCommand::RunToTerminator => DebuggerMode::RunToTerminator,
+                DebuggerCommand::RunToFrame(_) => DebuggerMode::Continue,
+                DebuggerCommand::RunToMain => DebuggerMode::Continue,
+                DebuggerCommand::RunToEnd => DebuggerMode::Continue,
+                DebuggerCommand::Quit => break 'm,
+                DebuggerCommand::QuitWithErr(_) => break 'm,
             }
-            DebuggerCommand::RunToFrame(target) => {
-                *self.mode.borrow_mut() = DebuggerMode::RunToFrame(target);
-                DebuggerCommand::Continue
-            }
-            DebuggerCommand::RunToMain => {
-                *self.mode.borrow_mut() = DebuggerMode::RunToMain;
-                DebuggerCommand::Continue
-            }
-            DebuggerCommand::RunToEnd => {
-                *self.mode.borrow_mut() = DebuggerMode::RunToEnd;
-                DebuggerCommand::Continue
-            }
-            DebuggerCommand::Quit => DebuggerCommand::Quit,
-            DebuggerCommand::QuitWithErr(err) => DebuggerCommand::QuitWithErr(err),
-        }
+        };
+        cmd
     }
+}
+
+fn reached_terminator(ecx: &MiriInterpCx<'_>) -> bool {
+    if let Some(frame) = ecx.active_thread_stack().last()
+        && let Some(loc) = frame.current_loc().left()
+        && loc.statement_index >= frame.body().basic_blocks[loc.block].statements.len()
+    {
+        return true;
+    }
+    false
 }
