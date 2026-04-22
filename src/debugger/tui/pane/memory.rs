@@ -20,22 +20,28 @@ impl PaneMemory {
             .alloc
             .iter()
             .map(|alloc| {
-                let alive = alloc.alive;
+                let alive = !alloc.dealloc;
                 Row::new([
                     right_cell_with_alive(format!("{}", alloc.alloc_id.0), alive),
-                    right_cell_with_alive(format!("0x{:x}", alloc.base_addr), alive),
-                    right_cell_with_alive(format!("{alive:?}"), alive),
-                    right_cell_with_alive(format!("{:?}", alloc.kind), alive),
-                    right_cell_with_alive(hsize(alloc.size), alive),
-                    right_cell_with_alive(hsize(alloc.align), alive),
-                    right_cell_with_alive(format!("{}", alloc.provenance_exposed), alive),
+                    right_cell_with_alive(
+                        alloc.base_addr.map(|addr| format!("0x{addr:x}")).unwrap_or_default(),
+                        alive,
+                    ),
+                    right_cell_with_alive(if alloc.dealloc { "yes" } else { "" }, alive),
+                    right_cell_with_alive(
+                        alloc.kind.map(|k| format!("{k:?}")).unwrap_or_default(),
+                        alive,
+                    ),
+                    right_cell_with_alive(alloc.size.map(hsize).unwrap_or_default(), alive),
+                    right_cell_with_alive(alloc.align.map(hsize).unwrap_or_default(), alive),
+                    right_cell_with_alive(if alloc.provenance_exposed { "yes" } else { "" }, alive),
                     right_cell_with_alive(alloc.locals.join(","), alive),
                 ])
             })
             .collect();
 
         let header =
-            ["AllocID", "BaseAddr", "Alive", "Kind", "Size", "Align", "ProvExposed", "Locals"];
+            ["AllocID", "BaseAddr", "Dealloc", "Kind", "Size", "Align", "ProvExposed", "Locals"];
         let widths = {
             let widths = [10u16, 15, 8, 12, 10, 10, 12, 0];
             let sum: u16 = widths.iter().sum();

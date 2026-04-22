@@ -64,12 +64,12 @@ pub struct CfgLine {
 #[derive(Clone, Debug)]
 pub struct AllocInfo {
     pub alloc_id: AllocId,
-    pub base_addr: u64,
-    pub alive: bool,
-    pub kind: MemoryKind,
+    pub base_addr: Option<u64>,
+    pub dealloc: bool,
+    pub kind: Option<MemoryKind>,
     /// Allocation size in bytes.
-    pub size: usize,
-    pub align: u64,
+    pub size: Option<usize>,
+    pub align: Option<u64>,
     pub provenance_exposed: bool,
     pub locals: Vec<String>,
 }
@@ -266,22 +266,30 @@ fn capture_memory(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<AllocInfo
     let alloc_spans = ecx.machine.allocation_spans.borrow();
 
     for (&alloc_id, (_alloc, dealloc)) in alloc_spans.iter().take(32) {
-        let Some((kind, allocation)) = alloc_map.get(alloc_id) else { continue };
-        let Some(&base_addr) = alloc_state.base_addr.get(&alloc_id) else { continue };
+        let locals = locals
+            .iter()
+            .filter(|local| local.alloc_id == Some(alloc_id))
+            .map(|local| if local.name.is_empty() { &local.idx } else { &local.name })
+            .cloned()
+            .collect();
+        let provenance_exposed = alloc_state.exposed.contains(&alloc_id);
+        let base_addr = alloc_state.base_addr.get(&alloc_id).copied();
+
+        let (kind, size, align) = if let Some((kind, allocation)) = alloc_map.get(alloc_id) {
+            (Some(*kind), Some(allocation.len()), Some(allocation.align.bytes()))
+        } else {
+            Default::default()
+        };
+
         entries.push(AllocInfo {
             alloc_id,
             base_addr,
-            alive: dealloc.is_none(),
-            kind: *kind,
-            size: allocation.len(),
-            align: allocation.align.bytes(),
-            provenance_exposed: alloc_state.exposed.contains(&alloc_id),
-            locals: locals
-                .iter()
-                .filter(|local| local.alloc_id == Some(alloc_id))
-                .map(|local| if local.name.is_empty() { &local.idx } else { &local.name })
-                .cloned()
-                .collect(),
+            dealloc: dealloc.is_some(),
+            kind,
+            size,
+            align,
+            provenance_exposed,
+            locals,
         });
     }
 
