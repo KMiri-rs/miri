@@ -4,20 +4,20 @@ use super::*;
 use crate::debugger::state::LocalKind;
 
 #[derive(Default, Debug)]
-pub struct PaneMemory {
+pub struct PaneAllocs {
     pub rect: Rect,
     pub scroll: u16,
     pub hscroll: u16,
 }
 
-impl PaneMemory {
+impl PaneAllocs {
     pub fn new(rect: Rect) -> Self {
-        PaneMemory { rect, ..Default::default() }
+        PaneAllocs { rect, ..Default::default() }
     }
 
     pub fn widget(&self, state: &DebuggerState, focus: bool) -> Table<'static> {
         let rows: Vec<_> = state
-            .alloc
+            .allocs
             .iter()
             .map(|alloc| {
                 let alive = !alloc.dealloc;
