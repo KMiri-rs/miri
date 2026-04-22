@@ -89,7 +89,7 @@ pub struct DebuggerState {
     pub current_location: CurrentLocation,
     pub cfg_lines: Vec<CfgLine>,
     pub locals: Vec<LocalInfo>,
-    pub alloc: Vec<AllocInfo>,
+    pub allocs: Vec<AllocInfo>,
     pub output: Vec<OutputLine>,
 }
 
@@ -119,7 +119,7 @@ impl DebuggerState {
 
         let locals = stack.last().map(capture_locals).unwrap_or_default();
         let cfg_lines = stack.last().map(capture_cfg_lines).unwrap_or_default();
-        let memory = capture_memory(ecx, &locals);
+        let allocs = capture_allocs(ecx, &locals);
         let output = ecx
             .machine
             .debugger_output
@@ -136,7 +136,7 @@ impl DebuggerState {
             current_location,
             cfg_lines,
             locals,
-            alloc: memory,
+            allocs,
             output,
         }
     }
@@ -258,7 +258,7 @@ fn capture_cfg_lines(frame: &Frame<'_, Provenance, FrameExtra<'_>>) -> Vec<CfgLi
         .collect()
 }
 
-fn capture_memory(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<AllocInfo> {
+fn capture_allocs(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<AllocInfo> {
     let mut entries = Vec::new();
 
     let alloc_map = ecx.memory.alloc_map();
