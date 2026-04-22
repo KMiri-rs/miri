@@ -266,8 +266,8 @@ fn capture_memory(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<AllocInfo
     let alloc_spans = ecx.machine.allocation_spans.borrow();
 
     for (&alloc_id, (_alloc, dealloc)) in alloc_spans.iter().take(32) {
-        let (kind, allocation) = alloc_map.get(alloc_id).unwrap();
-        let base_addr = *alloc_state.base_addr.get(&alloc_id).unwrap();
+        let Some((kind, allocation)) = alloc_map.get(alloc_id) else { continue };
+        let Some(&base_addr) = alloc_state.base_addr.get(&alloc_id) else { continue };
         entries.push(AllocInfo {
             alloc_id,
             base_addr,
