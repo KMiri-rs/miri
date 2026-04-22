@@ -34,6 +34,7 @@ type Terminal = ratatui::Terminal<CrosstermBackend<io::Stdout>>;
 enum RunMode {
     Step,
     Continue,
+    RunToTerminator,
     RunToFrame,
     RunToMain,
     RunToEnd,
@@ -44,6 +45,7 @@ impl RunMode {
         match self {
             RunMode::Step => "step",
             RunMode::Continue => "continue",
+            RunMode::RunToTerminator => "run-to-terminator",
             RunMode::RunToFrame => "run-to-frame",
             RunMode::RunToMain => "run-to-main",
             RunMode::RunToEnd => "run-to-end",
