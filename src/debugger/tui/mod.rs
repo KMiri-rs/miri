@@ -120,8 +120,9 @@ pub fn spawn_tui(
     std::thread::Builder::new()
         .name("miri-debugger-tui".to_string())
         .spawn(move || {
+            let cmd_tx = command_tx.clone();
             if let Err(err) = run_tui(state_rx, command_tx) {
-                panic!("debugger TUI error: {err}");
+                cmd_tx.send(DebuggerCommand::QuitWithErr(format!("{err:?}")));
             }
         })
         .expect("failed to spawn debugger TUI thread")
