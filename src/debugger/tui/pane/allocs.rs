@@ -16,9 +16,11 @@ impl PaneAllocs {
     }
 
     pub fn widget(&self, state: &DebuggerState, focus: bool) -> Table<'static> {
+        let len_alive = state.allocs.iter().filter(|alloc| !alloc.dealloc).count();
         let rows: Vec<_> = state
             .allocs
             .iter()
+            .skip(self.scroll.into())
             .map(|alloc| {
                 let alive = !alloc.dealloc;
                 Row::new([
@@ -35,15 +37,25 @@ impl PaneAllocs {
                     right_cell_with_alive(alloc.size.map(hsize).unwrap_or_default(), alive),
                     right_cell_with_alive(alloc.align.map(hsize).unwrap_or_default(), alive),
                     right_cell_with_alive(if alloc.provenance_exposed { "yes" } else { "" }, alive),
+                    right_cell_with_alive(alloc.global.clone().unwrap_or_default(), alive),
                     right_cell_with_alive(alloc.locals.join(","), alive),
                 ])
             })
             .collect();
 
-        let header =
-            ["AllocID", "BaseAddr", "Dealloc", "Kind", "Size", "Align", "ProvExposed", "Locals"];
+        let header = [
+            "AllocID",
+            "BaseAddr",
+            "Dealloc",
+            "Kind",
+            "Size",
+            "Align",
+            "ProvExposed",
+            "Global",
+            "Locals",
+        ];
         let widths = {
-            let widths = [10u16, 15, 8, 12, 10, 10, 12, 0];
+            let widths = [10u16, 15, 8, 12, 10, 10, 12, 12, 0];
             let sum: u16 = widths.iter().sum();
             let mut widths = widths.map(|w| Constraint::Percentage(w * 80 / sum));
             *widths.last_mut().unwrap() = Constraint::Fill(1);
@@ -56,7 +68,7 @@ impl PaneAllocs {
             )
             .block(
                 Block::default()
-                    .title("Allocations")
+                    .title(format!("Allocations (total={}, alive={len_alive})", state.allocs.len()))
                     .borders(Borders::ALL)
                     .border_style(pane_border_style(focus)),
             )
