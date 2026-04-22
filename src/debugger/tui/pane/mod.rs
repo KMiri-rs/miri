@@ -6,8 +6,8 @@ use crate::debugger::tui::theme::*;
 
 pub mod panes;
 
+pub mod allocs;
 pub mod locals;
-pub mod memory;
 pub mod mir;
 pub mod output;
 pub mod src;
@@ -32,7 +32,7 @@ pub enum FocusPane {
     Stack,
     Src,
     Locals,
-    Memory,
+    Allocs,
     Output,
     StatusBar,
 }
@@ -43,8 +43,8 @@ impl FocusPane {
             FocusPane::Mir => FocusPane::Stack,
             FocusPane::Stack => FocusPane::Src,
             FocusPane::Src => FocusPane::Locals,
-            FocusPane::Locals => FocusPane::Memory,
-            FocusPane::Memory => FocusPane::Output,
+            FocusPane::Locals => FocusPane::Allocs,
+            FocusPane::Allocs => FocusPane::Output,
             FocusPane::Output => FocusPane::Mir,
             FocusPane::StatusBar => unreachable!(),
         }
@@ -56,8 +56,8 @@ impl FocusPane {
             FocusPane::Stack => FocusPane::Mir,
             FocusPane::Src => FocusPane::Stack,
             FocusPane::Locals => FocusPane::Src,
-            FocusPane::Memory => FocusPane::Locals,
-            FocusPane::Output => FocusPane::Memory,
+            FocusPane::Allocs => FocusPane::Locals,
+            FocusPane::Output => FocusPane::Allocs,
             FocusPane::StatusBar => unreachable!(),
         }
     }
@@ -68,7 +68,7 @@ impl FocusPane {
             FocusPane::Stack => "stack",
             FocusPane::Src => "src",
             FocusPane::Locals => "locals",
-            FocusPane::Memory => "memory",
+            FocusPane::Allocs => "allocs",
             FocusPane::Output => "output",
             FocusPane::StatusBar => "status_bar",
         }
