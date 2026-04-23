@@ -5,8 +5,8 @@ use ratatui::prelude::*;
 
 use crate::DebuggerState;
 use crate::debugger::tui::pane::FocusPane;
+use crate::debugger::tui::pane::allocs::PaneAllocs;
 use crate::debugger::tui::pane::locals::PaneLocals;
-use crate::debugger::tui::pane::memory::PaneMemory;
 use crate::debugger::tui::pane::mir::PaneMir;
 use crate::debugger::tui::pane::output::PaneOutput;
 use crate::debugger::tui::pane::src::PaneSrc;
@@ -21,7 +21,7 @@ pub struct Panes {
     pub stack: PaneStack,
     pub src: PaneSrc,
     pub locals: PaneLocals,
-    pub memory: PaneMemory,
+    pub allocs: PaneAllocs,
     pub output: PaneOutput,
     pub status_bar: PaneStatusBar,
     /// The default value is true to disable manual scrolling for panes (like mir and src)
@@ -74,7 +74,7 @@ impl Panes {
             stack: PaneStack::new(stack),
             src: PaneSrc::new(src),
             locals: PaneLocals::new(locals),
-            memory: PaneMemory::new(memory),
+            allocs: PaneAllocs::new(memory),
             output: PaneOutput::new(output),
             status_bar: PaneStatusBar::new(status_bar),
             freeze: true,
@@ -87,7 +87,7 @@ impl Panes {
         self.stack.rect = new_layout.stack.rect;
         self.src.rect = new_layout.src.rect;
         self.locals.rect = new_layout.locals.rect;
-        self.memory.rect = new_layout.memory.rect;
+        self.allocs.rect = new_layout.allocs.rect;
         self.output.rect = new_layout.output.rect;
         self.status_bar.rect = new_layout.status_bar.rect;
     }
@@ -104,8 +104,8 @@ impl Panes {
             FocusPane::Src
         } else if is_in(self.locals.rect) {
             FocusPane::Locals
-        } else if is_in(self.memory.rect) {
-            FocusPane::Memory
+        } else if is_in(self.allocs.rect) {
+            FocusPane::Allocs
         } else if is_in(self.output.rect) {
             FocusPane::Output
         } else {
@@ -145,8 +145,8 @@ impl Panes {
     }
 
     pub fn render_memory(&self, frame: &mut Frame<'_>, state: &DebuggerState) {
-        let list = self.memory.widget(state, self.is_focused(FocusPane::Memory));
-        frame.render_widget(list, self.memory.rect);
+        let list = self.allocs.widget(state, self.is_focused(FocusPane::Allocs));
+        frame.render_widget(list, self.allocs.rect);
     }
 
     pub fn render_output(&self, frame: &mut Frame<'_>, state: &DebuggerState) {
@@ -169,8 +169,8 @@ impl Panes {
             FocusPane::Locals => {
                 self.locals.scroll = self.locals.scroll.saturating_sub(1);
             }
-            FocusPane::Memory => {
-                self.memory.scroll = self.memory.scroll.saturating_sub(1);
+            FocusPane::Allocs => {
+                self.allocs.scroll = self.allocs.scroll.saturating_sub(1);
             }
             FocusPane::Output => {
                 self.output.scroll = self.output.scroll.saturating_sub(1);
@@ -209,10 +209,10 @@ impl Panes {
                     self.locals.scroll = self.locals.scroll.saturating_add(1).min(max);
                 }
             }
-            FocusPane::Memory =>
-                if !state.memory.is_empty() {
-                    let max = u16::try_from(state.memory.len()).unwrap() - 1;
-                    self.memory.scroll = self.memory.scroll.saturating_add(1).min(max);
+            FocusPane::Allocs =>
+                if !state.allocs.is_empty() {
+                    let max = u16::try_from(state.allocs.len()).unwrap() - 1;
+                    self.allocs.scroll = self.allocs.scroll.saturating_add(1).min(max);
                 },
             FocusPane::Output =>
                 if !state.output.is_empty() {
@@ -252,8 +252,8 @@ impl Panes {
             FocusPane::Locals => {
                 self.locals.hscroll = self.locals.hscroll.saturating_add(1);
             }
-            FocusPane::Memory => {
-                self.memory.hscroll = self.memory.hscroll.saturating_add(1);
+            FocusPane::Allocs => {
+                self.allocs.hscroll = self.allocs.hscroll.saturating_add(1);
             }
             FocusPane::Output => {
                 self.output.hscroll = self.output.hscroll.saturating_add(1);
@@ -278,8 +278,8 @@ impl Panes {
             FocusPane::Locals => {
                 self.locals.hscroll = self.locals.hscroll.saturating_sub(1);
             }
-            FocusPane::Memory => {
-                self.memory.hscroll = self.memory.hscroll.saturating_sub(1);
+            FocusPane::Allocs => {
+                self.allocs.hscroll = self.allocs.hscroll.saturating_sub(1);
             }
             FocusPane::Output => {
                 self.output.hscroll = self.output.hscroll.saturating_sub(1);
