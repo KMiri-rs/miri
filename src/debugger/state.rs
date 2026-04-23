@@ -1,6 +1,7 @@
 use ratatui::style::{Color, Modifier, Style, Styled};
 use ratatui::text::{Line, Span as RatatuiSpan};
 use rustc_data_structures::either::Either;
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{self, BasicBlockData};
 use rustc_span::source_map::SourceMap;
@@ -36,6 +37,8 @@ pub struct RenderSrc {
     pub highlighted_idx: Option<[u16; 2]>,
 }
 
+type Ptr = interpret::Pointer<crate::Provenance>;
+
 #[derive(Clone, Debug)]
 pub struct LocalInfo {
     pub idx: String,
@@ -44,6 +47,7 @@ pub struct LocalInfo {
     pub ty: String,
     pub state: LocalKind,
     pub alloc_id: Option<AllocId>,
+    pub ptr: Option<Ptr>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,6 +69,7 @@ pub struct CfgLine {
 #[derive(Clone, Debug)]
 pub struct AllocInfo {
     pub alloc_id: AllocId,
+    pub ptr: Option<usize>,
     pub base_addr: Option<u64>,
     pub dealloc: bool,
     pub kind: Option<MemoryKind>,
@@ -166,19 +171,31 @@ fn capture_locals(frame: &Frame<'_, Provenance, FrameExtra<'_>>) -> Vec<LocalInf
             let local_decl = &body.local_decls[local_idx];
             let raw = format!("{local:?}");
             let (value, kind) = prettify_local_value(&raw, &local_decl.ty.to_string());
-            let alloc_id = match local.as_mplace_or_imm() {
-                Some(Either::Left((ptr, _))) => ptr.provenance.and_then(|prov| prov.get_alloc_id()),
+            let (alloc_id, ptr) = match local.as_mplace_or_imm() {
+                Some(Either::Left((ptr, _))) =>
+                    if let Some(prov) = ptr.provenance {
+                        let ptr = Ptr::new(prov, ptr.addr());
+                        (prov.get_alloc_id(), Some(ptr))
+                    } else {
+                        let ptr = Ptr::new(crate::Provenance::Wildcard, ptr.addr());
+                        (None, Some(ptr))
+                    },
                 Some(Either::Right(imm)) => {
                     match imm {
-                        Immediate::Scalar(Scalar::Ptr(ptr, _)) => ptr.provenance.get_alloc_id(),
+                        Immediate::Scalar(Scalar::Ptr(ptr, _)) => {
+                            let ptr: Ptr = ptr;
+                            (ptr.provenance.get_alloc_id(), Some(ptr))
+                        }
                         // FIXME: we only extract the alloc id of data pointer here, but miss
                         // the vtable ptr for dyn pointer here.
-                        Immediate::ScalarPair(Scalar::Ptr(ptr, _), _) =>
-                            ptr.provenance.get_alloc_id(),
-                        _ => None,
+                        Immediate::ScalarPair(Scalar::Ptr(ptr, _), _) => {
+                            let ptr: Ptr = ptr;
+                            (ptr.provenance.get_alloc_id(), Some(ptr))
+                        }
+                        _ => (None, None),
                     }
                 }
-                None => None,
+                None => (None, None),
             };
             LocalInfo {
                 idx: format!("_{idx}"),
@@ -189,6 +206,7 @@ fn capture_locals(frame: &Frame<'_, Provenance, FrameExtra<'_>>) -> Vec<LocalInf
                 ty: local_decl.ty.to_string(),
                 state: kind,
                 alloc_id,
+                ptr,
             }
         })
         .collect()
@@ -263,36 +281,58 @@ fn capture_cfg_lines(frame: &Frame<'_, Provenance, FrameExtra<'_>>) -> Vec<CfgLi
 fn capture_allocs(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<AllocInfo> {
     let mut entries = Vec::new();
 
+    #[derive(Clone, Copy, Debug)]
+    struct Local<'a> {
+        name: &'a str,
+        ptr: Option<Ptr>,
+    }
+    let mut map_locals: FxHashMap<AllocId, Vec<Local<'_>>> = FxHashMap::default();
+    for local in locals {
+        if let Some(id) = local.alloc_id {
+            let name = if local.name.is_empty() { &*local.idx } else { &local.name };
+            let ptr = local.ptr;
+            let local = Local { name, ptr };
+            map_locals.entry(id).and_modify(|v| v.push(local)).or_insert_with(|| vec![local]);
+        }
+    }
+    fn split_locals(v: &[Local<'_>]) -> (Vec<String>, Option<usize>) {
+        let names = v.iter().map(|local| local.name.to_owned()).collect();
+        let set: FxHashSet<_> = v.iter().map(|local| local.ptr).collect();
+        if set.len() > 2 {
+            eprintln!("{v:?} has multiple pointer addrs: {set:?}");
+        }
+        (names, set.iter().find_map(|p| p.map(|val| val.into_raw_parts().1.bytes_usize())))
+    }
+
     let alloc_map = ecx.memory.alloc_map();
     let alloc_state = &*ecx.machine.alloc_addresses.borrow();
     let alloc_spans = ecx.machine.allocation_spans.borrow();
 
+    let item_name = |did: DefId| ecx.tcx.item_name(did).as_str().to_owned();
+    let ptr_meta = |alloc_id: AllocId| {
+        if let Some((kind, allocation)) = alloc_map.get(alloc_id) {
+            (Some(*kind), Some(allocation.len()), Some(allocation.align.bytes()))
+        } else {
+            Default::default()
+        }
+    };
+
     for (&alloc_id, (_alloc, dealloc)) in alloc_spans.iter().take(32) {
-        let locals = locals
-            .iter()
-            .filter(|local| local.alloc_id == Some(alloc_id))
-            .map(|local| if local.name.is_empty() { &local.idx } else { &local.name })
-            .cloned()
-            .collect();
         let provenance_exposed = alloc_state.exposed.contains(&alloc_id);
         let base_addr = alloc_state.base_addr.get(&alloc_id).copied();
         let global = ecx.tcx.try_get_global_alloc(alloc_id).and_then(|ga| {
-            let item_name = |did: DefId| ecx.tcx.item_name(did).as_str().to_owned();
             Some(match ga {
                 GlobalAlloc::Function { instance } => item_name(instance.def_id()),
                 GlobalAlloc::Static(did) => item_name(did),
                 _ => return None,
             })
         });
-
-        let (kind, size, align) = if let Some((kind, allocation)) = alloc_map.get(alloc_id) {
-            (Some(*kind), Some(allocation.len()), Some(allocation.align.bytes()))
-        } else {
-            Default::default()
-        };
+        let (kind, size, align) = ptr_meta(alloc_id);
+        let (names, ptr) = map_locals.get(&alloc_id).map(|v| split_locals(v)).unwrap_or_default();
 
         entries.push(AllocInfo {
             alloc_id,
+            ptr,
             base_addr,
             dealloc: dealloc.is_some(),
             kind,
@@ -300,8 +340,68 @@ fn capture_allocs(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<AllocInfo
             align,
             provenance_exposed,
             global,
-            locals,
+            locals: names,
         });
+    }
+
+    // Remaining locals' allocation.
+    let mut set_id: FxHashSet<_> = entries.iter().map(|e| e.alloc_id).collect();
+    for (alloc_id, v_locals) in map_locals.into_iter().filter(|(id, _)| !set_id.contains(id)) {
+        let info = ecx.get_alloc_info(alloc_id);
+        let (names, ptr) = split_locals(&v_locals);
+        let provenance_exposed = alloc_state.exposed.contains(&alloc_id);
+        let base_addr = alloc_state.base_addr.get(&alloc_id).copied();
+        if let Some(ga) = ecx.tcx.try_get_global_alloc(alloc_id) {
+            let global = match ga {
+                GlobalAlloc::Function { instance } => item_name(instance.def_id()),
+                GlobalAlloc::Static(did) => item_name(did),
+                GlobalAlloc::VTable(..) => "Vtable".to_owned(),
+                GlobalAlloc::Memory(alloc) => {
+                    let allocation = alloc.inner();
+                    let (kind, size, align) = ptr_meta(alloc_id);
+                    entries.push(AllocInfo {
+                        alloc_id,
+                        ptr,
+                        base_addr,
+                        dealloc: false,
+                        kind: Some(MiriMemoryKind::Global.into()),
+                        size,
+                        align,
+                        provenance_exposed: false,
+                        global: Some("Const".to_owned()),
+                        locals: names,
+                    });
+                    continue;
+                }
+                GlobalAlloc::TypeId { ty } => "TypeId".to_owned(),
+            };
+            entries.push(AllocInfo {
+                alloc_id,
+                ptr,
+                base_addr,
+                dealloc: false,
+                kind: Some(MiriMemoryKind::Global.into()),
+                size: Some(info.size.bytes_usize()),
+                align: Some(info.align.bytes()),
+                provenance_exposed,
+                global: Some(global),
+                locals: names,
+            });
+        } else if let Some(allocation) = ecx.get_alloc_raw(alloc_id).discard_err() {
+            let (kind, ..) = ptr_meta(alloc_id);
+            entries.push(AllocInfo {
+                alloc_id,
+                ptr,
+                base_addr,
+                dealloc: false,
+                kind,
+                size: Some(info.size.bytes_usize()),
+                align: Some(info.align.bytes()),
+                provenance_exposed,
+                global: None,
+                locals: names,
+            });
+        }
     }
 
     entries.sort_unstable_by_key(|e| e.alloc_id);
