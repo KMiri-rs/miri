@@ -75,7 +75,7 @@ pub struct Context {
     blink_epoch: Instant,
     reverse_index: Option<usize>,
     program_finished: bool,
-    count: u32,
+    count: String,
 }
 
 impl Context {
@@ -89,7 +89,7 @@ impl Context {
             blink_epoch: Instant::now(),
             reverse_index: None,
             program_finished: false,
-            count: 0,
+            count: String::new(),
         }
     }
 
