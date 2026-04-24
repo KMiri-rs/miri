@@ -134,7 +134,7 @@ pub fn handle(
                     panes.stack.refresh(display_state);
                 }
                 *mode = RunMode::Step;
-                let n = mem::replace(count, 1);
+                let n = mem::take(count).parse().unwrap_or(0);
                 let _ = command_tx.send(DebuggerCommand::StepOver(n));
                 return Ok(Action::Break);
             }
@@ -175,11 +175,10 @@ pub fn handle(
                 *reverse_index = None;
                 *run_to_frame_target = None;
                 *mode = RunMode::RunToTerminator;
-                let n = mem::replace(count, 1);
+                let n = mem::take(count).parse().unwrap_or(0);
                 let _ = command_tx.send(DebuggerCommand::RunToTerminator(n));
                 return Ok(Action::Break);
             }
-            KeyCode::Char('s') => run_target.editing = true,
             KeyCode::BackTab => panes.focus = panes.focus.previous(),
             KeyCode::Tab => {
                 panes.focus = if key.modifiers == KeyModifiers::SHIFT {
@@ -192,10 +191,7 @@ pub fn handle(
             KeyCode::Down => panes.navigate_down(display_state),
             KeyCode::Left => panes.scroll_left(),
             KeyCode::Right => panes.scroll_right(),
-            KeyCode::Char(c)
-                if let Some(n) = c.to_digit(10)
-                    && n > 0 =>
-                *count = n,
+            KeyCode::Char(c) if c.is_ascii_digit() => count.push(c),
             _ => {}
         }
     } else if let Event::Mouse(mouse) = ev {
