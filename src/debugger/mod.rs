@@ -12,9 +12,9 @@ use crate::concurrency::thread::EvalContextExt;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DebuggerCommand {
     Continue,
-    StepOver,
+    StepOver(u32),
     StepBack,
-    RunToTerminator,
+    RunToTerminator(u32),
     RunToFrame(String),
     RunToMain,
     RunToEnd,
@@ -24,9 +24,9 @@ pub enum DebuggerCommand {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum DebuggerMode {
-    Step,
+    Step(u32),
     Continue,
-    RunToTerminator,
+    RunToTerminator(u32),
     RunToFrame(String),
     RunToMain,
     RunToEnd,
@@ -40,32 +40,39 @@ pub struct MiriDebuggerHandle {
 
 impl MiriDebuggerHandle {
     pub fn new(state_tx: StateSender, cmd_rx: CommandReceiver) -> Self {
-        Self { state_tx, cmd_rx, mode: RefCell::new(DebuggerMode::Step) }
+        Self { state_tx, cmd_rx, mode: RefCell::new(DebuggerMode::Step(1)) }
     }
 
     fn current_mode(&self) -> DebuggerMode {
         self.mode.borrow().clone()
     }
 
-    fn reached_terminator_or_step(&self, ecx: &MiriInterpCx<'_>) -> bool {
-        match self.current_mode() {
-            DebuggerMode::RunToTerminator => reached_terminator(ecx),
-            DebuggerMode::Step => true,
-            _ => false,
-        }
+    fn set_current_mode(&self, mode: DebuggerMode) {
+        *self.mode.borrow_mut() = mode;
     }
 
     pub fn send(&self, ecx: &MiriInterpCx<'_>) {
-        let mode = self.current_mode();
-        if mode == DebuggerMode::Continue
-            || (mode == DebuggerMode::RunToTerminator && !reached_terminator(ecx))
-        {
-            return;
+        match self.current_mode() {
+            DebuggerMode::Step(2 | 0) => self.set_current_mode(DebuggerMode::Step(1)),
+            DebuggerMode::Step(n) if n > 1 => {
+                self.set_current_mode(DebuggerMode::Step(n - 1));
+                return;
+            }
+            DebuggerMode::RunToTerminator(n) =>
+                if reached_terminator(ecx) {
+                    let n = if n > 1 { n - 1 } else { 1 };
+                    // Only decrement when reaching a terminator.
+                    self.set_current_mode(DebuggerMode::RunToTerminator(n));
+                } else {
+                    return;
+                },
+            DebuggerMode::Continue => return,
+            _ => (),
         }
 
         let state = DebuggerState::capture(ecx);
-        match mode {
-            DebuggerMode::Step | DebuggerMode::RunToTerminator | DebuggerMode::RunToEnd => (),
+        match self.current_mode() {
+            DebuggerMode::Step(_) | DebuggerMode::RunToTerminator(_) | DebuggerMode::RunToEnd => (),
             DebuggerMode::RunToFrame(ref target) => {
                 let target_lc = target.to_ascii_lowercase();
                 if state
@@ -73,20 +80,29 @@ impl MiriDebuggerHandle {
                     .iter()
                     .any(|frame| frame.fn_name.to_ascii_lowercase().contains(&target_lc))
                 {
-                    *self.mode.borrow_mut() = DebuggerMode::Step;
+                    self.set_current_mode(DebuggerMode::Step(1));
                 }
                 return;
             }
             DebuggerMode::RunToMain => {
                 if state.in_user_code {
-                    *self.mode.borrow_mut() = DebuggerMode::Step;
+                    self.set_current_mode(DebuggerMode::Step(1));
                 }
                 return;
             }
             DebuggerMode::Continue => unreachable!(),
         }
 
+        debugger_log(format!("send, mode={:?}", self.current_mode()));
         self.state_tx.send(state).unwrap();
+    }
+
+    fn reached_terminator_or_step(&self, ecx: &MiriInterpCx<'_>) -> bool {
+        match self.current_mode() {
+            DebuggerMode::RunToTerminator(1) => reached_terminator(ecx),
+            DebuggerMode::Step(1) => true,
+            _ => false,
+        }
     }
 
     pub fn wait_for_continue(&self, ecx: &MiriInterpCx<'_>) -> DebuggerCommand {
@@ -94,14 +110,18 @@ impl MiriDebuggerHandle {
             return DebuggerCommand::Continue;
         }
 
+        debugger_log("wait for cmd_rx".into());
         let cmd = self.cmd_rx.recv().unwrap_or(DebuggerCommand::Continue);
+        debugger_log("waited! cmd_rx".into());
         'm: {
+            // The step or run count is intentionally added with 1, because the count decrements
+            // before send happens.
             *self.mode.borrow_mut() = match cmd {
                 DebuggerCommand::Continue => DebuggerMode::Continue,
-                DebuggerCommand::StepOver => DebuggerMode::Step,
+                DebuggerCommand::StepOver(n) => DebuggerMode::Step(n + 1),
                 // Reverse stepping is handled entirely in the TUI thread.
                 DebuggerCommand::StepBack => DebuggerMode::Continue,
-                DebuggerCommand::RunToTerminator => DebuggerMode::RunToTerminator,
+                DebuggerCommand::RunToTerminator(n) => DebuggerMode::RunToTerminator(n + 1),
                 DebuggerCommand::RunToFrame(_) => DebuggerMode::Continue,
                 DebuggerCommand::RunToMain => DebuggerMode::Continue,
                 DebuggerCommand::RunToEnd => DebuggerMode::Continue,
@@ -121,4 +141,12 @@ fn reached_terminator(ecx: &MiriInterpCx<'_>) -> bool {
         return true;
     }
     false
+}
+
+pub fn debugger_log(s: String) {
+    use std::io::Write;
+    let mut file =
+        std::fs::OpenOptions::new().append(true).create(true).open("miri_debugger.log").unwrap();
+    writeln!(&file, "{s}").unwrap();
+    file.flush();
 }
