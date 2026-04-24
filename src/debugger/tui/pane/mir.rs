@@ -68,7 +68,7 @@ impl PaneMir {
         let len = state.current_location.render_mir.len();
         let highlighted_idx: usize = state.current_location.render_mir_highlighted_idx.into();
         lines.extend(state.current_location.render_mir.iter().enumerate().map(|(idx, mir)| {
-            let line = Line::from(hscroll_text(mir, self.hscroll));
+            let line = Line::from(hscroll_text(&format!("[{:2}] {mir}", idx + 1), self.hscroll));
             if idx == highlighted_idx {
                 line.style(if idx + 1 == len { STYLE_TERMINATOR } else { STYLE_HIGHTLIGHTED })
             } else {
@@ -80,7 +80,7 @@ impl PaneMir {
         Paragraph::new(lines)
             .block(
                 Block::default()
-                    .title("MIR")
+                    .title(format!("MIR (len={})", state.current_location.render_mir.len()))
                     .borders(Borders::ALL)
                     .border_style(pane_border_style(focus)),
             )
