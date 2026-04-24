@@ -68,7 +68,7 @@ pub struct Context {
     mode: RunMode,
     run_target: RunTargetState,
     run_to_frame_target: Option<String>,
-    last_state: Option<DebuggerState>,
+    last_state: Option<Box<DebuggerState>>,
     history: VecDeque<DebuggerState>,
     blink_epoch: Instant,
     reverse_index: Option<usize>,
@@ -94,7 +94,7 @@ impl Context {
         if self.history.len() > HISTORY_CAPACITY {
             self.history.pop_front();
         }
-        self.last_state = Some(state.clone());
+        self.last_state = Some(Box::new(state.clone()));
         self.reverse_index = None;
     }
 
@@ -200,7 +200,7 @@ fn tui_loop(
     // Program is done; keep the final snapshot visible until the user explicitly quits.
     ctx.program_finished = true;
     if let Some(state) = ctx.last_state.take() {
-        finished(terminal, panes, state, ctx, command_tx)
+        finished(terminal, panes, &state, ctx, command_tx)
     } else {
         finished_without_snapshot(terminal)
     }
@@ -209,7 +209,7 @@ fn tui_loop(
 fn finished(
     terminal: &mut Terminal,
     mut panes: Panes,
-    state: DebuggerState,
+    state: &DebuggerState,
     mut ctx: Context,
     command_tx: CommandSender,
 ) -> io::Result<()> {
@@ -220,7 +220,7 @@ fn finished(
     loop {
         terminal.draw(|frame| render(&mut panes, frame, &display_state, &ctx))?;
 
-        match event::handle(&mut panes, &mut display_state, &state, &mut ctx, &command_tx)? {
+        match event::handle(&mut panes, &mut display_state, state, &mut ctx, &command_tx)? {
             Action::Continue => (),
             Action::Break | Action::Return => return Ok(()),
         }
