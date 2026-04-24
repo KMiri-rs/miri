@@ -1,6 +1,7 @@
 #![deny(dead_code)]
 use std::collections::VecDeque;
 use std::io;
+use std::sync::mpsc::TryRecvError;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
@@ -20,6 +21,7 @@ use ratatui::widgets::{
 use super::channel::{CommandSender, StateReceiver};
 use super::state::LocalKind;
 use super::{DebuggerCommand, DebuggerState};
+use crate::debugger::debugger_log;
 use crate::debugger::tui::event::Action;
 use crate::debugger::tui::pane::panes::Panes;
 
@@ -73,6 +75,7 @@ pub struct Context {
     blink_epoch: Instant,
     reverse_index: Option<usize>,
     program_finished: bool,
+    count: u32,
 }
 
 impl Context {
@@ -86,6 +89,7 @@ impl Context {
             blink_epoch: Instant::now(),
             reverse_index: None,
             program_finished: false,
+            count: 0,
         }
     }
 
@@ -94,6 +98,7 @@ impl Context {
         if self.history.len() > HISTORY_CAPACITY {
             self.history.pop_front();
         }
+        debugger_log(format!("history len = {}", self.history.len()));
         self.last_state = Some(Box::new(state.clone()));
         self.reverse_index = None;
     }
@@ -154,22 +159,39 @@ fn tui_loop(
     let mut panes = Panes::new(Rect::default());
     let mut ctx = Context::new();
 
-    while let Ok(state) = state_rx.recv() {
-        ctx.on_new_state(&state);
-
-        panes.stack.refresh(&state);
-        if !state.stack_frames.is_empty() {
-            panes.stack.index = panes.stack.index.min(state.stack_frames.len() - 1);
-        } else {
-            panes.stack.index = 0;
-        }
+    loop {
+        let state = match state_rx.try_recv() {
+            Ok(state) => {
+                debugger_log("state_rx.recv'ed".into());
+                ctx.on_new_state(&state);
+                panes.stack.refresh(&state);
+                if !state.stack_frames.is_empty() {
+                    panes.stack.index = panes.stack.index.min(state.stack_frames.len() - 1);
+                } else {
+                    panes.stack.index = 0;
+                }
+                if ctx.reached_target_frame(&state) {
+                    ctx.mode = RunMode::Step;
+                    ctx.run_to_frame_target = None;
+                }
+                if matches!(ctx.mode, RunMode::RunToMain) && state.in_user_code {
+                    ctx.mode = RunMode::Step;
+                }
+                state
+            }
+            Err(TryRecvError::Empty) => {
+                // There is no new state received, so poke if keybord event is available.
+                if !crossterm::event::poll(Duration::from_millis(event::POLL_MS))? {
+                    continue;
+                }
+                // Reuse the last state.
+                let Some(state) = &ctx.last_state else { continue };
+                (**state).clone()
+            }
+            Err(TryRecvError::Disconnected) => break,
+        };
 
         let mut display_state = state.clone();
-
-        if ctx.reached_target_frame(&state) {
-            ctx.mode = RunMode::Step;
-            ctx.run_to_frame_target = None;
-        }
 
         // In fast-forward mode, keep rendering every step without waiting for input.
         if ctx.mode.is_fast_mode(state.in_user_code) {
@@ -182,18 +204,11 @@ fn tui_loop(
             continue;
         }
 
-        if matches!(ctx.mode, RunMode::RunToMain) && state.in_user_code {
-            ctx.mode = RunMode::Step;
-        }
+        terminal.draw(|frame| render(&mut panes, frame, &display_state, &ctx))?;
 
-        loop {
-            terminal.draw(|frame| render(&mut panes, frame, &display_state, &ctx))?;
-
-            match event::handle(&mut panes, &mut display_state, &state, &mut ctx, &command_tx)? {
-                Action::Continue => (),
-                Action::Break => break,
-                Action::Return => return Ok(()),
-            }
+        match event::handle(&mut panes, &mut display_state, &state, &mut ctx, &command_tx)? {
+            Action::Continue | Action::Break => (),
+            Action::Return => return Ok(()),
         }
     }
 
