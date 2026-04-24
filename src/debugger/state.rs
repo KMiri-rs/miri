@@ -303,11 +303,12 @@ fn capture_allocs(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<AllocInfo
     }
     fn split_locals(v: &[Local<'_>]) -> (Vec<String>, Option<usize>) {
         let names = v.iter().map(|local| local.name.to_owned()).collect();
-        let set: FxHashSet<_> = v.iter().map(|local| local.ptr).collect();
+        let set: FxHashSet<_> =
+            v.iter().map(|local| local.ptr.map(|p| p.into_raw_parts().1.bytes_usize())).collect();
         if set.len() > 2 {
             eprintln!("{v:?} has multiple pointer addrs: {set:?}");
         }
-        (names, set.iter().find_map(|p| p.map(|val| val.into_raw_parts().1.bytes_usize())))
+        (names, set.iter().find_map(|p| *p))
     }
 
     let alloc_map = ecx.memory.alloc_map();
