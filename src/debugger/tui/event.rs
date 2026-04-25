@@ -6,7 +6,6 @@ use crossterm::event::{
 };
 
 use crate::debugger::channel::CommandSender;
-use crate::debugger::debugger_log;
 use crate::debugger::tui::pane::FocusPane;
 use crate::debugger::tui::pane::panes::Panes;
 use crate::debugger::tui::{Context, RunMode};
@@ -31,7 +30,6 @@ pub fn handle(
         run_target,
         run_to_frame_target,
         last_state,
-        run_immediately,
         history,
         blink_epoch,
         reverse_index,
@@ -111,20 +109,16 @@ pub fn handle(
                     panes.stack.search = Default::default();
                 },
             KeyCode::Char('n') | KeyCode::Char(' ') => {
-                debugger_log(format!("{reverse_index:?}"));
                 if let Some(idx) = *reverse_index {
                     let next = idx + 1;
-                    debugger_log(format!("idx={idx} next={next} len={}", history.len()));
                     if let Some(snapshot) = history.get(next) {
                         *last_state = Some(Box::new(snapshot.clone()));
                         panes.stack.refresh(snapshot);
                         *reverse_index = Some(next);
-                        *run_immediately = true;
                         return Ok(Action::Continue);
                     }
                     *reverse_index = None;
                 }
-                debugger_log("step".into());
                 *mode = RunMode::Step;
                 let n = mem::take(count).parse().unwrap_or(0);
                 let _ = command_tx.send(DebuggerCommand::StepOver(n));
@@ -139,10 +133,8 @@ pub fn handle(
                 if let Some(snapshot) = history.get(next_index) {
                     *reverse_index = Some(next_index);
                     *last_state = Some(Box::new(snapshot.clone()));
-                    *run_immediately = true;
                     panes.stack.refresh(snapshot);
                 }
-                debugger_log(format!("{reverse_index:?}"));
             }
             KeyCode::Char('c') => {
                 *reverse_index = None;
