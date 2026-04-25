@@ -1,7 +1,7 @@
 #![deny(dead_code)]
 use std::collections::VecDeque;
 use std::io;
-use std::sync::mpsc::TryRecvError;
+use std::sync::mpsc::RecvError;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
@@ -21,6 +21,7 @@ use ratatui::widgets::{
 use super::channel::{CommandSender, StateReceiver};
 use super::state::LocalKind;
 use super::{DebuggerCommand, DebuggerState};
+use crate::debugger::channel::StateOrEvent;
 use crate::debugger::debugger_log;
 use crate::debugger::tui::event::Action;
 use crate::debugger::tui::pane::panes::Panes;
@@ -54,10 +55,10 @@ impl RunMode {
         }
     }
 
-    fn is_fast_mode(self, in_user_code: bool) -> bool {
-        (self == RunMode::RunToMain && !in_user_code)
-            || matches!(self, RunMode::RunToFrame | RunMode::RunToEnd)
-    }
+    //     fn is_fast_mode(self, in_user_code: bool) -> bool {
+    //         (self == RunMode::RunToMain && !in_user_code)
+    //             || matches!(self, RunMode::RunToFrame | RunMode::RunToEnd)
+    //     }
 }
 
 #[derive(Default)]
@@ -165,8 +166,8 @@ fn tui_loop(
     let mut ctx = Context::new();
 
     loop {
-        let state = match state_rx.try_recv() {
-            Ok(state) => {
+        let state = match state_rx.recv() {
+            Ok(StateOrEvent::State(state)) => {
                 debugger_log("state_rx.recv'ed".into());
                 ctx.on_new_state(&state);
                 panes.stack.refresh(&state);
@@ -184,37 +185,32 @@ fn tui_loop(
                 }
                 state
             }
-            Err(TryRecvError::Empty) => {
-                // There is no new state received, so poke if keybord event is available.
-                if !std::mem::take(&mut ctx.run_immediately)
-                    && !crossterm::event::poll(Duration::from_millis(event::POLL_MS))?
-                {
-                    continue;
-                }
+            Ok(StateOrEvent::Event(event)) => {
+                debugger_log(format!("{event:?}"));
                 // Reuse the last state.
-                let Some(state) = &ctx.last_state else { continue };
-                (**state).clone()
+                let Some(state) = ctx.last_state.clone() else { continue };
+                match event::handle(event, &mut panes, &state, &mut ctx, &command_tx)? {
+                    Action::Continue | Action::Break => (),
+                    Action::Return => return Ok(()),
+                }
+                let Some(state) = ctx.last_state.clone() else { continue };
+                *state
             }
-            Err(TryRecvError::Disconnected) => break,
+            Err(RecvError) => break,
         };
 
-        // In fast-forward mode, keep rendering every step without waiting for input.
-        if ctx.mode.is_fast_mode(state.in_user_code) {
-            terminal.draw(|frame| render(&mut panes, frame, &state, &ctx))?;
-
-            if event::fast_quit()? {
-                let _ = command_tx.send(DebuggerCommand::Quit);
-                return Ok(());
-            }
-            continue;
-        }
+        // // In fast-forward mode, keep rendering every step without waiting for input.
+        // if ctx.mode.is_fast_mode(state.in_user_code) {
+        //     terminal.draw(|frame| render(&mut panes, frame, &state, &ctx))?;
+        //
+        //     if event::fast_quit()? {
+        //         let _ = command_tx.send(DebuggerCommand::Quit);
+        //         return Ok(());
+        //     }
+        //     continue;
+        // }
 
         terminal.draw(|frame| render(&mut panes, frame, &state, &ctx))?;
-
-        match event::handle(&mut panes, &state, &mut ctx, &command_tx)? {
-            Action::Continue | Action::Break => (),
-            Action::Return => return Ok(()),
-        }
     }
 
     // Program is done; keep the final snapshot visible until the user explicitly quits.
@@ -239,7 +235,8 @@ fn finished(
     loop {
         terminal.draw(|frame| render(&mut panes, frame, state, &ctx))?;
 
-        match event::handle(&mut panes, state, &mut ctx, &command_tx)? {
+        let event = crossterm::event::read()?;
+        match event::handle(event, &mut panes, state, &mut ctx, &command_tx)? {
             Action::Continue => (),
             Action::Break | Action::Return => return Ok(()),
         }

@@ -19,9 +19,8 @@ pub enum Action {
     Return,
 }
 
-pub const POLL_MS: u64 = 100;
-
 pub fn handle(
+    ev: Event,
     panes: &mut Panes,
     state: &DebuggerState,
     ctx: &mut Context,
@@ -40,7 +39,6 @@ pub fn handle(
         ..
     } = ctx;
 
-    let ev = event::read()?;
     if let Event::Key(key) = ev {
         if key.kind != KeyEventKind::Press {
             return Ok(Action::Continue);
