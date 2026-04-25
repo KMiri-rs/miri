@@ -71,6 +71,7 @@ pub struct Context {
     run_target: RunTargetState,
     run_to_frame_target: Option<String>,
     last_state: Option<Box<DebuggerState>>,
+    run_immediately: bool,
     history: VecDeque<DebuggerState>,
     blink_epoch: Instant,
     reverse_index: Option<usize>,
@@ -85,6 +86,7 @@ impl Context {
             run_target: RunTargetState::default(),
             run_to_frame_target: None,
             last_state: None,
+            run_immediately: false,
             history: VecDeque::with_capacity(HISTORY_CAPACITY),
             blink_epoch: Instant::now(),
             reverse_index: None,
@@ -181,7 +183,9 @@ fn tui_loop(
             }
             Err(TryRecvError::Empty) => {
                 // There is no new state received, so poke if keybord event is available.
-                if !crossterm::event::poll(Duration::from_millis(event::POLL_MS))? {
+                if !std::mem::take(&mut ctx.run_immediately)
+                    && !crossterm::event::poll(Duration::from_millis(event::POLL_MS))?
+                {
                     continue;
                 }
                 // Reuse the last state.
@@ -191,11 +195,9 @@ fn tui_loop(
             Err(TryRecvError::Disconnected) => break,
         };
 
-        let mut display_state = state.clone();
-
         // In fast-forward mode, keep rendering every step without waiting for input.
         if ctx.mode.is_fast_mode(state.in_user_code) {
-            terminal.draw(|frame| render(&mut panes, frame, &display_state, &ctx))?;
+            terminal.draw(|frame| render(&mut panes, frame, &state, &ctx))?;
 
             if event::fast_quit()? {
                 let _ = command_tx.send(DebuggerCommand::Quit);
@@ -204,9 +206,9 @@ fn tui_loop(
             continue;
         }
 
-        terminal.draw(|frame| render(&mut panes, frame, &display_state, &ctx))?;
+        terminal.draw(|frame| render(&mut panes, frame, &state, &ctx))?;
 
-        match event::handle(&mut panes, &mut display_state, &state, &mut ctx, &command_tx)? {
+        match event::handle(&mut panes, &state, &mut ctx, &command_tx)? {
             Action::Continue | Action::Break => (),
             Action::Return => return Ok(()),
         }
@@ -231,11 +233,10 @@ fn finished(
     ctx.mode = RunMode::Step;
     ctx.reverse_index = None;
     panes.stack.search.editing = false;
-    let mut display_state = state.clone();
     loop {
-        terminal.draw(|frame| render(&mut panes, frame, &display_state, &ctx))?;
+        terminal.draw(|frame| render(&mut panes, frame, state, &ctx))?;
 
-        match event::handle(&mut panes, &mut display_state, state, &mut ctx, &command_tx)? {
+        match event::handle(&mut panes, state, &mut ctx, &command_tx)? {
             Action::Continue => (),
             Action::Break | Action::Return => return Ok(()),
         }
