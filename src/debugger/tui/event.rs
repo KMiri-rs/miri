@@ -23,21 +23,16 @@ pub const POLL_MS: u64 = 100;
 
 pub fn handle(
     panes: &mut Panes,
-    display_state: &mut DebuggerState,
     state: &DebuggerState,
     ctx: &mut Context,
     command_tx: &CommandSender,
 ) -> io::Result<Action> {
-    if !event::poll(Duration::from_millis(POLL_MS))? {
-        debugger_log(format!("timeout {POLL_MS}ms and continue"));
-        return Ok(Action::Continue);
-    }
-
     let Context {
         mode,
         run_target,
         run_to_frame_target,
         last_state,
+        run_immediately,
         history,
         blink_epoch,
         reverse_index,
@@ -77,7 +72,7 @@ pub fn handle(
             return Ok(Action::Continue);
         }
         if panes.stack.search.editing {
-            panes.edit(display_state, key.code);
+            panes.edit(state, key.code);
             return Ok(Action::Continue);
         }
         match key.code {
@@ -94,7 +89,7 @@ pub fn handle(
                 run_target.query.clear();
             }
             KeyCode::Char('p') =>
-                if let Some(target) = panes.stack.selected_stack_fn_name(display_state) {
+                if let Some(target) = panes.stack.selected_stack_fn_name(state) {
                     *reverse_index = None;
                     *run_to_frame_target = Some(target.clone());
                     *mode = RunMode::RunToFrame;
@@ -118,20 +113,15 @@ pub fn handle(
                     panes.stack.search = Default::default();
                 },
             KeyCode::Char('n') | KeyCode::Char(' ') => {
-                if let Some(idx) = reverse_index {
-                    if *idx + 1 < history.len() {
-                        let next = *idx + 1;
-                        if let Some(snapshot) = history.get(next) {
-                            *display_state = snapshot.clone();
-                            *reverse_index =
-                                if next + 1 == history.len() { None } else { Some(next) };
-                            panes.stack.refresh(display_state);
-                        }
+                if let Some(idx) = *reverse_index {
+                    let next = idx + 1;
+                    if let Some(snapshot) = history.get(next) {
+                        *last_state = Some(Box::new(snapshot.clone()));
+                        panes.stack.refresh(snapshot);
+                        *reverse_index = if next + 1 == history.len() { None } else { Some(next) };
+                        *run_immediately = true;
                         return Ok(Action::Continue);
                     }
-                    *reverse_index = None;
-                    *display_state = state.clone();
-                    panes.stack.refresh(display_state);
                 }
                 *mode = RunMode::Step;
                 let n = mem::take(count).parse().unwrap_or(0);
@@ -146,8 +136,9 @@ pub fn handle(
                 };
                 if let Some(snapshot) = history.get(next_index) {
                     *reverse_index = Some(next_index);
-                    *display_state = snapshot.clone();
-                    panes.stack.refresh(display_state);
+                    *last_state = Some(Box::new(snapshot.clone()));
+                    *run_immediately = true;
+                    panes.stack.refresh(snapshot);
                 }
             }
             KeyCode::Char('c') => {
@@ -187,15 +178,15 @@ pub fn handle(
                     panes.focus.next()
                 };
             }
-            KeyCode::Up => panes.navigate_up(display_state),
-            KeyCode::Down => panes.navigate_down(display_state),
+            KeyCode::Up => panes.navigate_up(state),
+            KeyCode::Down => panes.navigate_down(state),
             KeyCode::Left => panes.scroll_left(),
             KeyCode::Right => panes.scroll_right(),
             KeyCode::Char(c) if c.is_ascii_digit() => count.push(c),
             _ => {}
         }
     } else if let Event::Mouse(mouse) = ev {
-        on_event_mouse(panes, display_state, mouse);
+        on_event_mouse(panes, state, mouse);
     }
 
     Ok(Action::Continue)
