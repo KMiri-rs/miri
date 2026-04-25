@@ -106,7 +106,6 @@ impl MiriDebuggerHandle {
             DebuggerMode::Continue => unreachable!(),
         }
 
-        debugger_log(format!("send, mode={:?}", self.current_mode()));
         self.state_tx.send(StateOrEvent::State(state)).unwrap();
     }
 
@@ -123,9 +122,7 @@ impl MiriDebuggerHandle {
             return DebuggerCommand::Continue;
         }
 
-        // debugger_log("wait for cmd_rx".into());
         let cmd = self.cmd_rx.recv().unwrap_or(DebuggerCommand::Continue);
-        // debugger_log("waited! cmd_rx".into());
         'm: {
             // The step or run count is intentionally added with 1, because the count decrements
             // before send happens.
