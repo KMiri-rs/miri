@@ -100,9 +100,12 @@ impl Context {
         if self.history.len() > HISTORY_CAPACITY {
             self.history.pop_front();
         }
-        debugger_log(format!("history len = {}", self.history.len()));
+        // debugger_log(format!("history len = {}", self.history.len()));
         self.last_state = Some(Box::new(state.clone()));
-        self.reverse_index = None;
+        if !self.run_immediately {
+            debugger_log("reset reverse_index".into());
+            self.reverse_index = None;
+        }
     }
 
     fn reached_target_frame(&self, state: &DebuggerState) -> bool {
