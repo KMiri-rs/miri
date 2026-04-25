@@ -110,9 +110,9 @@ impl MiriDebuggerHandle {
             return DebuggerCommand::Continue;
         }
 
-        debugger_log("wait for cmd_rx".into());
+        // debugger_log("wait for cmd_rx".into());
         let cmd = self.cmd_rx.recv().unwrap_or(DebuggerCommand::Continue);
-        debugger_log("waited! cmd_rx".into());
+        // debugger_log("waited! cmd_rx".into());
         'm: {
             // The step or run count is intentionally added with 1, because the count decrements
             // before send happens.
