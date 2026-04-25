@@ -144,9 +144,21 @@ fn reached_terminator(ecx: &MiriInterpCx<'_>) -> bool {
 }
 
 pub fn debugger_log(s: String) {
+    use std::fs::OpenOptions;
     use std::io::Write;
-    let mut file =
-        std::fs::OpenOptions::new().append(true).create(true).open("miri_debugger.log").unwrap();
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static OPENED: AtomicBool = AtomicBool::new(false);
+    let opened = OPENED.swap(true, Ordering::Relaxed);
+    let mut opts = OpenOptions::new();
+
+    if opened {
+        opts.append(true);
+    } else {
+        opts.create(true).write(true).truncate(true);
+    };
+
+    let mut file = opts.open("miri_debugger.log").unwrap();
     writeln!(&file, "{s}").unwrap();
     file.flush();
 }
