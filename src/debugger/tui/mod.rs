@@ -22,7 +22,6 @@ use super::channel::{CommandSender, StateReceiver};
 use super::state::LocalKind;
 use super::{DebuggerCommand, DebuggerState};
 use crate::debugger::channel::StateOrEvent;
-use crate::debugger::debugger_log;
 use crate::debugger::tui::event::Action;
 use crate::debugger::tui::pane::panes::Panes;
 
@@ -72,7 +71,6 @@ pub struct Context {
     run_target: RunTargetState,
     run_to_frame_target: Option<String>,
     last_state: Option<Box<DebuggerState>>,
-    run_immediately: bool,
     history: VecDeque<DebuggerState>,
     blink_epoch: Instant,
     reverse_index: Option<usize>,
@@ -87,7 +85,6 @@ impl Context {
             run_target: RunTargetState::default(),
             run_to_frame_target: None,
             last_state: None,
-            run_immediately: false,
             history: VecDeque::with_capacity(HISTORY_CAPACITY),
             blink_epoch: Instant::now(),
             reverse_index: None,
@@ -101,12 +98,8 @@ impl Context {
         if self.history.len() > HISTORY_CAPACITY {
             self.history.pop_front();
         }
-        // debugger_log(format!("history len = {}", self.history.len()));
         self.last_state = Some(Box::new(state.clone()));
-        if !self.run_immediately {
-            debugger_log("reset reverse_index".into());
-            self.reverse_index = None;
-        }
+        self.reverse_index = None;
     }
 
     fn reached_target_frame(&self, state: &DebuggerState) -> bool {
@@ -168,7 +161,6 @@ fn tui_loop(
     loop {
         let state = match state_rx.recv() {
             Ok(StateOrEvent::State(state)) => {
-                debugger_log("state_rx.recv'ed".into());
                 ctx.on_new_state(&state);
                 panes.stack.refresh(&state);
                 if !state.stack_frames.is_empty() {
@@ -186,7 +178,6 @@ fn tui_loop(
                 state
             }
             Ok(StateOrEvent::Event(event)) => {
-                debugger_log(format!("{event:?}"));
                 // Reuse the last state.
                 let Some(state) = ctx.last_state.clone() else { continue };
                 match event::handle(event, &mut panes, &state, &mut ctx, &command_tx)? {
@@ -198,17 +189,6 @@ fn tui_loop(
             }
             Err(RecvError) => break,
         };
-
-        // // In fast-forward mode, keep rendering every step without waiting for input.
-        // if ctx.mode.is_fast_mode(state.in_user_code) {
-        //     terminal.draw(|frame| render(&mut panes, frame, &state, &ctx))?;
-        //
-        //     if event::fast_quit()? {
-        //         let _ = command_tx.send(DebuggerCommand::Quit);
-        //         return Ok(());
-        //     }
-        //     continue;
-        // }
 
         terminal.draw(|frame| render(&mut panes, frame, &state, &ctx))?;
     }
