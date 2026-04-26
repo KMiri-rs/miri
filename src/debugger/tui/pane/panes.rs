@@ -144,8 +144,8 @@ impl Panes {
         frame.render_widget(table, self.locals.rect);
     }
 
-    pub fn render_memory(&self, frame: &mut Frame<'_>, state: &DebuggerState) {
-        let list = self.allocs.widget(state, self.is_focused(FocusPane::Allocs));
+    pub fn render_memory(&self, frame: &mut Frame<'_>, state: &DebuggerState, no_dead: bool) {
+        let list = self.allocs.widget(state, self.is_focused(FocusPane::Allocs), no_dead);
         frame.render_widget(list, self.allocs.rect);
     }
 
