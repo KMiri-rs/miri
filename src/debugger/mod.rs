@@ -3,6 +3,7 @@ mod state;
 pub mod tui;
 
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use self::channel::{CommandReceiver, StateSender};
 pub use self::state::DebuggerState;
@@ -65,22 +66,29 @@ impl MiriDebuggerHandle {
     }
 
     pub fn send(&self, ecx: &MiriInterpCx<'_>) {
-        match self.current_mode() {
-            DebuggerMode::Step(2 | 0) => self.set_current_mode(DebuggerMode::Step(1)),
-            DebuggerMode::Step(n) if n > 1 => {
-                self.set_current_mode(DebuggerMode::Step(n - 1));
-                return;
+        let update_mode = || {
+            match self.current_mode() {
+                DebuggerMode::Step(2 | 0) => self.set_current_mode(DebuggerMode::Step(1)),
+                DebuggerMode::Step(n) if n > 1 => {
+                    self.set_current_mode(DebuggerMode::Step(n - 1));
+                    return true;
+                }
+                DebuggerMode::RunToTerminator(n) =>
+                    if reached_terminator(ecx) {
+                        let n = if n > 1 { n - 1 } else { 1 };
+                        // Only decrement when reaching a terminator.
+                        self.set_current_mode(DebuggerMode::RunToTerminator(n));
+                    } else {
+                        return true;
+                    },
+                DebuggerMode::Continue => return true,
+                _ => (),
             }
-            DebuggerMode::RunToTerminator(n) =>
-                if reached_terminator(ecx) {
-                    let n = if n > 1 { n - 1 } else { 1 };
-                    // Only decrement when reaching a terminator.
-                    self.set_current_mode(DebuggerMode::RunToTerminator(n));
-                } else {
-                    return;
-                },
-            DebuggerMode::Continue => return,
-            _ => (),
+            false
+        };
+        let ret = update_mode();
+        if ret && !get_record_all_states() {
+            return;
         }
 
         let state = DebuggerState::capture(ecx);
@@ -156,7 +164,6 @@ fn reached_terminator(ecx: &MiriInterpCx<'_>) -> bool {
 pub fn debugger_log(s: String) {
     use std::fs::OpenOptions;
     use std::io::Write;
-    use std::sync::atomic::{AtomicBool, Ordering};
 
     static OPENED: AtomicBool = AtomicBool::new(false);
     let opened = OPENED.swap(true, Ordering::Relaxed);
@@ -171,4 +178,12 @@ pub fn debugger_log(s: String) {
     let mut file = opts.open("miri_debugger.log").unwrap();
     writeln!(&file, "{s}").unwrap();
     file.flush();
+}
+
+static RECORD_ALL_STATES: AtomicBool = AtomicBool::new(true);
+pub fn toggle_record_all_states() {
+    RECORD_ALL_STATES.fetch_xor(true, Ordering::Relaxed);
+}
+pub fn get_record_all_states() -> bool {
+    RECORD_ALL_STATES.load(Ordering::Acquire)
 }

@@ -6,6 +6,7 @@ use crossterm::event::{
 };
 
 use crate::debugger::channel::CommandSender;
+use crate::debugger::toggle_record_all_states;
 use crate::debugger::tui::pane::FocusPane;
 use crate::debugger::tui::pane::panes::Panes;
 use crate::debugger::tui::{Context, RunMode};
@@ -165,6 +166,7 @@ pub fn handle(
                 let _ = command_tx.send(DebuggerCommand::RunToTerminator(n));
                 return Ok(Action::Break);
             }
+            KeyCode::Char('S') => toggle_record_all_states(),
             KeyCode::BackTab => panes.focus = panes.focus.previous(),
             KeyCode::Tab => {
                 panes.focus = if key.modifiers == KeyModifiers::SHIFT {
