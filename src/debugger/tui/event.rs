@@ -110,8 +110,9 @@ pub fn handle(
                     panes.stack.search = Default::default();
                 },
             KeyCode::Char('n') | KeyCode::Char(' ') => {
-                if let Some(idx) = *reverse_index {
-                    let next = idx + 1;
+                let n: u32 = mem::take(count).parse().unwrap_or(0);
+                let step = if let Some(idx) = *reverse_index {
+                    let next = idx + if n > 1 { n.try_into().unwrap() } else { 1 };
                     if let Some(snapshot) = history.get(next) {
                         *last_state = Some(Box::new(snapshot.clone()));
                         panes.stack.refresh(snapshot);
@@ -119,10 +120,12 @@ pub fn handle(
                         return Ok(Action::Continue);
                     }
                     *reverse_index = None;
-                }
+                    (next + 1 - history.len()).try_into().unwrap()
+                } else {
+                    n
+                };
                 *mode = RunMode::Step;
-                let n = mem::take(count).parse().unwrap_or(0);
-                let _ = command_tx.send(DebuggerCommand::StepOver(n));
+                let _ = command_tx.send(DebuggerCommand::StepOver(step));
                 return Ok(Action::Break);
             }
             KeyCode::Char('b') => {
