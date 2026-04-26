@@ -1,5 +1,5 @@
-use std::io;
 use std::time::{Duration, Instant};
+use std::{io, mem};
 
 use crossterm::event::{
     self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
@@ -18,19 +18,13 @@ pub enum Action {
     Return,
 }
 
-const EVENT_POLL_MS: u64 = 100;
-
 pub fn handle(
+    ev: Event,
     panes: &mut Panes,
-    display_state: &mut DebuggerState,
     state: &DebuggerState,
     ctx: &mut Context,
     command_tx: &CommandSender,
 ) -> io::Result<Action> {
-    if !event::poll(Duration::from_millis(EVENT_POLL_MS))? {
-        return Ok(Action::Continue);
-    }
-
     let Context {
         mode,
         run_target,
@@ -39,10 +33,10 @@ pub fn handle(
         history,
         blink_epoch,
         reverse_index,
+        count,
         ..
     } = ctx;
 
-    let ev = event::read()?;
     if let Event::Key(key) = ev {
         if key.kind != KeyEventKind::Press {
             return Ok(Action::Continue);
@@ -74,12 +68,12 @@ pub fn handle(
             return Ok(Action::Continue);
         }
         if panes.stack.search.editing {
-            panes.edit(display_state, key.code);
+            panes.edit(state, key.code);
             return Ok(Action::Continue);
         }
         match key.code {
             KeyCode::Char('q') => {
-                // let _ = command_tx.send(DebuggerCommand::Quit);
+                let _ = command_tx.send(DebuggerCommand::Quit);
                 return Ok(Action::Return);
             }
             KeyCode::Char('/') => {
@@ -91,7 +85,7 @@ pub fn handle(
                 run_target.query.clear();
             }
             KeyCode::Char('p') =>
-                if let Some(target) = panes.stack.selected_stack_fn_name(display_state) {
+                if let Some(target) = panes.stack.selected_stack_fn_name(state) {
                     *reverse_index = None;
                     *run_to_frame_target = Some(target.clone());
                     *mode = RunMode::RunToFrame;
@@ -115,23 +109,19 @@ pub fn handle(
                     panes.stack.search = Default::default();
                 },
             KeyCode::Char('n') | KeyCode::Char(' ') => {
-                if let Some(idx) = reverse_index {
-                    if *idx + 1 < history.len() {
-                        let next = *idx + 1;
-                        if let Some(snapshot) = history.get(next) {
-                            *display_state = snapshot.clone();
-                            *reverse_index =
-                                if next + 1 == history.len() { None } else { Some(next) };
-                            panes.stack.refresh(display_state);
-                        }
+                if let Some(idx) = *reverse_index {
+                    let next = idx + 1;
+                    if let Some(snapshot) = history.get(next) {
+                        *last_state = Some(Box::new(snapshot.clone()));
+                        panes.stack.refresh(snapshot);
+                        *reverse_index = Some(next);
                         return Ok(Action::Continue);
                     }
                     *reverse_index = None;
-                    *display_state = state.clone();
-                    panes.stack.refresh(display_state);
                 }
                 *mode = RunMode::Step;
-                let _ = command_tx.send(DebuggerCommand::StepOver);
+                let n = mem::take(count).parse().unwrap_or(0);
+                let _ = command_tx.send(DebuggerCommand::StepOver(n));
                 return Ok(Action::Break);
             }
             KeyCode::Char('b') => {
@@ -142,8 +132,8 @@ pub fn handle(
                 };
                 if let Some(snapshot) = history.get(next_index) {
                     *reverse_index = Some(next_index);
-                    *display_state = snapshot.clone();
-                    panes.stack.refresh(display_state);
+                    *last_state = Some(Box::new(snapshot.clone()));
+                    panes.stack.refresh(snapshot);
                 }
             }
             KeyCode::Char('c') => {
@@ -167,6 +157,14 @@ pub fn handle(
                 let _ = command_tx.send(DebuggerCommand::RunToMain);
                 return Ok(Action::Break);
             }
+            KeyCode::Char('t') => {
+                *reverse_index = None;
+                *run_to_frame_target = None;
+                *mode = RunMode::RunToTerminator;
+                let n = mem::take(count).parse().unwrap_or(0);
+                let _ = command_tx.send(DebuggerCommand::RunToTerminator(n));
+                return Ok(Action::Break);
+            }
             KeyCode::BackTab => panes.focus = panes.focus.previous(),
             KeyCode::Tab => {
                 panes.focus = if key.modifiers == KeyModifiers::SHIFT {
@@ -175,21 +173,15 @@ pub fn handle(
                     panes.focus.next()
                 };
             }
-            KeyCode::Up => panes.navigate_up(display_state),
-            KeyCode::Down => panes.navigate_down(display_state),
+            KeyCode::Up => panes.navigate_up(state),
+            KeyCode::Down => panes.navigate_down(state),
             KeyCode::Left => panes.scroll_left(),
             KeyCode::Right => panes.scroll_right(),
-            KeyCode::Char(c)
-                if c.is_ascii_alphanumeric() || c == '_' || c == ':' || c == '<' || c == '>' =>
-            {
-                run_target.editing = true;
-                run_target.query.clear();
-                run_target.query.push(c);
-            }
+            KeyCode::Char(c) if c.is_ascii_digit() => count.push(c),
             _ => {}
         }
     } else if let Event::Mouse(mouse) = ev {
-        on_event_mouse(panes, display_state, mouse);
+        on_event_mouse(panes, state, mouse);
     }
 
     Ok(Action::Continue)

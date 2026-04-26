@@ -1,6 +1,7 @@
 #![deny(dead_code)]
 use std::collections::VecDeque;
 use std::io;
+use std::sync::mpsc::RecvError;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
@@ -20,6 +21,7 @@ use ratatui::widgets::{
 use super::channel::{CommandSender, StateReceiver};
 use super::state::LocalKind;
 use super::{DebuggerCommand, DebuggerState};
+use crate::debugger::channel::StateOrEvent;
 use crate::debugger::tui::event::Action;
 use crate::debugger::tui::pane::panes::Panes;
 
@@ -34,6 +36,7 @@ type Terminal = ratatui::Terminal<CrosstermBackend<io::Stdout>>;
 enum RunMode {
     Step,
     Continue,
+    RunToTerminator,
     RunToFrame,
     RunToMain,
     RunToEnd,
@@ -44,16 +47,17 @@ impl RunMode {
         match self {
             RunMode::Step => "step",
             RunMode::Continue => "continue",
+            RunMode::RunToTerminator => "run-to-terminator",
             RunMode::RunToFrame => "run-to-frame",
             RunMode::RunToMain => "run-to-main",
             RunMode::RunToEnd => "run-to-end",
         }
     }
 
-    fn is_fast_mode(self, in_user_code: bool) -> bool {
-        (self == RunMode::RunToMain && !in_user_code)
-            || matches!(self, RunMode::RunToFrame | RunMode::RunToEnd)
-    }
+    //     fn is_fast_mode(self, in_user_code: bool) -> bool {
+    //         (self == RunMode::RunToMain && !in_user_code)
+    //             || matches!(self, RunMode::RunToFrame | RunMode::RunToEnd)
+    //     }
 }
 
 #[derive(Default)]
@@ -66,11 +70,12 @@ pub struct Context {
     mode: RunMode,
     run_target: RunTargetState,
     run_to_frame_target: Option<String>,
-    last_state: Option<DebuggerState>,
+    last_state: Option<Box<DebuggerState>>,
     history: VecDeque<DebuggerState>,
     blink_epoch: Instant,
     reverse_index: Option<usize>,
     program_finished: bool,
+    count: String,
 }
 
 impl Context {
@@ -84,6 +89,7 @@ impl Context {
             blink_epoch: Instant::now(),
             reverse_index: None,
             program_finished: false,
+            count: String::new(),
         }
     }
 
@@ -92,7 +98,7 @@ impl Context {
         if self.history.len() > HISTORY_CAPACITY {
             self.history.pop_front();
         }
-        self.last_state = Some(state.clone());
+        self.last_state = Some(Box::new(state.clone()));
         self.reverse_index = None;
     }
 
@@ -152,53 +158,45 @@ fn tui_loop(
     let mut panes = Panes::new(Rect::default());
     let mut ctx = Context::new();
 
-    while let Ok(state) = state_rx.recv() {
-        ctx.on_new_state(&state);
-
-        panes.stack.refresh(&state);
-        if !state.stack_frames.is_empty() {
-            panes.stack.index = panes.stack.index.min(state.stack_frames.len() - 1);
-        } else {
-            panes.stack.index = 0;
-        }
-
-        let mut display_state = state.clone();
-
-        if ctx.reached_target_frame(&state) {
-            ctx.mode = RunMode::Step;
-            ctx.run_to_frame_target = None;
-        }
-
-        // In fast-forward mode, keep rendering every step without waiting for input.
-        if ctx.mode.is_fast_mode(state.in_user_code) {
-            terminal.draw(|frame| render(&mut panes, frame, &display_state, &ctx))?;
-
-            if event::fast_quit()? {
-                let _ = command_tx.send(DebuggerCommand::Quit);
-                return Ok(());
+    loop {
+        let state = match state_rx.recv() {
+            Ok(StateOrEvent::State(state)) => {
+                ctx.on_new_state(&state);
+                panes.stack.refresh(&state);
+                if !state.stack_frames.is_empty() {
+                    panes.stack.index = panes.stack.index.min(state.stack_frames.len() - 1);
+                } else {
+                    panes.stack.index = 0;
+                }
+                if ctx.reached_target_frame(&state) {
+                    ctx.mode = RunMode::Step;
+                    ctx.run_to_frame_target = None;
+                }
+                if matches!(ctx.mode, RunMode::RunToMain) && state.in_user_code {
+                    ctx.mode = RunMode::Step;
+                }
+                state
             }
-            continue;
-        }
-
-        if matches!(ctx.mode, RunMode::RunToMain) && state.in_user_code {
-            ctx.mode = RunMode::Step;
-        }
-
-        loop {
-            terminal.draw(|frame| render(&mut panes, frame, &display_state, &ctx))?;
-
-            match event::handle(&mut panes, &mut display_state, &state, &mut ctx, &command_tx)? {
-                Action::Continue => (),
-                Action::Break => break,
-                Action::Return => return Ok(()),
+            Ok(StateOrEvent::Event(event)) => {
+                // Reuse the last state.
+                let Some(state) = ctx.last_state.clone() else { continue };
+                match event::handle(event, &mut panes, &state, &mut ctx, &command_tx)? {
+                    Action::Continue | Action::Break => (),
+                    Action::Return => return Ok(()),
+                }
+                let Some(state) = ctx.last_state.clone() else { continue };
+                *state
             }
-        }
+            Err(RecvError) => break,
+        };
+
+        terminal.draw(|frame| render(&mut panes, frame, &state, &ctx))?;
     }
 
     // Program is done; keep the final snapshot visible until the user explicitly quits.
     ctx.program_finished = true;
     if let Some(state) = ctx.last_state.take() {
-        finished(terminal, panes, state, ctx, command_tx)
+        finished(terminal, panes, &state, ctx, command_tx)
     } else {
         finished_without_snapshot(terminal)
     }
@@ -207,18 +205,18 @@ fn tui_loop(
 fn finished(
     terminal: &mut Terminal,
     mut panes: Panes,
-    state: DebuggerState,
+    state: &DebuggerState,
     mut ctx: Context,
     command_tx: CommandSender,
 ) -> io::Result<()> {
     ctx.mode = RunMode::Step;
     ctx.reverse_index = None;
     panes.stack.search.editing = false;
-    let mut display_state = state.clone();
     loop {
-        terminal.draw(|frame| render(&mut panes, frame, &display_state, &ctx))?;
+        terminal.draw(|frame| render(&mut panes, frame, state, &ctx))?;
 
-        match event::handle(&mut panes, &mut display_state, &state, &mut ctx, &command_tx)? {
+        let event = crossterm::event::read()?;
+        match event::handle(event, &mut panes, state, &mut ctx, &command_tx)? {
             Action::Continue => (),
             Action::Break | Action::Return => return Ok(()),
         }
