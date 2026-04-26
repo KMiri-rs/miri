@@ -76,6 +76,7 @@ pub struct Context {
     reverse_index: Option<usize>,
     program_finished: bool,
     count: String,
+    filter_out_dead_allocs: bool,
 }
 
 impl Context {
@@ -90,6 +91,8 @@ impl Context {
             reverse_index: None,
             program_finished: false,
             count: String::new(),
+            // Hide dead allocations by default.
+            filter_out_dead_allocs: true,
         }
     }
 
@@ -242,7 +245,7 @@ fn render(panes: &mut Panes, frame: &mut Frame<'_>, state: &DebuggerState, ctx: 
     panes.render_stack(frame, state, ctx.blink_epoch);
     panes.render_src(frame, state);
     panes.render_locals(frame, state);
-    panes.render_memory(frame, state);
+    panes.render_memory(frame, state, ctx.filter_out_dead_allocs);
     panes.render_output(frame, state);
     panes.render_status_bar(frame, state, ctx);
 }
