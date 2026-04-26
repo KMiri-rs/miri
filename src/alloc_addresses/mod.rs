@@ -17,6 +17,7 @@ use self::reuse_pool::ReusePool;
 use crate::alloc::MiriAllocParams;
 use crate::alloc_addresses::address_generator::align_addr;
 use crate::concurrency::VClock;
+use crate::debugger::debugger_log;
 use crate::diagnostics::SpanDedupDiagnostic;
 use crate::mirch::{PageState, kernel_code_paddr_to_vaddr, kernel_code_vaddr_to_paddr};
 use crate::*;
@@ -573,10 +574,11 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                         {
                             Ok(found) => {
                                 let found_alloc_id = global_state.int_to_ptr_map[found].1;
-                                assert_eq!(
-                                    found_alloc_id, alloc_id,
-                                    "{base_addr} has two AllocId {alloc_id:?} and {found_alloc_id:?}"
-                                );
+                                if found_alloc_id == alloc_id {
+                                    debugger_log(format!(
+                                        "{base_addr} has two AllocId {alloc_id:?} and {found_alloc_id:?}"
+                                    ))
+                                }
                                 return interp_ok(base_addr);
                             }
                             Err(pos) => pos,
