@@ -16,15 +16,18 @@ impl PaneAllocs {
         PaneAllocs { rect, ..Default::default() }
     }
 
-    pub fn widget(&self, state: &DebuggerState, focus: bool) -> Table<'static> {
+    pub fn widget(&self, state: &DebuggerState, focus: bool, no_dead: bool) -> Table<'static> {
         let len_alive = state.allocs.iter().filter(|alloc| !alloc.dealloc).count();
         let rows: Vec<_> = state
             .allocs
             .iter()
             .skip(self.scroll.into())
-            .map(|alloc| {
+            .filter_map(|alloc| {
                 let alive = !alloc.dealloc;
-                Row::new([
+                if !alive & no_dead {
+                    return None;
+                }
+                Some(Row::new([
                     right_cell_with_alive(format!("{}", alloc.alloc_id.0), alive),
                     // right_cell_with_alive(
                     //     alloc.ptr.map(|addr| format!("0x{addr:x}")).unwrap_or_default(),
@@ -41,7 +44,7 @@ impl PaneAllocs {
                     right_cell_with_alive(if alloc.provenance_exposed { "yes" } else { "" }, alive),
                     right_cell_with_alive(alloc.global.clone().unwrap_or_default(), alive),
                     right_cell_with_alive(alloc.locals.join(","), alive),
-                ])
+                ]))
             })
             .collect();
 

@@ -98,7 +98,6 @@ pub fn handle(
                 },
             KeyCode::Char('.') => panes.stack.goto_next_search_match(),
             KeyCode::Char(',') => panes.stack.goto_prev_search_match(),
-            KeyCode::Char('F') => panes.freeze ^= true,
             KeyCode::Char('[') => {
                 panes.status_bar.hscroll = panes.status_bar.hscroll.saturating_sub(1);
             }
@@ -170,6 +169,8 @@ pub fn handle(
                 return Ok(Action::Break);
             }
             KeyCode::Char('S') => toggle_record_all_states(),
+            KeyCode::Char('F') => panes.freeze ^= true,
+            KeyCode::Char('D') => ctx.filter_out_dead_allocs ^= true,
             KeyCode::BackTab => panes.focus = panes.focus.previous(),
             KeyCode::Tab => {
                 panes.focus = if key.modifiers == KeyModifiers::SHIFT {
