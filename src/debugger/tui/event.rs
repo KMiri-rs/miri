@@ -131,7 +131,7 @@ pub fn handle(
             KeyCode::Char('b') => {
                 *mode = RunMode::Step;
                 let next_index = match reverse_index {
-                    Some(idx) => idx.saturating_sub(1),
+                    Some(idx) => idx.saturating_sub(mem::take(count).parse().unwrap_or(1)),
                     None => history.len().saturating_sub(2),
                 };
                 if let Some(snapshot) = history.get(next_index) {
