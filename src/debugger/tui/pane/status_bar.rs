@@ -1,4 +1,5 @@
 use super::*;
+use crate::debugger::get_record_all_states;
 use crate::debugger::state::LocalKind;
 use crate::debugger::tui::pane::stack::StackSearchState;
 use crate::debugger::tui::{Context, RunMode, RunTargetState};
@@ -49,8 +50,10 @@ impl PaneStatusBar {
         } else {
             String::new()
         };
+        let record_all_state =
+            if get_record_all_states() { " S record_always " } else { " S record_on_demand " };
         let text = format!(
-            "mode={}  steps={}  thread={}  focus={}  history={}/{}  {}{}{}  {}",
+            "mode={}  steps={}  thread={}  focus={}  history={}/{} {record_all_state} {}{}{}  {}",
             mode_text,
             state.step_count,
             state.current_thread.to_u32(),
