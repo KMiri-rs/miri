@@ -143,6 +143,7 @@ fn run_tui(state_rx: StateReceiver, command_tx: CommandSender) -> io::Result<()>
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+    terminal.clear()?;
 
     let result = tui_loop(&mut terminal, state_rx, command_tx);
 
