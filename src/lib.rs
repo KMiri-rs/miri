@@ -85,6 +85,13 @@ extern crate rustc_target;
 #[allow(unused_extern_crates)]
 extern crate rustc_driver;
 
+macro_rules! log {
+    ($($t:tt)+) => {
+       $crate::debugger::debugger_log(format!($($t)+));
+       // println!($($t)+);
+    };
+}
+
 mod alloc;
 mod alloc_addresses;
 mod borrow_tracker;
