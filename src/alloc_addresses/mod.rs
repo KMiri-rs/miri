@@ -19,7 +19,9 @@ use crate::alloc_addresses::address_generator::align_addr;
 use crate::concurrency::VClock;
 use crate::debugger::debugger_log;
 use crate::diagnostics::SpanDedupDiagnostic;
-use crate::mirch::{PageState, kernel_code_paddr_to_vaddr, kernel_code_vaddr_to_paddr};
+use crate::mirch::{
+    CodeSection, PageState, kernel_code_paddr_to_vaddr, kernel_code_vaddr_to_paddr,
+};
 use crate::*;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -113,6 +115,22 @@ impl GlobalStateInner {
             next_stack_addr: kernel_code_paddr_to_vaddr(mirch::kernel_stack_end_addr()) as u64,
             next_cpu_local_addr: kernel_code_paddr_to_vaddr(mirch::cpu_local_start_addr()) as u64,
         }
+    }
+
+    fn min_allocated_stack_addr(&self) -> Option<(u64, AllocId)> {
+        let mut min_allocated_stack_addr: Option<(u64, AllocId)> = None;
+        for &(paddr, alloc_id) in &self.int_to_ptr_map {
+            if CodeSection::paddr(paddr) == Ok(CodeSection::Stack) {
+                if let Some((addr, _)) = min_allocated_stack_addr
+                    && addr < paddr
+                {
+                    // The old stack addr has been minimal, thus do nothing.
+                    continue;
+                }
+                min_allocated_stack_addr = Some((paddr, alloc_id));
+            }
+        }
+        min_allocated_stack_addr
     }
 
     pub fn remove_unreachable_allocs(&mut self, allocs: &LiveAllocs<'_, '_>) {
@@ -247,6 +265,7 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 let thread = this.machine.threads.active_thread_ref();
                 // dbg!(thread.thread_display_name(this.machine.threads.active_thread()));
                 let mut next_stack_addr = thread.next_stack_addr.borrow_mut();
+
                 let base_addr = *next_stack_addr - info.size.bytes().max(1);
                 let base_addr = base_addr - base_addr % info.align.bytes();
 
@@ -254,6 +273,19 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     throw_exhaust!(AddressSpaceFull);
                 }
                 *next_stack_addr = base_addr;
+
+                {
+                    debug_assert_eq!(CodeSection::vaddr(*next_stack_addr), Ok(CodeSection::Stack));
+                    let min_allocated_stack_addr = global_state.min_allocated_stack_addr();
+                    let min = min_allocated_stack_addr.map(|(addr, id)| {
+                        let size = this.get_alloc_info(id).size.bytes();
+                        format!("[0x{:x}, 0x{addr:x}) size={size:2}B {id:?}", addr - size)
+                    });
+                    log!(
+                        "min_allocated_stack_addr={min:?} next_stack_addr={cur:x}",
+                        cur = *next_stack_addr
+                    );
+                }
 
                 base_addr
             } else {
