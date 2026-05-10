@@ -1,6 +1,7 @@
 //! This module is responsible for managing the absolute addresses that allocations are located at,
 //! and for casting between pointers and integers based on those addresses.
 
+use owo_colors::OwoColorize;
 use rand::Rng;
 mod address_generator;
 mod reuse_pool;
@@ -116,7 +117,10 @@ impl GlobalStateInner {
         }
     }
 
-    fn min_allocated_stack_addr(&self) -> Option<(u64, AllocId)> {
+    /// Returns the miminal stack variable that is guaranteed to be allocated.
+    /// NOTE: the real addr range of the stack variable is `[addr, addr + bytesize)`
+    /// where addr is the returned u64, bytesize can be queried through AllocId.
+    pub fn min_allocated_stack_variable(&self) -> Option<(u64, AllocId)> {
         let mut min_allocated_stack_addr: Option<(u64, AllocId)> = None;
         for &(paddr, alloc_id) in &self.int_to_ptr_map {
             if CodeSection::paddr(paddr) == Ok(CodeSection::Stack) {
@@ -249,25 +253,39 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 // dbg!(thread.thread_display_name(this.machine.threads.active_thread()));
                 let mut next_stack_addr = thread.next_stack_addr.borrow_mut();
 
+                log!("next_stack_addr (before)=0x{:x}", *next_stack_addr);
                 let base_addr = *next_stack_addr - info.size.bytes().max(1);
+                log!("base_addr=0x{base_addr:x} size={}", info.size.bytes().max(1));
                 let base_addr = base_addr - base_addr % info.align.bytes();
+                log!("base_addr=0x{base_addr:x} offset={}", base_addr % info.align.bytes());
 
                 if base_addr < thread.stack_bottom {
                     throw_exhaust!(AddressSpaceFull);
                 }
                 *next_stack_addr = base_addr;
+                log!("next_stack_addr (after)=0x{:x}", *next_stack_addr);
 
                 {
                     debug_assert_eq!(CodeSection::vaddr(*next_stack_addr), Ok(CodeSection::Stack));
-                    let min_allocated_stack_addr = global_state.min_allocated_stack_addr();
-                    let min = min_allocated_stack_addr.map(|(addr, id)| {
+                    let min_allocated_stack_paddr = global_state.min_allocated_stack_variable();
+                    let min = min_allocated_stack_paddr.map(|(paddr, id)| {
                         let size = this.get_alloc_info(id).size.bytes();
-                        format!("[0x{:x}, 0x{addr:x}) size={size:2}B {id:?}", addr - size)
+                        (paddr, size, id)
                     });
+                    let cur = *next_stack_addr;
                     log!(
                         "min_allocated_stack_addr={min:?} next_stack_addr={cur:x}",
-                        cur = *next_stack_addr
+                        min = min.map(|(paddr, size, id)| {
+                            format!("[0x{paddr:x}, 0x{:x}) size={size:2}B {id:?}", paddr + size)
+                        })
                     );
+                    if let Some((paddr, size, _)) = min {
+                        let pcur = kernel_code_vaddr_to_paddr(cur as usize) as u64;
+                        debug_assert!(
+                            paddr >= pcur,
+                            "new stack ptr 0x{pcur:x} must be lower than the miminal allocated 0x{paddr:x}"
+                        );
+                    }
                 }
 
                 base_addr
@@ -552,7 +570,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 let base_vaddr =
                     this.addr_from_alloc_id_uncached(global_state, alloc_id, memory_kind)?;
                 // trace!("Assigning base address {:#x} to allocation {:?}", base_vaddr, alloc_id);
-                // println!("Assigning base address {:#x} to allocation {:?}", base_vaddr, alloc_id);
+                log!("Assigning base address {:#x} to allocation {:?}", base_vaddr, alloc_id);
 
                 // kmiri: vaddr to paddr; or just base address if not appropriate
                 let base_addr = mirch::page_walk_or(base_vaddr as usize, || {
@@ -848,7 +866,7 @@ impl<'tcx> MiriMachine<'tcx> {
         let pos =
             global_state.int_to_ptr_map.binary_search_by_key(&addr, |(addr, _)| *addr).unwrap();
         let removed = global_state.int_to_ptr_map.remove(pos);
-        // println!("[free_alloc_id] addr={addr:#x} alloc_id={dead_id:?} kind={kind:?}");
+        log!("[free_alloc_id] addr={addr:#x} alloc_id={dead_id:?} kind={kind:?}");
         assert_eq!(removed, (addr, dead_id)); // double-check that we removed the right thing
         // We can also remove it from `exposed`, since this allocation can anyway not be returned by
         // `alloc_id_from_addr` any more.
