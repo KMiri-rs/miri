@@ -2,6 +2,8 @@ use std::{fs, io};
 
 use serde::Deserialize;
 
+use crate::mirch::{kernel_code_vaddr_to_paddr, try_kernel_code_vaddr_to_paddr};
+
 /// Parses a JSON configuration file into a `PhysConfig` structure.
 pub fn parse_json_file(file_path: &str) -> Result<PhysConfig, io::Error> {
     let file_content = fs::read_to_string(file_path)?;
@@ -102,6 +104,40 @@ impl PhysConfig {
             kernel_code_base_vaddr: 0xffff_ffff_8000_0000,
             boot_pt_linear_mapping_base_vaddr: 0xffff_8000_0000_0000,
         }
+    }
+}
+
+/// Physical code section for kernel.
+#[derive(Debug, PartialEq, PartialOrd, Eq, Ord)]
+pub enum CodeSection {
+    BootPt,
+    Static,
+    CpuLocal,
+    Stack,
+}
+
+impl CodeSection {
+    pub fn paddr(paddr: u64) -> Result<Self, String> {
+        let paddr = paddr as usize;
+        Ok(if paddr < kernel_static_start_addr() {
+            Self::BootPt
+        } else if paddr < cpu_local_start_addr() {
+            Self::Static
+        } else if paddr < kernel_stack_start_addr() {
+            Self::CpuLocal
+        } else if paddr <= kernel_stack_end_addr() {
+            Self::Stack
+        } else {
+            return Err(format!("physical addr 0x{paddr:x} doesn't locate in kernel section"));
+        })
+    }
+
+    /// NOTE: this can't be called for boot_pt addr, because its base vaddr differs
+    /// from other section base addr.
+    pub fn vaddr(vaddr: u64) -> Result<Self, String> {
+        let paddr = try_kernel_code_vaddr_to_paddr(vaddr as usize)
+            .ok_or_else(|| format!("0x{vaddr:x} is not in kernel code"))?;
+        Self::paddr(paddr as u64)
     }
 }
 
