@@ -1935,13 +1935,12 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             let stack_len = ecx.active_thread_stack().len();
             ecx.active_thread_mut().set_top_user_relevant_frame(stack_len - 1);
         }
-        log!("Entering {}", ecx.frame().instance().bright_green());
-
         // The minimal stack addr.
         let min_allocated_stack_var =
             ecx.machine.alloc_addresses.borrow().min_allocated_stack_paddr();
         let min_allocated_stack_addr = min_allocated_stack_var
             .map(|(paddr, _)| kernel_code_paddr_to_vaddr(paddr as usize) as u64);
+        // log!("Entering {}", ecx.frame().instance().bright_green());
 
         // Pushes the stack pointer.
         let thread = ecx.machine.threads.active_thread_mut();
@@ -1977,7 +1976,7 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         // tracing-tree can automatically annotate scope changes, but it gets very confused by our
         // concurrency and what it prints is just plain wrong. So we print our own information
         // instead. (Cc https://github.com/rust-lang/miri/issues/2266)
-        log!("Leaving {}", ecx.frame().instance().bright_red());
+        // log!("Leaving {}", ecx.frame().instance().bright_red());
         interp_ok(())
     }
 
@@ -2012,22 +2011,8 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
                 .map(|(paddr, _)| kernel_code_paddr_to_vaddr(paddr as usize) as u64);
 
             let stack_addr = min_allocated_stack_addr.unwrap_or(next_stack_addr);
-
-            log!(
-                "resume stack addr: 0x{stack_addr:x}{}",
-                if min_allocated_stack_addr.map(|addr| addr < next_stack_addr).unwrap_or(false) {
-                    format!(" next_stack_addr=0x{next_stack_addr:x} (set to lower stack addr)")
-                } else {
-                    "".into()
-                }
-            );
             *thread.next_stack_addr.borrow_mut() = stack_addr;
         }
-
-        log!(
-            "stack pop: min_allocated_stack_addr={:?}",
-            ecx.machine.alloc_addresses.borrow().min_allocated_stack_paddr()
-        );
 
         // log!("stack (pop after):\n{}", thread.display_stack_records());
         res
