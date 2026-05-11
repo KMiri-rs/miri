@@ -1983,14 +1983,8 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             min_allocated_stack_addr.unwrap_or_else(|| *thread.next_stack_addr.borrow());
         thread.stack_addr_records.push(stack_addr);
 
-        let stack = thread
-            .stack_addr_records
-            .iter()
-            .map(|addr| format!("  {addr:#x}"))
-            .collect::<Vec<String>>()
-            .join(",\n");
-        log!("stack (push):\n{stack}");
 
+        // log!("stack (push):\n{}", thread.display_stack_records());
         interp_ok(())
     }
 
@@ -2044,13 +2038,6 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         }
         // Resumes the stack pointer.
         let thread = ecx.machine.threads.active_thread_mut();
-        let stack = thread
-            .stack_addr_records
-            .iter()
-            .map(|addr| format!("  {addr:#x}"))
-            .collect::<Vec<String>>()
-            .join(",\n");
-        log!("stack (pop before):\n{stack}");
         if let Some(next_stack_addr) = thread.stack_addr_records.pop() {
             // The minimal stack addr.
             let min_allocated_stack_var =
@@ -2071,18 +2058,12 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             *thread.next_stack_addr.borrow_mut() = stack_addr;
         }
 
-        let stack = thread
-            .stack_addr_records
-            .iter()
-            .map(|addr| format!("  {addr:#x}"))
-            .collect::<Vec<String>>()
-            .join(",\n");
-        log!("stack (pop after):\n{stack}");
         log!(
             "stack pop: min_allocated_stack_addr={:?}",
             ecx.machine.alloc_addresses.borrow().min_allocated_stack_paddr()
         );
 
+        // log!("stack (pop after):\n{}", thread.display_stack_records());
         res
     }
 
