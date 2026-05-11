@@ -99,12 +99,21 @@ pub struct DebuggerState {
     pub locals: Vec<LocalInfo>,
     pub allocs: Vec<AllocInfo>,
     pub output: Vec<OutputLine>,
+    /// The lowest allocated stack vaddr.
+    pub min_stack_ptr: Option<u64>,
 }
 
 impl DebuggerState {
     pub fn capture<'tcx>(ecx: &MiriInterpCx<'tcx>) -> Self {
         let sm = ecx.tcx.sess.source_map();
         let stack = ecx.active_thread_stack();
+
+        let min_stack_ptr = ecx
+            .machine
+            .alloc_addresses
+            .borrow()
+            .min_allocated_stack_paddr()
+            .map(|(paddr, _)| paddr);
 
         let stack_frames: Vec<_> =
             stack.iter().rev().map(|frame| capture_frame(sm, frame)).collect();
@@ -146,6 +155,7 @@ impl DebuggerState {
             locals,
             allocs,
             output,
+            min_stack_ptr,
         }
     }
 }
