@@ -1920,19 +1920,11 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             let stack_len = ecx.active_thread_stack().len();
             ecx.active_thread_mut().set_top_user_relevant_frame(stack_len - 1);
         }
-        // The minimal stack addr.
-        let min_allocated_stack_var =
-            ecx.machine.alloc_addresses.borrow().min_allocated_stack_paddr();
-        let min_allocated_stack_addr = min_allocated_stack_var
-            .map(|(paddr, _)| kernel_code_paddr_to_vaddr(paddr as usize) as u64);
         // log!("Entering {}", ecx.frame().instance().bright_green());
 
         // Pushes the stack pointer.
         let thread = ecx.machine.threads.active_thread_mut();
-        let stack_addr =
-            min_allocated_stack_addr.unwrap_or_else(|| *thread.next_stack_addr.borrow());
-        thread.stack_addr_records.push(stack_addr);
-
+        thread.stack_addr_records.push(*thread.next_stack_addr.borrow());
 
         // log!("stack (push):\n{}", thread.display_stack_records());
         interp_ok(())
@@ -1989,14 +1981,13 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         // Resumes the stack pointer.
         let thread = ecx.machine.threads.active_thread_mut();
         if let Some(next_stack_addr) = thread.stack_addr_records.pop() {
-            // The minimal stack addr.
-            let min_allocated_stack_var =
-                ecx.machine.alloc_addresses.borrow().min_allocated_stack_paddr();
-            let min_allocated_stack_addr = min_allocated_stack_var
-                .map(|(paddr, _)| kernel_code_paddr_to_vaddr(paddr as usize) as u64);
-
-            let stack_addr = min_allocated_stack_addr.unwrap_or(next_stack_addr);
-            *thread.next_stack_addr.borrow_mut() = stack_addr;
+            let mut current_sp = thread.next_stack_addr.borrow_mut();
+            // Update stack ptr only when the recorded sp is lower than current sp.
+            // That's to say do nothing if current sp is lower than recorded sp,
+            // which is possible when returning to frame with more locals allocated.
+            if *current_sp > next_stack_addr {
+                *current_sp = next_stack_addr;
+            }
         }
 
         // log!("stack (pop after):\n{}", thread.display_stack_records());
