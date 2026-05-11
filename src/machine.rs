@@ -1924,7 +1924,7 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
 
         // The minimal stack addr.
         let min_allocated_stack_var =
-            ecx.machine.alloc_addresses.borrow().min_allocated_stack_variable();
+            ecx.machine.alloc_addresses.borrow().min_allocated_stack_paddr();
         let min_allocated_stack_addr = min_allocated_stack_var
             .map(|(paddr, _)| kernel_code_paddr_to_vaddr(paddr as usize) as u64);
 
@@ -2005,7 +2005,7 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         if let Some(next_stack_addr) = thread.stack_addr_records.pop() {
             // The minimal stack addr.
             let min_allocated_stack_var =
-                ecx.machine.alloc_addresses.borrow().min_allocated_stack_variable();
+                ecx.machine.alloc_addresses.borrow().min_allocated_stack_paddr();
             let min_allocated_stack_addr = min_allocated_stack_var
                 .map(|(paddr, _)| kernel_code_paddr_to_vaddr(paddr as usize) as u64);
 
@@ -2031,7 +2031,7 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         log!("stack (pop after):\n{stack}");
         log!(
             "stack pop: min_allocated_stack_addr={:?}",
-            ecx.machine.alloc_addresses.borrow().min_allocated_stack_variable()
+            ecx.machine.alloc_addresses.borrow().min_allocated_stack_paddr()
         );
 
         res
