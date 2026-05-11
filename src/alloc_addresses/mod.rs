@@ -118,10 +118,10 @@ impl GlobalStateInner {
         }
     }
 
-    /// Returns the miminal stack variable that is guaranteed to be allocated.
+    /// Returns the miminal stack variable physical addr that is guaranteed to be allocated.
     /// NOTE: the real addr range of the stack variable is `[addr, addr + bytesize)`
     /// where addr is the returned u64, bytesize can be queried through AllocId.
-    pub fn min_allocated_stack_variable(&self) -> Option<(u64, AllocId)> {
+    pub fn min_allocated_stack_paddr(&self) -> Option<(u64, AllocId)> {
         let mut min_allocated_stack_addr: Option<(u64, AllocId)> = None;
         for &(paddr, alloc_id) in &self.int_to_ptr_map {
             if CodeSection::paddr(paddr) == Ok(CodeSection::Stack) {
@@ -282,7 +282,7 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
                 {
                     debug_assert_eq!(CodeSection::vaddr(*next_stack_addr), Ok(CodeSection::Stack));
-                    let min_allocated_stack_paddr = global_state.min_allocated_stack_variable();
+                    let min_allocated_stack_paddr = global_state.min_allocated_stack_paddr();
                     let min = min_allocated_stack_paddr.map(|(paddr, id)| {
                         let size = this.get_alloc_info(id).size.bytes();
                         (paddr, size, id)
