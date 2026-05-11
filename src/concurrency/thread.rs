@@ -304,6 +304,14 @@ impl<'tcx> Thread<'tcx> {
             .map(|frame_idx| self.stack[frame_idx].current_span())
             .unwrap_or(rustc_span::DUMMY_SP)
     }
+
+    pub fn display_stack_records(&self) -> String {
+        self.stack_addr_records
+            .iter()
+            .map(|addr| format!("  {addr:#x}"))
+            .collect::<Vec<String>>()
+            .join(",\n")
+    }
 }
 
 impl<'tcx> std::fmt::Debug for Thread<'tcx> {
