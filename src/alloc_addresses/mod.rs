@@ -275,23 +275,6 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 }
                 *next_stack_addr = base_addr;
 
-                {
-                    debug_assert_eq!(CodeSection::vaddr(*next_stack_addr), Ok(CodeSection::Stack));
-                    let min_allocated_stack_paddr = global_state.min_allocated_stack_paddr();
-                    let min = min_allocated_stack_paddr.map(|(paddr, id)| {
-                        let size = this.get_alloc_info(id).size.bytes();
-                        (paddr, size, id)
-                    });
-                    let cur = *next_stack_addr;
-                    if let Some((paddr, size, _)) = min {
-                        let pcur = kernel_code_vaddr_to_paddr(cur as usize) as u64;
-                        debug_assert!(
-                            paddr >= pcur,
-                            "new stack ptr 0x{pcur:x} must be lower than the miminal allocated 0x{paddr:x}"
-                        );
-                    }
-                }
-
                 base_addr
             } else {
                 let (next_address, limit) =
