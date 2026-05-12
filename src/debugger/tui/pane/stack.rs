@@ -55,13 +55,20 @@ impl PaneStack {
             search.query.as_str().into()
         };
 
+        let min_sp =
+            state.min_stack_ptr.map(|ptr| format!(", min_sp=0x{ptr:x}")).unwrap_or_default();
+
         let title = if search.editing && search.query.is_empty() {
-            format!("Stack (thread {}) search:{}", state.current_thread.to_u32(), search_display)
+            format!(
+                "Stack (thread {}{min_sp}) search:{}",
+                state.current_thread.to_u32(),
+                search_display
+            )
         } else if search.query.is_empty() {
-            format!("Stack (thread {})", state.current_thread.to_u32())
+            format!("Stack (thread {}{min_sp})", state.current_thread.to_u32())
         } else {
             format!(
-                "Stack (thread {}) search:{} [{}{}]",
+                "Stack (thread {}{min_sp}) search:{} [{}{}]",
                 state.current_thread.to_u32(),
                 search_display,
                 search.matches.len(),

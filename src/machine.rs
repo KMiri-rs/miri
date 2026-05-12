@@ -9,6 +9,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::{fmt, process};
 
+use owo_colors::OwoColorize;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use rustc_abi::{Align, ExternAbi, Size};
@@ -41,7 +42,7 @@ use crate::concurrency::sync::SyncObj;
 use crate::concurrency::{
     AllocDataRaceHandler, GenmcCtx, GenmcEvalContextExt as _, GlobalDataRaceHandler, weak_memory,
 };
-use crate::mirch::{self, PageState, TypedKind};
+use crate::mirch::{self, PageState, TypedKind, kernel_code_paddr_to_vaddr};
 use crate::*;
 
 /// First real-time signal.
@@ -1919,19 +1920,13 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             let stack_len = ecx.active_thread_stack().len();
             ecx.active_thread_mut().set_top_user_relevant_frame(stack_len - 1);
         }
+        // log!("Entering {}", ecx.frame().instance().bright_green());
 
         // Pushes the stack pointer.
         let thread = ecx.machine.threads.active_thread_mut();
-        let next_stack_addr = *thread.next_stack_addr.borrow();
-        thread.stack_addr_records.push(next_stack_addr);
-        // let stack = thread
-        //     .stack_addr_records
-        //     .iter()
-        //     .map(|addr| format!("  {addr:#x}"))
-        //     .collect::<Vec<String>>()
-        //     .join(",\n");
-        // println!("stack (push):\n{stack}");
+        thread.stack_addr_records.push(*thread.next_stack_addr.borrow());
 
+        // log!("stack (push):\n{}", thread.display_stack_records());
         interp_ok(())
     }
 
@@ -1958,7 +1953,7 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         // tracing-tree can autoamtically annotate scope changes, but it gets very confused by our
         // concurrency and what it prints is just plain wrong. So we print our own information
         // instead. (Cc https://github.com/rust-lang/miri/issues/2266)
-        info!("Leaving {}", ecx.frame().instance());
+        // log!("Leaving {}", ecx.frame().instance().bright_red());
         interp_ok(())
     }
 
@@ -1986,15 +1981,16 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         // Resumes the stack pointer.
         let thread = ecx.machine.threads.active_thread_mut();
         if let Some(next_stack_addr) = thread.stack_addr_records.pop() {
-            *thread.next_stack_addr.borrow_mut() = next_stack_addr;
+            let mut current_sp = thread.next_stack_addr.borrow_mut();
+            // Update stack ptr only when the recorded sp is lower than current sp.
+            // That's to say do nothing if current sp is lower than recorded sp,
+            // which is possible when returning to frame with more locals allocated.
+            if *current_sp > next_stack_addr {
+                *current_sp = next_stack_addr;
+            }
         }
-        // let stack = thread
-        //     .stack_addr_records
-        //     .iter()
-        //     .map(|addr| format!("  {addr:#x}"))
-        //     .collect::<Vec<String>>()
-        //     .join(",\n");
-        // println!("stack (pop):\n{stack}");
+
+        // log!("stack (pop after):\n{}", thread.display_stack_records());
         res
     }
 
