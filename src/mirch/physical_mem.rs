@@ -105,7 +105,7 @@ pub fn free_allocations<'tcx>(
                     let dead_id = global_state.int_to_ptr_map[pos].1;
                     global_state.int_to_ptr_map.remove(pos);
                     global_state.exposed.remove(&dead_id);
-                    global_state.base_addr.remove(&dead_id);
+                    global_state.base_paddr.remove(&dead_id);
                     this.memory.alloc_map().remove(&dead_id);
                 }
             }

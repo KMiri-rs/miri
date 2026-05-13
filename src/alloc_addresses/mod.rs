@@ -51,7 +51,8 @@ pub struct GlobalStateInner {
     /// `AllocExtra` because function pointers also have a base address, and
     /// they do not have an `AllocExtra`.
     /// This is the inverse of `int_to_ptr_map`.
-    pub base_addr: FxHashMap<AllocId, u64>,
+    /// NOTE: the ptr in int_to_ptr_map and base_paddr are physical address.
+    pub base_paddr: FxHashMap<AllocId, u64>,
     /// The set of exposed allocations. This cannot be put
     /// into `AllocExtra` for the same reason as `base_addr`.
     pub exposed: FxHashSet<AllocId>,
@@ -68,25 +69,26 @@ pub struct GlobalStateInner {
 
     /// This is used as a memory address when a new pointer is casted to an integer. It
     /// is always larger than any address that was previously made part of a block.
-    next_base_addr: u64,
+    /// This is used for allocating addresses for non stack and non cpu-local allocations.
+    next_base_paddr: u64,
     /// This is used for allocating addresses for cpu-local allocations.
-    next_cpu_local_addr: u64,
+    next_cpu_local_paddr: u64,
     /// This is used for allocating addresses for stack allocations.
-    next_stack_addr: u64,
+    next_stack_paddr: u64,
 }
 
 impl VisitProvenance for GlobalStateInner {
     fn visit_provenance(&self, _visit: &mut VisitWith<'_>) {
         let GlobalStateInner {
             int_to_ptr_map: _,
-            base_addr: _,
+            base_paddr: _,
             prepared_alloc_bytes: _,
             exposed: _,
             address_generation: _,
             provenance_mode: _,
-            next_base_addr: _,
-            next_cpu_local_addr: _,
-            next_stack_addr: _,
+            next_base_paddr: _,
+            next_cpu_local_paddr: _,
+            next_stack_paddr: _,
         } = self;
         // Though base_addr, int_to_ptr_map, and exposed contain AllocIds, we do not want to visit them.
         // int_to_ptr_map and exposed must contain only live allocations, and those
@@ -101,7 +103,7 @@ impl GlobalStateInner {
     pub fn new<'tcx>(config: &MiriConfig, stack_addr: u64, tcx: TyCtxt<'tcx>) -> Self {
         GlobalStateInner {
             int_to_ptr_map: Vec::default(),
-            base_addr: FxHashMap::default(),
+            base_paddr: FxHashMap::default(),
             exposed: FxHashSet::default(),
             provenance_mode: config.provenance_mode,
             address_generation: (config.native_lib.is_empty() && config.genmc_config.is_none())
@@ -112,9 +114,9 @@ impl GlobalStateInner {
                     )
                 }),
             prepared_alloc_bytes: (!config.native_lib.is_empty()).then(FxHashMap::default),
-            next_base_addr: kernel_code_paddr_to_vaddr(mirch::kernel_static_start_addr()) as u64,
-            next_stack_addr: kernel_code_paddr_to_vaddr(mirch::kernel_stack_end_addr()) as u64,
-            next_cpu_local_addr: kernel_code_paddr_to_vaddr(mirch::cpu_local_start_addr()) as u64,
+            next_base_paddr: kernel_code_paddr_to_vaddr(mirch::kernel_static_start_addr()) as u64,
+            next_stack_paddr: kernel_code_paddr_to_vaddr(mirch::kernel_stack_end_addr()) as u64,
+            next_cpu_local_paddr: kernel_code_paddr_to_vaddr(mirch::cpu_local_start_addr()) as u64,
         }
     }
 
@@ -140,7 +142,7 @@ impl GlobalStateInner {
     pub fn remove_unreachable_allocs(&mut self, allocs: &LiveAllocs<'_, '_>) {
         // `exposed` and `int_to_ptr_map` are cleared immediately when an allocation
         // is freed, so `base_addr` is the only one we have to clean up based on the GC.
-        self.base_addr.retain(|id, _| allocs.is_live(*id));
+        self.base_paddr.retain(|id, _| allocs.is_live(*id));
     }
 
     fn set_address(&mut self, alloc_id: AllocId, paddr: usize) {
@@ -153,11 +155,11 @@ impl GlobalStateInner {
 
         self.exposed.insert(alloc_id);
         self.int_to_ptr_map.insert(pos, (paddr, alloc_id));
-        self.base_addr.insert(alloc_id, paddr);
+        self.base_paddr.insert(alloc_id, paddr);
     }
 
     pub fn get_base_addr(&self, alloc_id: AllocId) -> u64 {
-        *self.base_addr.get(&alloc_id).unwrap()
+        *self.base_paddr.get(&alloc_id).unwrap()
     }
 }
 
@@ -280,12 +282,12 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 let (next_address, limit) =
                     if this.machine.cpu_local_alloc_set.borrow().contains(&alloc_id) {
                         (
-                            &mut global_state.next_cpu_local_addr,
+                            &mut global_state.next_cpu_local_paddr,
                             kernel_code_paddr_to_vaddr(mirch::cpu_local_end_addr()) as u64,
                         )
                     } else {
                         (
-                            &mut global_state.next_base_addr,
+                            &mut global_state.next_base_paddr,
                             kernel_code_paddr_to_vaddr(mirch::kernel_static_end_addr()) as u64,
                         )
                     };
@@ -554,7 +556,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let mut global_state = this.machine.alloc_addresses.borrow_mut();
         let global_state = &mut *global_state;
 
-        let addr = match global_state.base_addr.get(&alloc_id) {
+        let addr = match global_state.base_paddr.get(&alloc_id) {
             Some(&addr) => {
                 // println!("Got {alloc_id:?} at addr {addr:#x}",);
                 kernel_code_paddr_to_vaddr(addr as usize) as u64
@@ -568,47 +570,47 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 // log!("Assigning base address {:#x} to allocation {:?}", base_vaddr, alloc_id);
 
                 // kmiri: vaddr to paddr; or just base address if not appropriate
-                let base_addr = mirch::page_walk_or(base_vaddr as usize, || {
+                let base_paddr = mirch::page_walk_or(base_vaddr as usize, || {
                     mirch::try_kernel_code_vaddr_to_paddr(base_vaddr as usize)
                         .unwrap_or(base_vaddr as usize)
                 })
                 .unwrap() as u64;
 
                 // Store address in cache.
-                global_state.base_addr.try_insert(alloc_id, base_addr).unwrap();
+                global_state.base_paddr.try_insert(alloc_id, base_paddr).unwrap();
 
                 // Also maintain the opposite mapping in `int_to_ptr_map`, ensuring we keep it
                 // sorted. We have a fast-path for the common case that this address is bigger than
                 // all previous ones. We skip this for allocations at address 0; those can't be
                 // real, they must be TypeId "fake allocations".
-                if base_addr != 0 {
+                if base_paddr != 0 {
                     let pos = if global_state
                         .int_to_ptr_map
                         .last()
-                        .is_some_and(|(last_addr, _)| *last_addr < base_addr)
+                        .is_some_and(|(last_addr, _)| *last_addr < base_paddr)
                     {
                         global_state.int_to_ptr_map.len()
                     } else {
                         match global_state
                             .int_to_ptr_map
-                            .binary_search_by_key(&base_addr, |(addr, _)| *addr)
+                            .binary_search_by_key(&base_paddr, |(addr, _)| *addr)
                         {
                             Ok(found) => {
                                 let found_alloc_id = global_state.int_to_ptr_map[found].1;
                                 if found_alloc_id == alloc_id {
                                     debugger_log(format!(
-                                        "{base_addr} has two AllocId {alloc_id:?} and {found_alloc_id:?}"
+                                        "{base_paddr} has two AllocId {alloc_id:?} and {found_alloc_id:?}"
                                     ))
                                 }
-                                return interp_ok(base_addr);
+                                return interp_ok(base_paddr);
                             }
                             Err(pos) => pos,
                         }
                     };
-                    global_state.int_to_ptr_map.insert(pos, (base_addr, alloc_id));
+                    global_state.int_to_ptr_map.insert(pos, (base_paddr, alloc_id));
                 }
 
-                base_addr
+                base_paddr
             }
         };
         interp_ok(addr)
@@ -696,7 +698,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let ecx = this;
         let base_paddr = {
             let global_state = ecx.machine.alloc_addresses.borrow();
-            *global_state.base_addr.get(&alloc_id).unwrap()
+            *global_state.base_paddr.get(&alloc_id).unwrap()
         };
         let alloc_map = &ecx.memory.alloc_map();
         if kind == MemoryKind::Stack.into() {
@@ -818,7 +820,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
         // This cannot fail: since we already have a pointer with that provenance, adjust_alloc_root_pointer
         // must have been called in the past, so we can just look up the address in the map.
-        let base_addr = *this.machine.alloc_addresses.borrow().base_addr.get(&alloc_id).unwrap();
+        let base_paddr = *this.machine.alloc_addresses.borrow().base_paddr.get(&alloc_id).unwrap();
 
         let actual_addr = mirch::page_walk_or(addr.bytes_usize(), || {
             // kernel_code_vaddr_to_paddr(addr.bytes_usize())
@@ -826,7 +828,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         })
         .unwrap() as u64;
 
-        let offset = actual_addr.wrapping_sub(base_addr);
+        let offset = actual_addr.wrapping_sub(base_paddr);
 
         // Wrapping "addr - base_addr"
         let rel_offset = this.truncate_to_target_usize(offset);
@@ -857,7 +859,7 @@ impl<'tcx> MiriMachine<'tcx> {
         // returns a dead allocation.
         // To avoid a linear scan we first look up the address in `base_addr`, and then find it in
         // `int_to_ptr_map`.
-        let addr = *global_state.base_addr.get(&dead_id).unwrap();
+        let addr = *global_state.base_paddr.get(&dead_id).unwrap();
         let pos =
             global_state.int_to_ptr_map.binary_search_by_key(&addr, |(addr, _)| *addr).unwrap();
         let removed = global_state.int_to_ptr_map.remove(pos);
