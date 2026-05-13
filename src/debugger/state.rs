@@ -330,7 +330,7 @@ fn capture_allocs(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<AllocInfo
 
     for (&alloc_id, (_alloc, dealloc)) in alloc_spans.iter().take(32) {
         let provenance_exposed = alloc_state.exposed.contains(&alloc_id);
-        let base_addr = alloc_state.base_addr.get(&alloc_id).copied();
+        let base_addr = alloc_state.base_paddr.get(&alloc_id).copied();
         let global = ecx.tcx.try_get_global_alloc(alloc_id).and_then(|ga| {
             Some(match ga {
                 GlobalAlloc::Function { instance } => item_name(instance.def_id()),
@@ -361,7 +361,7 @@ fn capture_allocs(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<AllocInfo
         let info = ecx.get_alloc_info(alloc_id);
         let (names, ptr) = split_locals(&v_locals);
         let provenance_exposed = alloc_state.exposed.contains(&alloc_id);
-        let base_addr = alloc_state.base_addr.get(&alloc_id).copied();
+        let base_addr = alloc_state.base_paddr.get(&alloc_id).copied();
         if let Some(ga) = ecx.tcx.try_get_global_alloc(alloc_id) {
             let global = match ga {
                 GlobalAlloc::Function { instance } => item_name(instance.def_id()),

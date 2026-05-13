@@ -51,7 +51,7 @@ impl PaneAllocs {
         let header = [
             "AllocID",
             // "Pointer",
-            "BaseAddr",
+            "BasePAddr",
             "Dealloc",
             "Kind",
             "Size",
