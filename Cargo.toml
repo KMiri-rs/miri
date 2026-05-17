@@ -62,14 +62,15 @@ name = "ui"
 harness = false
 
 [features]
-default = ["stack-cache", "native-lib"]
+default = ["stack-cache", "native-lib", "kmiri"]
 genmc = ["dep:genmc-sys"]
 stack-cache = []
 expensive-consistency-checks = ["stack-cache"]
-tracing = ["serde_json"]
+tracing = ["dep:serde_json"]
 native-lib = ["dep:libffi", "dep:libloading", "dep:capstone", "dep:ipc-channel", "dep:nix", "dep:serde"]
 jemalloc = []
 check_only = ["libffi?/check_only", "capstone?/check_only", "genmc-sys?/check_only"]
+kmiri = ["dep:serde_json", "dep:serde"]
 
 [lints.rust.unexpected_cfgs]
 level = "warn"
