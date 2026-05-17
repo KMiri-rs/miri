@@ -56,12 +56,7 @@
     // We are not implementing queries here so it's fine
     rustc::potential_query_instability,
 )]
-#![warn(
-    rust_2018_idioms,
-    unqualified_local_imports,
-    clippy::as_conversions,
-    clippy::manual_let_else
-)]
+#![warn(rust_2018_idioms, unqualified_local_imports)]
 // Needed for rustdoc from bootstrap (with `-Znormalize-docs`).
 #![recursion_limit = "256"]
 

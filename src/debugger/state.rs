@@ -236,10 +236,8 @@ fn capture_frame(sm: &SourceMap, frame: &Frame<'_, Provenance, FrameExtra<'_>>) 
             // Force path remapping, because `prefer_remapped_unconditionally` doesn't always work.
             // Use `--remap-path-prefix` to shorten the long sysroot path, e.g.
             // ./miri run tests/pass/debugger_test.rs --debugger --remap-path-prefix=$(rustc --print=sysroot)/lib/rustlib/src/rust/library/=
-            let file_name =
-                sm.span_to_filename(span).into_local_path().unwrap_or_else(|| "Unknown".into());
-            let (path, _) = sm.path_mapping().map_prefix(file_name);
-            path.display().to_string()
+            // TODO: The API has changed. Need to confirm if this remmap works.
+            sm.span_to_filename(span).prefer_remapped_unconditionally().to_string()
         },
         line_start: pos_to_line_nr(sm, span.lo()),
         line_end: pos_to_line_nr(sm, span.hi()),
