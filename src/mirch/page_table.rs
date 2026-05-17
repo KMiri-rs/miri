@@ -25,29 +25,27 @@ pub fn kernel_code_vaddr_to_paddr(vaddr: usize) -> usize {
 pub unsafe fn init_boot_pt() -> PageTable {
     let page_table = PageTable::new(BOOT_PT_PADDR);
 
-    unsafe {
-        *(paddr_to_mem(BOOT_PT_PADDR) as *mut usize) = BOOT_PT_LINEAR_PDPT_PADDR;
+    *(paddr_to_mem(BOOT_PT_PADDR) as *mut usize) = BOOT_PT_LINEAR_PDPT_PADDR;
 
-        // linear mapping
-        let pt_linear_offset_level_4 =
-            PageTable::pte_index(mirch::boot_pt_linear_mapping_base_vaddr(), 4);
-        let pt_linear_offset_level_3 =
-            PageTable::pte_index(mirch::boot_pt_linear_mapping_base_vaddr(), 3);
+    // linear mapping
+    let pt_linear_offset_level_4 =
+        PageTable::pte_index(mirch::boot_pt_linear_mapping_base_vaddr(), 4);
+    let pt_linear_offset_level_3 =
+        PageTable::pte_index(mirch::boot_pt_linear_mapping_base_vaddr(), 3);
 
-        *(paddr_to_mem(BOOT_PT_PADDR) as *mut usize).add(pt_linear_offset_level_4) =
-            BOOT_PT_LINEAR_PDPT_PADDR;
-        *(paddr_to_mem(BOOT_PT_LINEAR_PDPT_PADDR) as *mut usize).add(pt_linear_offset_level_3) =
-            0x0 | PageTable::HUGE_BIT_MASK;
+    *(paddr_to_mem(BOOT_PT_PADDR) as *mut usize).add(pt_linear_offset_level_4) =
+        BOOT_PT_LINEAR_PDPT_PADDR;
+    *(paddr_to_mem(BOOT_PT_LINEAR_PDPT_PADDR) as *mut usize).add(pt_linear_offset_level_3) =
+        0x0 | PageTable::HUGE_BIT_MASK;
 
-        // kernel code mapping
-        let pt_kernel_offset_level_4 = PageTable::pte_index(mirch::kernel_code_base_vaddr(), 4);
-        let pt_kernel_offset_level_3 = PageTable::pte_index(mirch::kernel_code_base_vaddr(), 3);
+    // kernel code mapping
+    let pt_kernel_offset_level_4 = PageTable::pte_index(mirch::kernel_code_base_vaddr(), 4);
+    let pt_kernel_offset_level_3 = PageTable::pte_index(mirch::kernel_code_base_vaddr(), 3);
 
-        *(paddr_to_mem(BOOT_PT_PADDR) as *mut usize).add(pt_kernel_offset_level_4) =
-            BOOT_PT_KERNEL_PDPT_PADDR;
-        *(paddr_to_mem(BOOT_PT_KERNEL_PDPT_PADDR) as *mut usize).add(pt_kernel_offset_level_3) =
-            0x0 | PageTable::HUGE_BIT_MASK;
-    }
+    *(paddr_to_mem(BOOT_PT_PADDR) as *mut usize).add(pt_kernel_offset_level_4) =
+        BOOT_PT_KERNEL_PDPT_PADDR;
+    *(paddr_to_mem(BOOT_PT_KERNEL_PDPT_PADDR) as *mut usize).add(pt_kernel_offset_level_3) =
+        0x0 | PageTable::HUGE_BIT_MASK;
 
     super::type_pages_at(BOOT_PT_PADDR, 3, PTE_SIZE, mirch::TypedKind::PageTable).unwrap();
 
