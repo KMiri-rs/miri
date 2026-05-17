@@ -242,7 +242,7 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
         } else {
             let base_addr = if memory_kind == MemoryKind::Stack {
                 let thread = this.machine.threads.active_thread_ref();
-                dbg!(thread.thread_display_name(this.machine.threads.active_thread()));
+                // dbg!(thread.thread_display_name(this.machine.threads.active_thread()));
                 let mut next_stack_addr = thread.next_stack_addr.borrow_mut();
                 let base_addr = *next_stack_addr - info.size.bytes().max(1);
                 let base_addr = base_addr - base_addr % info.align.bytes();
@@ -293,7 +293,7 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 }
                 base_addr
             };
-            println!("memory_kind={memory_kind:?} base_addr={base_addr:#x}");
+            // println!("memory_kind={memory_kind:?} base_addr={base_addr:#x}");
 
             interp_ok(base_addr)
         }
@@ -533,7 +533,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
         let addr = match global_state.base_addr.get(&alloc_id) {
             Some(&addr) => {
-                println!("Got {alloc_id:?} at addr {addr:#x}",);
+                // println!("Got {alloc_id:?} at addr {addr:#x}",);
                 kernel_code_paddr_to_vaddr(addr as usize) as u64
             }
             None => {
@@ -543,7 +543,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 let base_vaddr =
                     this.addr_from_alloc_id_uncached(global_state, alloc_id, memory_kind)?;
                 // trace!("Assigning base address {:#x} to allocation {:?}", base_vaddr, alloc_id);
-                println!("Assigning base address {:#x} to allocation {:?}", base_vaddr, alloc_id);
+                // println!("Assigning base address {:#x} to allocation {:?}", base_vaddr, alloc_id);
 
                 // kmiri: vaddr to paddr; or just base address if not appropriate
                 let base_addr = mirch::page_walk_or(base_vaddr as usize, || {
@@ -838,7 +838,7 @@ impl<'tcx> MiriMachine<'tcx> {
         let pos =
             global_state.int_to_ptr_map.binary_search_by_key(&addr, |(addr, _)| *addr).unwrap();
         let removed = global_state.int_to_ptr_map.remove(pos);
-        println!("[free_alloc_id] addr={addr:#x} alloc_id={dead_id:?} kind={kind:?}");
+        // println!("[free_alloc_id] addr={addr:#x} alloc_id={dead_id:?} kind={kind:?}");
         assert_eq!(removed, (addr, dead_id)); // double-check that we removed the right thing
         // We can also remove it from `exposed`, since this allocation can anyway not be returned by
         // `alloc_id_from_addr` any more.

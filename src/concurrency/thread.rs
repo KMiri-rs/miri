@@ -20,6 +20,7 @@ use rustc_span::{DUMMY_SP, Span};
 use rustc_target::spec::Os;
 
 use crate::concurrency::GlobalDataRaceHandler;
+use crate::debugger::{DebuggerCommand, DebuggerState};
 use crate::machine::CPU_NUM;
 use crate::mirch::{self, PageState, kernel_code_paddr_to_vaddr};
 use crate::shims::tls;
@@ -1502,6 +1503,18 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                             Poll::Pending => {} // keep going
                             Poll::Ready(()) =>
                                 this.terminate_active_thread(TlsAllocAction::Deallocate)?,
+                        }
+                    }
+
+                    if let Some(handle) = &this.machine.debugger {
+                        let stack = this.active_thread_stack();
+                        if !stack.is_empty() {
+                            let state = DebuggerState::capture(this);
+                            handle.send(state);
+                            if handle.wait_for_continue() == DebuggerCommand::Quit {
+                                this.machine.handle_abnormal_termination();
+                                throw_machine_stop!(TerminationInfo::Interrupted);
+                            }
                         }
                     }
                 }
