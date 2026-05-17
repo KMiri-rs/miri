@@ -45,15 +45,13 @@
     clippy::needless_lifetimes,
     clippy::too_long_first_doc_paragraph,
     clippy::len_zero,
+    clippy::as_conversions,
+    unsafe_op_in_unsafe_fn,
+    unused,
     // We are not implementing queries here so it's fine
     rustc::potential_query_instability,
 )]
-#![warn(
-    rust_2018_idioms,
-    unqualified_local_imports,
-    clippy::as_conversions,
-    clippy::manual_let_else
-)]
+#![warn(rust_2018_idioms, unqualified_local_imports, clippy::manual_let_else)]
 // Needed for rustdoc from bootstrap (with `-Znormalize-docs`).
 #![recursion_limit = "256"]
 
