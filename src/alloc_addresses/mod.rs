@@ -475,11 +475,11 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         assert!(global_state.provenance_mode != ProvenanceMode::Strict);
 
         // vaddr to paddr
-        let _addr = mirch::page_walk_or(vaddr as usize, || vaddr as usize)? as u64;
+        let paddr = mirch::page_walk_or(vaddr as usize, || vaddr as usize)? as u64;
 
         // We always search the allocation to the right of this address. So if the size is strictly
         // negative, we have to search for `addr-1` instead.
-        let addr = if size >= 0 { vaddr } else { vaddr.saturating_sub(1) };
+        let addr = if size >= 0 { paddr } else { paddr.saturating_sub(1) };
         let pos = global_state.int_to_ptr_map.binary_search_by_key(&addr, |(addr, _)| *addr);
 
         // Determine the in-bounds provenance for this pointer.
@@ -487,14 +487,14 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             Ok(pos) => Some(global_state.int_to_ptr_map[pos].1),
             Err(0) => {
                 // If cannot found, first check whether the allocation is a lazy allocated one (typed slot).
-                let addr = addr as usize;
+                let paddr = paddr as usize;
                 drop(global_state);
-                let typed_slot = self.lazy_alloc_typed_slot_allocation(addr);
+                let typed_slot = self.lazy_alloc_typed_slot_allocation(paddr);
                 if typed_slot.is_some() {
                     return typed_slot;
                 }
 
-                let cpu_local_in_ap = self.init_ap_cpu_local_allocation(addr, vaddr as usize);
+                let cpu_local_in_ap = self.init_ap_cpu_local_allocation(paddr, vaddr as usize);
                 if cpu_local_in_ap.is_some() {
                     return cpu_local_in_ap;
                 }
@@ -516,14 +516,14 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     Some(alloc_id)
                 } else {
                     // FIXME: explain the kmiri logic in this branch
-                    let addr = addr as usize;
+                    let paddr = paddr as usize;
                     drop(global_state);
-                    let typed_slot = self.lazy_alloc_typed_slot_allocation(addr);
+                    let typed_slot = self.lazy_alloc_typed_slot_allocation(paddr);
                     if typed_slot.is_some() {
                         return typed_slot;
                     }
 
-                    let cpu_local_in_ap = self.init_ap_cpu_local_allocation(addr, vaddr as usize);
+                    let cpu_local_in_ap = self.init_ap_cpu_local_allocation(paddr, vaddr as usize);
                     if cpu_local_in_ap.is_some() {
                         return cpu_local_in_ap;
                     }
