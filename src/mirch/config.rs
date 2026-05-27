@@ -24,12 +24,12 @@ pub fn parse_json_file(file_path: &str) -> Result<PhysConfig, io::Error> {
 
     const INIT_MAPPING_SIZE: usize = 0x4000_0000; // 1GB
     assert!(
-        config.boot_pt_linear_mapping_base_vaddr % INIT_MAPPING_SIZE == 0,
-        "boot_pt_linear_mapping_base_vaddr must be aligned to 0x4000_0000"
+        config.boot_pt_linear_mapping_base_vaddr.is_multiple_of(INIT_MAPPING_SIZE),
+        "boot_pt_linear_mapping_base_vaddr must be aligned to {INIT_MAPPING_SIZE}"
     );
     assert!(
-        config.kernel_code_base_vaddr % INIT_MAPPING_SIZE == 0,
-        "kernel_code_base_vaddr must be aligned to 0x4000_0000"
+        config.kernel_code_base_vaddr.is_multiple_of(INIT_MAPPING_SIZE),
+        "kernel_code_base_vaddr must be aligned to ${INIT_MAPPING_SIZE}"
     );
     Ok(config)
 }
