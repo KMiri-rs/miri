@@ -509,12 +509,6 @@ pub fn eval_entry<'tcx>(
         panic::resume_unwind(panic_payload)
     });
 
-    let mut index = 0;
-    for time_record in &ecx.machine.record {
-        // println!("{}, time: {:?}", index, time_record);
-        index += 1;
-    }
-
     // Obtain the result of the execution. This is always an `Err`, but that doesn't necessarily
     // indicate an error.
     let Err(res) = res.report_err();

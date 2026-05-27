@@ -51,8 +51,6 @@
     clippy::as_conversions,
     unsafe_op_in_unsafe_fn,
     unused,
-    // We don't use translatable diagnostics
-    rustc::diagnostic_outside_of_impl,
     // We are not implementing queries here so it's fine
     rustc::potential_query_instability,
 )]

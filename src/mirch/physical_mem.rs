@@ -141,8 +141,8 @@ pub fn type_pages_at<'tcx>(
 /// Copies `len` bytes from `src` to `dst` in the simulated physical memory.
 pub fn physical_copy(dst: usize, src: usize, len: usize) {
     unsafe {
-        let src_ptr = paddr_to_mem(src) as *const u8;
-        let dst_ptr = paddr_to_mem(dst) as *mut u8;
+        let src_ptr = paddr_to_mem(src);
+        let dst_ptr = paddr_to_mem(dst);
 
         core::ptr::copy(src_ptr, dst_ptr, len);
     }
@@ -194,7 +194,7 @@ pub fn insert_init_mask(this: &MiriInterpCx<'_>, paddr: usize, params: MiriAlloc
     unsafe {
         let layout = Layout::from_size_align_unchecked(page_size(), 1);
         let mut allocation = create_allocation_at(paddr, layout, params);
-        let _ = allocation.write_uninit(this, (0..page_size()).into());
+        allocation.write_uninit(this, (0..page_size()).into());
 
         physical_mem_mut().init_masks.insert(paddr, allocation);
     }
@@ -226,6 +226,10 @@ impl PhysicalMemory {
         };
 
         let mut page_states = vec![PageState::Unused; total_page_num()];
+        #[expect(
+            clippy::needless_range_loop,
+            reason = "kernel code section is the first part in all pages, but there are left space for free pages"
+        )]
         for i in 0..kernel_code_page_num() {
             page_states[i] =
                 PageState::Typed { page_type: TypedKind::Interpreter, type_size: page_size() };
