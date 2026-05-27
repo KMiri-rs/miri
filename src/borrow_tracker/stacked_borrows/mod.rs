@@ -1,11 +1,12 @@
 //! Implements "Stacked Borrows".  See <https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/stacked-borrows.md>
 //! for further information.
 
+pub mod debugger;
 pub mod diagnostics;
 mod item;
 mod stack;
 
-use std::fmt::Write;
+use std::fmt::{self, Write};
 use std::sync::atomic::AtomicBool;
 use std::{cmp, mem};
 
@@ -458,6 +459,26 @@ impl VisitProvenance for Stacks {
     }
 }
 
+impl fmt::Display for Stacks {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (range, stack) in self.stacks.iter_all() {
+            writeln!(f, "stack.len={} {range:?}:", stack.len())?;
+            if let Some(bottom) = stack.unknown_bottom() {
+                writeln!(f, "  unknown bottom: tags below {bottom:?} are not tracked")?;
+            }
+            if stack.len() == 0 {
+                writeln!(f, "  <empty>")?;
+                continue;
+            }
+            for idx in 0..stack.len() {
+                let item = stack.get(idx).expect("stack indices are in bounds");
+                writeln!(f, "  [{idx}] {item}")?;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Map per-stack operations to higher-level per-location-range operations.
 impl<'tcx> Stacks {
     /// Creates a new stack with an initial tag. For diagnostic purposes, we also need to know
@@ -496,6 +517,11 @@ impl<'tcx> Stacks {
             dcx_builder = dcx.unbuild();
         }
         interp_ok(())
+    }
+
+    pub fn debugger(&self, ecx: &MiriInterpCx<'_>) -> debugger::DebuggerBorrowStacks {
+        use debugger::*;
+        DebuggerBorrowStacks { whole: self.history.debugger(ecx), segments: self.stacks.debugger() }
     }
 }
 
@@ -1033,17 +1059,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let this = self.eval_context_mut();
         let alloc_extra = this.get_alloc_extra(alloc_id)?;
         let stacks = alloc_extra.borrow_tracker_sb().borrow();
-        for (range, stack) in stacks.stacks.iter_all() {
-            print!("{range:?}: [");
-            if let Some(bottom) = stack.unknown_bottom() {
-                print!(" unknown-bottom(..{bottom:?})");
-            }
-            for i in 0..stack.len() {
-                let item = stack.get(i).unwrap();
-                print!(" {:?}{:?}", item.perm(), item.tag());
-            }
-            println!(" ]");
-        }
+        print!("{stacks}");
         interp_ok(())
     }
 }

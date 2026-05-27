@@ -9,6 +9,9 @@ use std::ops;
 
 use rustc_abi::Size;
 
+use crate::Stack;
+use crate::borrow_tracker::stacked_borrows::debugger::DebuggerSegment;
+
 #[derive(Clone, Debug)]
 struct Elem<T> {
     /// The range covered by this element; never empty.
@@ -238,6 +241,15 @@ impl<T> DedupRangeMap<T> {
             }
             self.v.push(elem);
         }
+    }
+}
+
+impl DedupRangeMap<Stack> {
+    pub fn debugger(&self) -> Vec<DebuggerSegment> {
+        self.v
+            .iter()
+            .map(|seg| DebuggerSegment { range: seg.range.clone(), stack: seg.data.debugger() })
+            .collect()
     }
 }
 
