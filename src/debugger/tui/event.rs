@@ -208,7 +208,17 @@ fn on_event_mouse(panes: &mut Panes, state: &DebuggerState, mouse: MouseEvent) {
             panes.focus = hovered;
             panes.scroll_down(state);
         }
-        MouseEventKind::Down(_) => panes.focus = hovered,
+        MouseEventKind::Down(_) => {
+            panes.focus = hovered;
+            if panes.is_focused(FocusPane::BorrowStacks) {
+                if panes.borrow_stacks_contains(mouse.column, mouse.row) {
+                    panes.borrow_stacks_select_at(mouse.row);
+                } else {
+                    // click on outer area: back to main pane
+                    panes.toggle_modal();
+                }
+            }
+        }
         _ => {}
     }
 }

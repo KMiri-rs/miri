@@ -106,6 +106,10 @@ impl Panes {
 
     /// Find the pane as per the given point.
     pub fn pane_at(&self, x: u16, y: u16) -> FocusPane {
+        if self.is_focused(FocusPane::BorrowStacks) {
+            return FocusPane::BorrowStacks;
+        }
+
         let position = Position { x, y };
         let is_in = |rect: Rect| rect.contains(position);
         if is_in(self.mir.rect) {
@@ -194,10 +198,18 @@ impl Panes {
         modal.state.open();
         frame.render_stateful_widget(modal.overlay.clone(), self.area, &mut modal.state);
         if let Some(inner) = modal.state.inner_area() {
-            self.borrow_stacks.view_height = inner.height;
+            self.borrow_stacks.set_rect(inner);
             let table = self.borrow_stacks.widget(state, no_dead);
             frame.render_stateful_widget(table, inner, &mut self.borrow_stacks.state);
         }
+    }
+
+    pub fn borrow_stacks_contains(&self, x: u16, y: u16) -> bool {
+        self.borrow_stacks.contains(x, y)
+    }
+
+    pub fn borrow_stacks_select_at(&mut self, y: u16) {
+        self.borrow_stacks.select_at(y);
     }
 
     fn up(
