@@ -9,4 +9,6 @@ pub const THEME_WARN: Color = Color::Yellow;
 pub const THEME_ERR: Color = Color::Red;
 
 pub const STYLE_HIGHTLIGHTED: Style = Style::new().add_modifier(Modifier::BOLD).fg(Color::Cyan);
+pub const STYLE_HIGHTLIGHTED_BG: Style =
+    Style::new().add_modifier(Modifier::BOLD).bg(Color::Rgb(26, 34, 60));
 pub const STYLE_TERMINATOR: Style = Style::new().add_modifier(Modifier::BOLD).fg(Color::Yellow);

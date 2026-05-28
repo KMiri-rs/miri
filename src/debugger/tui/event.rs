@@ -183,6 +183,8 @@ pub fn handle(
             }
             KeyCode::Up => panes.navigate_up(state),
             KeyCode::Down => panes.navigate_down(state),
+            KeyCode::PageUp => panes.scroll_up(),
+            KeyCode::PageDown => panes.scroll_down(state),
             KeyCode::Left => panes.scroll_left(),
             KeyCode::Right => panes.scroll_right(),
             KeyCode::Char(c) if c.is_ascii_digit() => count.push(c),
