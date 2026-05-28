@@ -96,8 +96,8 @@ impl DebuggerBorrowStacks {
                     cell_right(item.bor_tag_id),
                     Cell::new(idx.right_aligned()),
                     Cell::new(permission.right_aligned()),
-                    cell_right(if item.protected { "true" } else { "" }),
-                    cell_right(if item.prov_exposed { "true" } else { "" }),
+                    cell_right(if item.protected { "✅" } else { "" }),
+                    cell_right(if item.prov_exposed { "✅" } else { "" }),
                     prev_id,
                     retag_info,
                 ]);

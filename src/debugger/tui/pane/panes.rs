@@ -194,12 +194,17 @@ impl Panes {
         modal.state.open();
         frame.render_stateful_widget(modal.overlay.clone(), self.area, &mut modal.state);
         if let Some(inner) = modal.state.inner_area() {
+            self.borrow_stacks.view_height = inner.height;
             let table = self.borrow_stacks.widget(state, no_dead);
-            frame.render_widget(table, inner);
+            frame.render_stateful_widget(table, inner, &mut self.borrow_stacks.state);
         }
     }
 
-    fn up(&mut self, on_stack: impl FnOnce(&mut PaneStack)) {
+    fn up(
+        &mut self,
+        on_stack: impl FnOnce(&mut PaneStack),
+        on_borrow_stacks: impl FnOnce(&mut PaneBorrowStacks),
+    ) {
         match self.focus {
             FocusPane::Mir => self.mir.scroll = self.mir.scroll.saturating_sub(1),
             FocusPane::Stack => on_stack(&mut self.stack),
@@ -218,23 +223,32 @@ impl Panes {
             FocusPane::StatusBar => {
                 self.status_bar.hscroll = self.status_bar.hscroll.saturating_sub(1);
             }
-            FocusPane::BorrowStacks => {
-                self.borrow_stacks.scroll = self.borrow_stacks.scroll.saturating_sub(1);
-            }
+            FocusPane::BorrowStacks => on_borrow_stacks(&mut self.borrow_stacks),
         }
     }
 
     /// This is a slightly different with scroll_up, because stack pane will scroll in the list items,
     /// instead of scroll the view of list.
     pub fn navigate_up(&mut self, state: &DebuggerState) {
-        self.up(|stack| stack.step_stack_selection(state, false));
+        self.up(
+            |stack| stack.step_stack_selection(state, false),
+            |borrow_statcks| borrow_statcks.navigate_up(),
+        );
     }
 
     pub fn scroll_up(&mut self) {
-        self.up(|stack| stack.index = stack.index.saturating_sub(1));
+        self.up(
+            |stack| stack.index = stack.index.saturating_sub(1),
+            |borrow_stacks| borrow_stacks.scroll_up(),
+        );
     }
 
-    fn down(&mut self, state: &DebuggerState, on_stack: impl FnOnce(&mut PaneStack)) {
+    fn down(
+        &mut self,
+        state: &DebuggerState,
+        on_stack: impl FnOnce(&mut PaneStack),
+        on_borrow_stacks: impl FnOnce(&mut PaneBorrowStacks),
+    ) {
         match self.focus {
             FocusPane::Mir => self.mir.scroll = self.mir.scroll.saturating_add(1),
             FocusPane::Stack => on_stack(&mut self.stack),
@@ -265,26 +279,29 @@ impl Panes {
             FocusPane::StatusBar => {
                 self.status_bar.hscroll = self.status_bar.hscroll.saturating_add(1);
             }
-            FocusPane::BorrowStacks =>
-                if !state.allocs.is_empty() {
-                    let max = u16::try_from(state.allocs.len()).unwrap() - 1;
-                    self.borrow_stacks.scroll =
-                        self.borrow_stacks.scroll.saturating_add(1).min(max);
-                },
+            FocusPane::BorrowStacks => on_borrow_stacks(&mut self.borrow_stacks),
         }
     }
 
     pub fn navigate_down(&mut self, state: &DebuggerState) {
-        self.down(state, |stack| stack.step_stack_selection(state, true));
+        self.down(
+            state,
+            |stack| stack.step_stack_selection(state, true),
+            |borrow_stacks| borrow_stacks.navigate_down(),
+        );
     }
 
     pub fn scroll_down(&mut self, state: &DebuggerState) {
-        self.down(state, |stack| {
-            if !state.stack_frames.is_empty() {
-                let max = state.stack_frames.len() - 1;
-                stack.index = stack.index.saturating_add(1).min(max);
-            }
-        });
+        self.down(
+            state,
+            |stack| {
+                if !state.stack_frames.is_empty() {
+                    let max = state.stack_frames.len() - 1;
+                    stack.index = stack.index.saturating_add(1).min(max);
+                }
+            },
+            |borrow_stacks| borrow_stacks.scroll_down(),
+        );
     }
 
     pub fn scroll_right(&mut self) {
