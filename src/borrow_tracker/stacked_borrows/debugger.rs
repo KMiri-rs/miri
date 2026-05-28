@@ -5,6 +5,8 @@ use ratatui::widgets::*;
 use rustc_abi::{Align, Size};
 use rustc_const_eval::interpret::AllocInfo;
 
+use super::diagnostics::RetagCause;
+use crate::borrow_tracker::stacked_borrows::diagnostics::RetagInfo;
 use crate::*;
 
 #[derive(Clone, Debug)]
@@ -30,7 +32,7 @@ impl DebuggerBorrowStacks {
         }
     }
 
-    pub fn header() -> (Row<'static>, [Constraint; 9]) {
+    pub fn header() -> (Row<'static>, [Constraint; 12]) {
         let row = Row::new(vec![
             cell_left("AllocId"),
             cell_right("Bytes"),
@@ -41,6 +43,9 @@ impl DebuggerBorrowStacks {
             cell_right("StackIdx"),
             cell_right("Permission"),
             cell_right("Protected"),
+            cell_right("Exposed"),
+            cell_right("PrevTagID"),
+            cell_right("RetagInfo"),
         ]);
         let widths = [
             Constraint::Min(8),  // AllocId
@@ -52,6 +57,9 @@ impl DebuggerBorrowStacks {
             Constraint::Min(8),  // StackIdx
             Constraint::Min(15), // Permission
             Constraint::Min(4),  // Protected
+            Constraint::Min(4),  // Exposed
+            Constraint::Min(9),  // PrevTagID
+            Constraint::Min(10), // RetagInfo
         ];
         (row, widths)
     }
@@ -74,6 +82,11 @@ impl DebuggerBorrowStacks {
                         Text::from("SharedReadOnly").style(Color::LightMagenta),
                     Permission::Disabled => Text::from("Disabled").style(Color::Red),
                 };
+                let (prev_id, retag_info) = item
+                    .prev_tag
+                    .as_ref()
+                    .map(|p| (p.prev_tag(), p.retag_info()))
+                    .unwrap_or_default();
                 let row = Row::new(vec![
                     if level1 { cell_left(whole.alloc_id.0) } else { empty_cell() },
                     level_cell(level1, hsize(whole.info.size.bytes())),
@@ -84,6 +97,9 @@ impl DebuggerBorrowStacks {
                     Cell::new(idx.right_aligned()),
                     Cell::new(permission.right_aligned()),
                     cell_right(if item.protected { "true" } else { "" }),
+                    cell_right(if item.prov_exposed { "true" } else { "" }),
+                    prev_id,
+                    retag_info,
                 ]);
                 rows.push(row);
 
@@ -130,4 +146,50 @@ pub struct DebuggerBorrowStackItem {
     pub bor_tag_id: u64,
     pub permission: Permission,
     pub protected: bool,
+    pub prov_exposed: bool,
+    pub prev_tag: Option<DebuggerPrevTag>,
 }
+
+#[derive(Clone, Debug)]
+pub struct DebuggerPrevTag {
+    /// This is usually a normal non-zero bor_tag_id.
+    /// But for wildcard provenance, the id here is intentionallly 0 to render `*`.
+    /// NOTE: prev_tag can be None, which renders an empty string.
+    pub id: u64,
+    pub retag_info: RetagInfo,
+}
+
+impl DebuggerPrevTag {
+    fn prev_tag(&self) -> Cell<'static> {
+        if self.id == 0 { cell_right("*") } else { cell_right(self.id) }
+    }
+
+    fn retag_info(&self) -> Cell<'static> {
+        let in_field = if self.retag_info.in_field { "[f] " } else { "" };
+        let cause = match self.retag_info.cause {
+            RetagCause::Normal => "Normal",
+            RetagCause::InPlaceFnPassing => "InPlaceFnPassing",
+            RetagCause::FnEntry => "FnEntry",
+            RetagCause::TwoPhase => "TwoPhase",
+        };
+        cell_right(format_args!("{in_field}{cause}"))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct DebuggerBorrowStackHistory {
+    pub root_bor_tag_id: u64,
+    pub root_span: DebuggerSpan,
+    pub creations: Vec<()>,
+}
+
+#[derive(Clone, Debug)]
+pub struct DebuggerSpan {
+    pub span: String,
+    pub src: String,
+}
+
+// #[derive(Clone, Debug)]
+// pub struct DebuggerCreation {
+//     pub retag_reason: String,
+// }

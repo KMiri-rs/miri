@@ -1,11 +1,11 @@
 use std::fmt;
 
 use rustc_abi::Size;
-use rustc_data_structures::fx::FxHashSet;
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_span::{Span, SpanData};
 use smallvec::SmallVec;
 
-use crate::borrow_tracker::stacked_borrows::debugger::DebuggerWholeAllocation;
+use crate::borrow_tracker::stacked_borrows::debugger::{DebuggerPrevTag, DebuggerWholeAllocation};
 use crate::borrow_tracker::{AccessKind, GlobalStateInner, ProtectorKind};
 use crate::*;
 
@@ -30,6 +30,19 @@ pub struct AllocHistory {
 impl AllocHistory {
     pub fn debugger(&self, ecx: &MiriInterpCx<'_>) -> DebuggerWholeAllocation {
         DebuggerWholeAllocation { alloc_id: self.id, info: ecx.get_alloc_info(self.id) }
+    }
+
+    pub fn debugger_parent_tags(&self) -> FxHashMap<u64, DebuggerPrevTag> {
+        self.creations
+            .iter()
+            .map(|c| {
+                let id = match c.retag.orig_tag {
+                    ProvenanceExtra::Concrete(bor_tag) => bor_tag.get(),
+                    ProvenanceExtra::Wildcard => 0,
+                };
+                (c.retag.new_tag.get(), DebuggerPrevTag { id, retag_info: c.retag.info })
+            })
+            .collect()
     }
 }
 
