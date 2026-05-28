@@ -36,6 +36,7 @@ pub enum FocusPane {
     Allocs,
     Output,
     StatusBar,
+    BorrowStacks,
 }
 
 impl FocusPane {
@@ -48,6 +49,7 @@ impl FocusPane {
             FocusPane::Allocs => FocusPane::Output,
             FocusPane::Output => FocusPane::Mir,
             FocusPane::StatusBar => unreachable!(),
+            FocusPane::BorrowStacks => FocusPane::BorrowStacks,
         }
     }
 
@@ -60,6 +62,7 @@ impl FocusPane {
             FocusPane::Allocs => FocusPane::Locals,
             FocusPane::Output => FocusPane::Allocs,
             FocusPane::StatusBar => unreachable!(),
+            FocusPane::BorrowStacks => FocusPane::BorrowStacks,
         }
     }
 
@@ -72,6 +75,7 @@ impl FocusPane {
             FocusPane::Allocs => "allocs",
             FocusPane::Output => "output",
             FocusPane::StatusBar => "status_bar",
+            FocusPane::BorrowStacks => "borrow_stacks",
         }
     }
 }

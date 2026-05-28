@@ -12,7 +12,6 @@ use crate::{BorrowTrackerMethod, MemoryKind, MiriMemoryKind};
 pub struct PaneBorrowStacks {
     pub scroll: u16,
     // pub hscroll: u16,
-    pub focus: bool,
     pub modal: Box<Option<Modal>>,
 }
 
@@ -54,7 +53,7 @@ impl PaneBorrowStacks {
                 Block::default()
                     .title(format!("{method} (total={}, alive={len_alive})", state.allocs.len()))
                     .borders(Borders::ALL)
-                    .border_style(pane_border_style(self.focus)),
+                    .border_style(pane_border_style(true)),
             )
     }
 }
