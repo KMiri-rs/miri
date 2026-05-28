@@ -23,6 +23,7 @@ use super::state::LocalKind;
 use super::{DebuggerCommand, DebuggerState};
 use crate::debugger::channel::StateOrEvent;
 use crate::debugger::tui::event::Action;
+use crate::debugger::tui::pane::FocusPane;
 use crate::debugger::tui::pane::panes::Panes;
 
 mod event;
@@ -251,7 +252,7 @@ fn render(panes: &mut Panes, frame: &mut Frame<'_>, state: &DebuggerState, ctx: 
     panes.render_output(frame, state);
     panes.render_status_bar(frame, state, ctx);
 
-    if panes.borrow_stacks.focus {
+    if panes.is_focused(FocusPane::BorrowStacks) {
         panes.render_borrow_stack(frame, state, no_dead);
     }
 }
