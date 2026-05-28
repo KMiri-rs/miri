@@ -8,6 +8,7 @@ use crate::borrow_tracker::stacked_borrows::debugger::DebuggerBorrowStacks;
 
 #[derive(Default, Debug)]
 pub struct PaneBorrowStacks {
+    pub rect: Rect,
     pub state: TableState,
     pub view_height: u16,
     pub modal: Box<Option<Modal>>,
@@ -23,6 +24,23 @@ impl PaneBorrowStacks {
 
     pub fn modal(&mut self) -> &mut Modal {
         (*self.modal).as_mut().unwrap()
+    }
+
+    pub fn set_rect(&mut self, rect: Rect) {
+        self.rect = rect;
+        self.view_height = rect.height;
+    }
+
+    pub fn contains(&self, x: u16, y: u16) -> bool {
+        self.rect.contains(Position { x, y })
+    }
+
+    pub fn select_at(&mut self, y: u16) {
+        let Some(relative_y) = y.checked_sub(self.rect.y + 2) else {
+            return;
+        };
+        let row = self.state.offset().saturating_add(relative_y as usize);
+        self.state.select(Some(row));
     }
 
     pub fn widget(&self, state: &DebuggerState, no_dead: bool) -> Table<'static> {
@@ -89,7 +107,7 @@ impl PaneBorrowStacks {
     }
 
     fn page_size(&self) -> usize {
-        self.view_height.saturating_sub(1).max(1).into()
+        self.view_height.saturating_sub(3).max(1).into()
     }
 }
 
