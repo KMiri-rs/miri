@@ -1,7 +1,10 @@
 use std::fmt;
 
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
+
 use crate::borrow_tracker::BorTag;
-use crate::borrow_tracker::stacked_borrows::debugger::DebuggerBorrowStackItem;
+use crate::borrow_tracker::stacked_borrows::debugger::{DebuggerBorrowStackItem, DebuggerPrevTag};
+use crate::borrow_tracker::stacked_borrows::diagnostics::RetagInfo;
 
 /// An item in the per-location borrow stack.
 #[derive(Copy, Clone, Hash, PartialEq, Eq)]
@@ -60,11 +63,20 @@ impl Item {
         self.0 |= perm.to_bits() << PERM_SHIFT;
     }
 
-    pub fn debugger(&self) -> DebuggerBorrowStackItem {
+    pub fn debugger(
+        &self,
+        exposed: &FxHashSet<BorTag>,
+        parent: &FxHashMap<u64, DebuggerPrevTag>,
+    ) -> DebuggerBorrowStackItem {
+        let tag = self.tag();
+        let bor_tag_id = tag.get();
+        let prev_tag = parent.get(&bor_tag_id).cloned();
         DebuggerBorrowStackItem {
-            bor_tag_id: self.tag().get(),
+            bor_tag_id,
             permission: self.perm(),
             protected: self.protected(),
+            prov_exposed: exposed.contains(&tag),
+            prev_tag,
         }
     }
 }

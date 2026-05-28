@@ -1,10 +1,10 @@
 #[cfg(feature = "stack-cache")]
 use std::ops::Range;
 
-use rustc_data_structures::fx::FxHashSet;
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_log::tracing::trace;
 
-use crate::borrow_tracker::stacked_borrows::debugger::DebuggerBorrowStackItem;
+use crate::borrow_tracker::stacked_borrows::debugger::{DebuggerBorrowStackItem, DebuggerPrevTag};
 use crate::borrow_tracker::stacked_borrows::{Item, Permission};
 use crate::borrow_tracker::{AccessKind, BorTag};
 use crate::{InterpResult, ProvenanceExtra, interp_ok};
@@ -103,8 +103,12 @@ impl Stack {
         }
     }
 
-    pub fn debugger(&self) -> Vec<DebuggerBorrowStackItem> {
-        self.borrows.iter().map(|item| item.debugger()).collect()
+    pub fn debugger(
+        &self,
+        exposed: &FxHashSet<BorTag>,
+        parent: &FxHashMap<u64, DebuggerPrevTag>,
+    ) -> Vec<DebuggerBorrowStackItem> {
+        self.borrows.iter().map(|item| item.debugger(exposed, parent)).collect()
     }
 }
 

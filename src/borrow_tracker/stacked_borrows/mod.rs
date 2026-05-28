@@ -521,7 +521,12 @@ impl<'tcx> Stacks {
 
     pub fn debugger(&self, ecx: &MiriInterpCx<'_>) -> debugger::DebuggerBorrowStacks {
         use debugger::*;
-        DebuggerBorrowStacks { whole: self.history.debugger(ecx), segments: self.stacks.debugger() }
+
+        let parent = self.history.debugger_parent_tags();
+        DebuggerBorrowStacks {
+            whole: self.history.debugger(ecx),
+            segments: self.stacks.debugger(&self.exposed_tags, &parent),
+        }
     }
 }
 
