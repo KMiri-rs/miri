@@ -18,8 +18,12 @@ use crate::debugger::tui::{Context, RunTargetState};
 
 #[derive(Debug)]
 pub struct Panes {
+    /// The terminal area to render stuff. When the program starts, the area is zero, but later becomes real area.
     pub area: Rect,
+    /// Currently focused pane (including modal).
     pub focus: FocusPane,
+    /// Previous focused pane, usually used for modal toggle, meaning main pane switches are not recorded.
+    pub prev_focus: FocusPane,
     pub mir: PaneMir,
     pub stack: PaneStack,
     pub src: PaneSrc,
@@ -75,6 +79,7 @@ impl Panes {
         Panes {
             area,
             focus: FocusPane::Mir,
+            prev_focus: FocusPane::Mir,
             mir: PaneMir::new(mir),
             stack: PaneStack::new(stack),
             src: PaneSrc::new(src),
@@ -120,7 +125,19 @@ impl Panes {
         }
     }
 
-    fn is_focused(&self, pane: FocusPane) -> bool {
+    pub fn toggle_modal(&mut self) {
+        if self.is_focused(FocusPane::BorrowStacks) {
+            // Back up main pane.
+            self.focus = self.prev_focus;
+            self.prev_focus = FocusPane::BorrowStacks;
+        } else {
+            // Switch to BorrowStacks pane.
+            self.prev_focus = self.focus;
+            self.focus = FocusPane::BorrowStacks;
+        }
+    }
+
+    pub fn is_focused(&self, pane: FocusPane) -> bool {
         self.focus == pane
     }
 
@@ -201,6 +218,9 @@ impl Panes {
             FocusPane::StatusBar => {
                 self.status_bar.hscroll = self.status_bar.hscroll.saturating_sub(1);
             }
+            FocusPane::BorrowStacks => {
+                self.borrow_stacks.scroll = self.borrow_stacks.scroll.saturating_sub(1);
+            }
         }
     }
 
@@ -245,6 +265,12 @@ impl Panes {
             FocusPane::StatusBar => {
                 self.status_bar.hscroll = self.status_bar.hscroll.saturating_add(1);
             }
+            FocusPane::BorrowStacks =>
+                if !state.allocs.is_empty() {
+                    let max = u16::try_from(state.allocs.len()).unwrap() - 1;
+                    self.borrow_stacks.scroll =
+                        self.borrow_stacks.scroll.saturating_add(1).min(max);
+                },
         }
     }
 
@@ -284,6 +310,7 @@ impl Panes {
             FocusPane::StatusBar => {
                 self.status_bar.hscroll = self.status_bar.hscroll.saturating_add(1);
             }
+            FocusPane::BorrowStacks => {}
         }
     }
 
@@ -310,6 +337,7 @@ impl Panes {
             FocusPane::StatusBar => {
                 self.status_bar.hscroll = self.status_bar.hscroll.saturating_sub(1);
             }
+            FocusPane::BorrowStacks => {}
         }
     }
 
