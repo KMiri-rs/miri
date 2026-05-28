@@ -3,8 +3,8 @@ use std::borrow::Cow;
 use tui_overlay::{Backdrop, Easing, Overlay, OverlayState};
 
 use super::*;
-use crate::borrow_tracker::stacked_borrows::debugger::DebuggerBorrowStacks;
 use crate::BorrowTrackerMethod;
+use crate::borrow_tracker::stacked_borrows::debugger::DebuggerBorrowStacks;
 
 #[derive(Default, Debug)]
 pub struct PaneBorrowStacks {
@@ -33,7 +33,7 @@ impl PaneBorrowStacks {
             // no_dead=true: don't display allocations
             // !no_dead=true: display dead allocations
             .filter(|alloc| !(no_dead & alloc.dealloc))
-            .flat_map(|alloc| alloc.borrow_stacks.to_table_rows())
+            .flat_map(|alloc| alloc.borrow_stacks.to_table_rows(alloc))
             .collect();
 
         let method: Cow<'_, _> = match state.borrow_tracker_method {
@@ -49,7 +49,6 @@ impl PaneBorrowStacks {
         let (header, widths) = DebuggerBorrowStacks::header();
         Table::new(rows, widths)
             .header(header.style(Style::default().add_modifier(Modifier::BOLD)))
-            .highlight_symbol(">> ")
             .highlight_spacing(HighlightSpacing::WhenSelected)
             .row_highlight_style(STYLE_HIGHTLIGHTED_BG)
             .block(
@@ -105,7 +104,7 @@ impl Modal {
         Modal {
             overlay: Overlay::new()
                 .backdrop(Backdrop::new(Color::Rgb(11, 14, 27)))
-                .width(Constraint::Percentage(80))
+                .width(Constraint::Percentage(90))
                 .height(Constraint::Percentage(80)),
             state: OverlayState::new(),
         }
