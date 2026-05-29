@@ -1018,6 +1018,32 @@ impl<'tcx> MiriMachine<'tcx> {
         self.threads.active_thread_ref().current_user_relevant_span()
     }
 
+    pub fn debugger_current_span(&self) -> Span {
+        self.threads
+            .active_thread_ref()
+            .last_frame()
+            .map(|frame| frame.current_span())
+            .unwrap_or(rustc_span::DUMMY_SP)
+    }
+
+    /// For debugger: fetch the body span.
+    pub fn debugger_body_span(&self) -> Span {
+        self.threads
+            .active_thread_ref()
+            .last_frame()
+            .map(|frame| frame.body().span)
+            .unwrap_or(rustc_span::DUMMY_SP)
+    }
+
+    /// For debugger: fetch the function name.
+    pub fn debugger_fn_name(&self) -> String {
+        self.threads
+            .active_thread_ref()
+            .last_frame()
+            .map(|frame| frame.instance().to_string())
+            .unwrap_or_else(|| "Unknown function".to_owned())
+    }
+
     /// Returns the span of the *caller* of the current operation, again
     /// walking down the stack to find the closest frame in a local crate, if the caller of the
     /// current operation is not in a local crate.

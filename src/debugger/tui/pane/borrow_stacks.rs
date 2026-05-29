@@ -1,10 +1,12 @@
 use std::borrow::Cow;
 
+use rustc_data_structures::fx::FxHashMap;
 use tui_overlay::{Backdrop, Easing, Overlay, OverlayState};
 
 use super::*;
 use crate::BorrowTrackerMethod;
-use crate::borrow_tracker::stacked_borrows::debugger::DebuggerBorrowStacks;
+use crate::borrow_tracker::stacked_borrows::debugger::{DebuggerBorrowStacks, DebuggerSpan};
+use crate::debugger::utils::{InverseIdx, src_view_centering};
 
 #[derive(Default, Debug)]
 pub struct PaneBorrowStacks {
@@ -12,6 +14,7 @@ pub struct PaneBorrowStacks {
     pub state: TableState,
     pub view_height: u16,
     pub modal: Box<Option<Modal>>,
+    pub inverse_idx: FxHashMap<usize, InverseIdx>,
 }
 
 impl PaneBorrowStacks {
@@ -43,15 +46,27 @@ impl PaneBorrowStacks {
         self.state.select(Some(row));
     }
 
-    pub fn widget(&self, state: &DebuggerState, no_dead: bool) -> Table<'static> {
+    pub fn widget(&mut self, state: &DebuggerState, no_dead: bool) -> Table<'static> {
         let len_alive = state.allocs.iter().filter(|alloc| !alloc.dealloc).count();
+        self.inverse_idx.clear();
+        let mut rows_idx = 0;
         let rows: Vec<_> = state
             .allocs
             .iter()
+            .enumerate()
             // no_dead=true: don't display allocations
             // !no_dead=true: display dead allocations
-            .filter(|alloc| !(no_dead & alloc.dealloc))
-            .flat_map(|alloc| alloc.borrow_stacks.to_table_rows(alloc))
+            .filter_map(|(idx_alloc, alloc)| {
+                (!(no_dead & alloc.dealloc)).then_some((idx_alloc, alloc))
+            })
+            .flat_map(|(idx_alloc, alloc)| {
+                let mut idx = InverseIdx::default();
+                idx.alloc = idx_alloc;
+                alloc.borrow_stacks.to_table_rows(alloc, &mut idx, |iidx| {
+                    self.inverse_idx.insert(rows_idx, iidx);
+                    rows_idx += 1;
+                })
+            })
             .collect();
 
         let method: Cow<'_, _> = match state.borrow_tracker_method {
@@ -109,6 +124,40 @@ impl PaneBorrowStacks {
     fn page_size(&self) -> usize {
         self.view_height.saturating_sub(3).max(1).into()
     }
+
+    pub fn find_selected_span(
+        &self,
+        state: &DebuggerState,
+        height: u16,
+    ) -> Option<Paragraph<'static>> {
+        if let Some(row_idx) = self.state.selected() {
+            if let Some(idx) = self.inverse_idx.get(&row_idx) {
+                if let Some(alloc) = state.allocs.get(idx.alloc) {
+                    if let Some(stack) = alloc.borrow_stacks.segments.get(idx.bs_segment) {
+                        if let Some(item) = stack.stack.get(idx.bs_stack) {
+                            if let Some(span) = alloc.borrow_stacks.span.get(&item.bor_tag_id) {
+                                let highlighted_idx = [
+                                    span.highlighted_line_start - span.body_line_start,
+                                    span.highlighted_line_end - span.body_line_start,
+                                ];
+                                let para = Paragraph::new(span.src.lines.clone())
+                                    .block(
+                                        Block::default()
+                                            .title(span.title())
+                                            .borders(Borders::ALL)
+                                            .border_style(pane_border_style(true)),
+                                    )
+                                    .scroll((src_view_centering(highlighted_idx, height), 0));
+
+                                return Some(para);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
 }
 
 #[derive(Debug)]
@@ -123,7 +172,7 @@ impl Modal {
             overlay: Overlay::new()
                 .backdrop(Backdrop::new(Color::Rgb(11, 14, 27)))
                 .width(Constraint::Percentage(90))
-                .height(Constraint::Percentage(80)),
+                .height(Constraint::Percentage(90)),
             state: OverlayState::new(),
         }
     }
