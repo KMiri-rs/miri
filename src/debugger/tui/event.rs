@@ -30,6 +30,7 @@ pub fn handle(
         mode,
         run_target,
         run_to_frame_target,
+        run_to_instance_target,
         last_state,
         history,
         blink_epoch,
@@ -53,6 +54,7 @@ pub fn handle(
                     if !target.is_empty() {
                         *reverse_index = None;
                         *run_to_frame_target = Some(target.clone());
+                        *run_to_instance_target = None;
                         *mode = RunMode::RunToFrame;
                         let _ = command_tx.send(DebuggerCommand::RunToFrame(target));
                         return Ok(Action::Break);
@@ -68,7 +70,7 @@ pub fn handle(
             }
             return Ok(Action::Continue);
         }
-        if panes.stack.search.editing {
+        if panes.stack.search.editing || panes.instances.search.editing {
             panes.edit(state, key.code);
             return Ok(Action::Continue);
         }
@@ -77,27 +79,56 @@ pub fn handle(
                 let _ = command_tx.send(DebuggerCommand::Quit);
                 return Ok(Action::Return);
             }
-            KeyCode::Char('/') => {
-                panes.focus = FocusPane::Stack;
-                panes.stack.search.editing = true;
-            }
+            KeyCode::Char('/') =>
+                match panes.focus {
+                    FocusPane::Instances => panes.instances.search.editing = true,
+                    _ => {
+                        panes.focus = FocusPane::Stack;
+                        panes.stack.search.editing = true;
+                    }
+                },
             KeyCode::Char('P') => {
                 run_target.editing = true;
                 run_target.query.clear();
+                *run_to_instance_target = None;
             }
             KeyCode::Char('p') =>
                 if let Some(target) = panes.stack.selected_stack_fn_name(state) {
                     *reverse_index = None;
                     *run_to_frame_target = Some(target.clone());
+                    *run_to_instance_target = None;
                     *mode = RunMode::RunToFrame;
                     let _ = command_tx.send(DebuggerCommand::RunToFrame(target));
                     return Ok(Action::Break);
                 } else {
                     run_target.editing = true;
                     run_target.query.clear();
+                    *run_to_instance_target = None;
                 },
-            KeyCode::Char('.') => panes.stack.goto_next_search_match(),
-            KeyCode::Char(',') => panes.stack.goto_prev_search_match(),
+            KeyCode::Enter =>
+                if panes.is_focused(FocusPane::Instances) {
+                    if let Some(target) = panes.instances.selected_instance_target(state) {
+                        if state.stack_frames.last().is_some_and(|frame| frame.fn_name == target) {
+                            return Ok(Action::Continue);
+                        }
+                        *reverse_index = None;
+                        *run_to_frame_target = None;
+                        *run_to_instance_target = Some(target.clone());
+                        *mode = RunMode::RunToInstance;
+                        let _ = command_tx.send(DebuggerCommand::RunToInstance(target));
+                        return Ok(Action::Break);
+                    }
+                },
+            KeyCode::Char('.') =>
+                match panes.focus {
+                    FocusPane::Instances => panes.instances.goto_next_search_match(),
+                    _ => panes.stack.goto_next_search_match(),
+                },
+            KeyCode::Char(',') =>
+                match panes.focus {
+                    FocusPane::Instances => panes.instances.goto_prev_search_match(),
+                    _ => panes.stack.goto_prev_search_match(),
+                },
             KeyCode::Char('[') => {
                 panes.status_bar.hscroll = panes.status_bar.hscroll.saturating_sub(1);
             }
@@ -105,8 +136,14 @@ pub fn handle(
                 panes.status_bar.hscroll = panes.status_bar.hscroll.saturating_add(1);
             }
             KeyCode::Esc =>
-                if !panes.stack.search.query.is_empty() {
-                    panes.stack.search = Default::default();
+                match panes.focus {
+                    FocusPane::Stack if !panes.stack.search.query.is_empty() => {
+                        panes.stack.search = Default::default();
+                    }
+                    FocusPane::Instances if !panes.instances.search.query.is_empty() => {
+                        panes.instances.search = Default::default();
+                    }
+                    _ => {}
                 },
             KeyCode::Char('n') | KeyCode::Char(' ') => {
                 let n: u32 = mem::take(count).parse().unwrap_or(0);
@@ -142,6 +179,7 @@ pub fn handle(
             KeyCode::Char('c') => {
                 *reverse_index = None;
                 *run_to_frame_target = None;
+                *run_to_instance_target = None;
                 *mode = RunMode::Continue;
                 let _ = command_tx.send(DebuggerCommand::Continue);
                 return Ok(Action::Break);
@@ -149,6 +187,7 @@ pub fn handle(
             KeyCode::Char('e') => {
                 *reverse_index = None;
                 *run_to_frame_target = None;
+                *run_to_instance_target = None;
                 *mode = RunMode::RunToEnd;
                 let _ = command_tx.send(DebuggerCommand::RunToEnd);
                 return Ok(Action::Break);
@@ -156,6 +195,7 @@ pub fn handle(
             KeyCode::Char('m') => {
                 *reverse_index = None;
                 *run_to_frame_target = None;
+                *run_to_instance_target = None;
                 *mode = RunMode::RunToMain;
                 let _ = command_tx.send(DebuggerCommand::RunToMain);
                 return Ok(Action::Break);
@@ -163,6 +203,7 @@ pub fn handle(
             KeyCode::Char('t') => {
                 *reverse_index = None;
                 *run_to_frame_target = None;
+                *run_to_instance_target = None;
                 *mode = RunMode::RunToTerminator;
                 let n = mem::take(count).parse().unwrap_or(0);
                 let _ = command_tx.send(DebuggerCommand::RunToTerminator(n));
@@ -183,7 +224,7 @@ pub fn handle(
             }
             KeyCode::Up => panes.navigate_up(state),
             KeyCode::Down => panes.navigate_down(state),
-            KeyCode::PageUp => panes.scroll_up(),
+            KeyCode::PageUp => panes.scroll_up(state),
             KeyCode::PageDown => panes.scroll_down(state),
             KeyCode::Left => panes.scroll_left(),
             KeyCode::Right => panes.scroll_right(),
@@ -202,7 +243,7 @@ fn on_event_mouse(panes: &mut Panes, state: &DebuggerState, mouse: MouseEvent) {
     match mouse.kind {
         MouseEventKind::ScrollUp => {
             panes.focus = hovered;
-            panes.scroll_up();
+            panes.scroll_up(state);
         }
         MouseEventKind::ScrollDown => {
             panes.focus = hovered;

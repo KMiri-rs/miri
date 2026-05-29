@@ -8,6 +8,7 @@ pub mod panes;
 
 pub mod allocs;
 pub mod borrow_stacks;
+pub mod instances;
 pub mod locals;
 pub mod mir;
 pub mod output;
@@ -31,6 +32,7 @@ fn hscroll_text(text: &str, offset: u16) -> String {
 pub enum FocusPane {
     Mir,
     Stack,
+    Instances,
     Src,
     Locals,
     Allocs,
@@ -43,7 +45,8 @@ impl FocusPane {
     pub fn next(self) -> Self {
         match self {
             FocusPane::Mir => FocusPane::Stack,
-            FocusPane::Stack => FocusPane::Src,
+            FocusPane::Stack => FocusPane::Instances,
+            FocusPane::Instances => FocusPane::Src,
             FocusPane::Src => FocusPane::Locals,
             FocusPane::Locals => FocusPane::Allocs,
             FocusPane::Allocs => FocusPane::Output,
@@ -57,7 +60,8 @@ impl FocusPane {
         match self {
             FocusPane::Mir => FocusPane::Output,
             FocusPane::Stack => FocusPane::Mir,
-            FocusPane::Src => FocusPane::Stack,
+            FocusPane::Instances => FocusPane::Stack,
+            FocusPane::Src => FocusPane::Instances,
             FocusPane::Locals => FocusPane::Src,
             FocusPane::Allocs => FocusPane::Locals,
             FocusPane::Output => FocusPane::Allocs,
@@ -70,6 +74,7 @@ impl FocusPane {
         match self {
             FocusPane::Mir => "mir",
             FocusPane::Stack => "stack",
+            FocusPane::Instances => "instances",
             FocusPane::Src => "src",
             FocusPane::Locals => "locals",
             FocusPane::Allocs => "allocs",

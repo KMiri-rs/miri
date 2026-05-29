@@ -19,6 +19,7 @@ pub enum DebuggerCommand {
     StepBack,
     RunToTerminator(u32),
     RunToFrame(String),
+    RunToInstance(String),
     RunToMain,
     RunToEnd,
     Quit,
@@ -31,6 +32,7 @@ enum DebuggerMode {
     Continue,
     RunToTerminator(u32),
     RunToFrame(String),
+    RunToInstance(String),
     RunToMain,
     RunToEnd,
 }
@@ -106,16 +108,22 @@ impl MiriDebuggerHandle {
                 }
                 return;
             }
+            DebuggerMode::RunToInstance(ref target) => {
+                if state.stack_frames.last().is_some_and(|frame| frame.fn_name == *target) {
+                    self.set_current_mode(DebuggerMode::Step(1));
+                }
+                return;
+            }
             DebuggerMode::RunToMain => {
                 if state.in_user_code {
                     self.set_current_mode(DebuggerMode::Step(1));
                 }
                 return;
             }
-            DebuggerMode::Continue => unreachable!(),
+            DebuggerMode::Continue => return,
         }
 
-        self.state_tx.send(StateOrEvent::State(state)).unwrap();
+        let _ = self.state_tx.send(StateOrEvent::State(state));
     }
 
     fn reached_terminator_or_step(&self, ecx: &MiriInterpCx<'_>) -> bool {
@@ -142,6 +150,7 @@ impl MiriDebuggerHandle {
                 DebuggerCommand::StepBack => DebuggerMode::Continue,
                 DebuggerCommand::RunToTerminator(n) => DebuggerMode::RunToTerminator(n + 1),
                 DebuggerCommand::RunToFrame(_) => DebuggerMode::Continue,
+                DebuggerCommand::RunToInstance(_) => DebuggerMode::Continue,
                 DebuggerCommand::RunToMain => DebuggerMode::Continue,
                 DebuggerCommand::RunToEnd => DebuggerMode::Continue,
                 DebuggerCommand::Quit => break 'm,

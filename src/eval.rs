@@ -20,6 +20,7 @@ use rustc_target::spec::Os;
 
 use crate::concurrency::GenmcCtx;
 use crate::concurrency::thread::TlsAllocAction;
+use crate::debugger::state::collect_reachable_function_instances;
 use crate::diagnostics::report_leaks;
 use crate::mirch::PhysConfig;
 use crate::shims::{global_ctor, tls};
@@ -296,6 +297,11 @@ pub fn create_ecx<'tcx>(
         typing_env,
         MiriMachine::new(config, layout_cx, genmc_ctx),
     );
+
+    if config.debugger {
+        ecx.machine.reachable_function_instances =
+            collect_reachable_function_instances(tcx, entry_id, tcx.sess.source_map());
+    }
 
     // Make sure we have MIR. We check MIR for some stable monomorphic function in libcore.
     let sentinel =
