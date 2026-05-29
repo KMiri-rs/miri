@@ -197,10 +197,22 @@ impl Panes {
         let modal = self.borrow_stacks.modal();
         modal.state.open();
         frame.render_stateful_widget(modal.overlay.clone(), self.area, &mut modal.state);
-        if let Some(inner) = modal.state.inner_area() {
-            self.borrow_stacks.set_rect(inner);
+        if let Some(area) = modal.state.inner_area() {
+            let [area_borrow_stacks, area_src] = *Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+                .split(area)
+            else {
+                unreachable!()
+            };
+
+            self.borrow_stacks.set_rect(area_borrow_stacks);
             let table = self.borrow_stacks.widget(state, no_dead);
-            frame.render_stateful_widget(table, inner, &mut self.borrow_stacks.state);
+            frame.render_stateful_widget(table, area_borrow_stacks, &mut self.borrow_stacks.state);
+
+            if let Some(para) = self.borrow_stacks.find_selected_span(state, area_src.height) {
+                frame.render_widget(para, area_src);
+            }
         }
     }
 
