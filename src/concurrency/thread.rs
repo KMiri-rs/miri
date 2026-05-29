@@ -305,6 +305,10 @@ impl<'tcx> Thread<'tcx> {
             .unwrap_or(rustc_span::DUMMY_SP)
     }
 
+    pub fn last_frame(&self) -> Option<&Frame<'tcx, Provenance, FrameExtra<'tcx>>> {
+        self.stack.last()
+    }
+
     pub fn display_stack_records(&self) -> String {
         self.stack_addr_records
             .iter()

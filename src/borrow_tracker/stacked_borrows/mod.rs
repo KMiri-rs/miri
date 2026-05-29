@@ -526,6 +526,7 @@ impl<'tcx> Stacks {
         DebuggerBorrowStacks {
             whole: self.history.debugger(ecx),
             segments: self.stacks.debugger(&self.exposed_tags, &parent),
+            span: self.history.debugger_span(ecx),
         }
     }
 }
