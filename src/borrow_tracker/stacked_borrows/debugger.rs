@@ -1,24 +1,30 @@
+use std::cell::RefCell;
 use std::ops::Range;
+use std::sync::Arc;
 
-use ratatui::prelude::*;
+use ratatui::prelude::{Span as RatatuiSpan, *};
 use ratatui::widgets::*;
 use rustc_abi::{Align, Size};
 use rustc_const_eval::interpret::AllocInfo;
+use rustc_data_structures::fx::FxHashMap;
+use rustc_span::Span;
 
 use super::diagnostics::RetagCause;
 use crate::borrow_tracker::stacked_borrows::diagnostics::RetagInfo;
-use crate::debugger::state::AllocInfo as DebuggerAllocInfo;
-use crate::debugger::utils::{hsize, kind_str};
+use crate::debugger::state::{AllocInfo as DebuggerAllocInfo, RenderSrc};
+use crate::debugger::utils::*;
 use crate::*;
 
 #[derive(Clone, Debug)]
 pub struct DebuggerBorrowStacks {
     pub whole: DebuggerWholeAllocation,
     pub segments: Vec<DebuggerSegment>,
+    pub span: FxHashMap<u64, Arc<DebuggerSpan>>,
 }
 
 impl DebuggerBorrowStacks {
     pub fn new() -> Self {
+        let (segments, span) = Default::default();
         DebuggerBorrowStacks {
             whole: DebuggerWholeAllocation {
                 // Safety: AllocId is a mere usize with PhantomData.
@@ -30,7 +36,8 @@ impl DebuggerBorrowStacks {
                     mutbl: rustc_ast::Mutability::Not,
                 },
             },
-            segments: vec![],
+            segments,
+            span,
         }
     }
 
@@ -72,16 +79,25 @@ impl DebuggerBorrowStacks {
         (row, widths)
     }
 
-    pub fn to_table_rows(&self, info: &DebuggerAllocInfo) -> Vec<Row<'static>> {
+    pub fn to_table_rows(
+        &self,
+        info: &DebuggerAllocInfo,
+        iidx: &mut InverseIdx,
+        mut inverse_idx: impl FnMut(InverseIdx),
+    ) -> Vec<Row<'static>> {
         let mut level1 = true;
         let mut level2 = true;
         let mut rows = Vec::with_capacity(128);
 
-        for seg in &self.segments {
+        for (x, seg) in self.segments.iter().enumerate() {
+            iidx.bs_segment = x;
             let whole = &self.whole;
             let Range { start, end } = seg.range;
 
             for (idx, item) in seg.stack.iter().rev().enumerate() {
+                iidx.bs_stack = seg.stack.len() - idx;
+                inverse_idx(*iidx);
+
                 let idx = Text::from(idx.to_string()).style(Color::DarkGray);
                 let permission = match item.permission {
                     Permission::Unique => Text::from("Unique").style(Color::Blue),
@@ -196,19 +212,90 @@ impl DebuggerPrevTag {
 }
 
 #[derive(Clone, Debug)]
-pub struct DebuggerBorrowStackHistory {
-    pub root_bor_tag_id: u64,
-    pub root_span: DebuggerSpan,
-    pub creations: Vec<()>,
-}
-
-#[derive(Clone, Debug)]
 pub struct DebuggerSpan {
-    pub span: String,
-    pub src: String,
+    pub fn_name: String,
+    pub source_file: String,
+    pub body_span: Span,
+    pub body_line_start: u16,
+    pub highlighted_span: Span,
+    pub highlighted_line_start: u16,
+    pub highlighted_line_end: u16,
+    pub src: RenderSrc,
 }
 
-// #[derive(Clone, Debug)]
-// pub struct DebuggerCreation {
-//     pub retag_reason: String,
-// }
+impl DebuggerSpan {
+    pub fn new(
+        fn_name: String,
+        body_span: Span,
+        highlighted_span: Span,
+        ecx: &MiriInterpCx<'_>,
+    ) -> Arc<Self> {
+        #[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+        struct Key {
+            body_span: Span,
+            highlighted_span: Span,
+            fn_name: String,
+        }
+        thread_local! {
+            static CACHE: RefCell<FxHashMap<Key, Arc<DebuggerSpan>>> = Default::default();
+        }
+
+        fn inner(
+            fn_name: String,
+            body_span: Span,
+            highlighted_span: Span,
+            ecx: &MiriInterpCx<'_>,
+        ) -> Arc<DebuggerSpan> {
+            let tcx = ecx.tcx.tcx;
+            let sm = tcx.sess.source_map();
+            let body_span = body_span.source_callsite();
+            let body_line_start = line_nr(sm, body_span.lo());
+            let highlighted_span = highlighted_span.source_callsite();
+            let highlighted_line_start = line_nr(sm, highlighted_span.lo());
+            let highlighted_line_end = line_nr(sm, highlighted_span.hi());
+            DebuggerSpan {
+                fn_name,
+                source_file: source_file(sm, body_span),
+                body_span,
+                body_line_start,
+                highlighted_span,
+                highlighted_line_start,
+                highlighted_line_end,
+                src: if body_span.is_dummy() {
+                    RenderSrc::default()
+                } else {
+                    render_src(body_span, highlighted_span, sm)
+                },
+            }
+            .into()
+        };
+
+        CACHE.with_borrow_mut(move |map| {
+            let key = Key { body_span, highlighted_span, fn_name };
+            if let Some(val) = map.get(&key) {
+                val.clone()
+            } else {
+                let val = inner(key.fn_name.clone(), body_span, highlighted_span, ecx);
+                map.insert(key, val.clone());
+                val
+            }
+        })
+    }
+
+    pub fn title(&self) -> Line<'static> {
+        let location = format!(
+            " - {}:{}..{}",
+            self.source_file, self.highlighted_line_start, self.highlighted_line_end
+        );
+        vec![
+            RatatuiSpan::styled("[Source] ", Style::from(Color::DarkGray)),
+            RatatuiSpan::raw(self.fn_name.clone()),
+            RatatuiSpan::styled(location, Style::from(Color::DarkGray)),
+        ]
+        .into()
+    }
+}
+
+fn line_nr(sm: &rustc_span::source_map::SourceMap, pos: rustc_span::BytePos) -> u16 {
+    u16::try_from(sm.lookup_char_pos(pos).line).unwrap_or(0)
+}
