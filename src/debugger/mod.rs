@@ -19,9 +19,7 @@ pub enum DebuggerCommand {
     StepOver(u32),
     StepBack,
     RunToTerminator(u32),
-    RunToFrame(String),
     RunToInstance(String),
-    RunToMain,
     RunToEnd,
     Quit,
     QuitWithErr(String),
@@ -32,9 +30,7 @@ enum DebuggerMode {
     Step(u32),
     Continue,
     RunToTerminator(u32),
-    RunToFrame(String),
     RunToInstance(String),
-    RunToMain,
     RunToEnd,
 }
 
@@ -115,33 +111,15 @@ impl MiriDebuggerHandle {
             return;
         }
 
-        let state = DebuggerState::capture(ecx);
         match self.current_mode() {
             DebuggerMode::Step(_)
             | DebuggerMode::RunToTerminator(_)
             | DebuggerMode::RunToEnd
             | DebuggerMode::RunToInstance(_) => (),
-            DebuggerMode::RunToFrame(ref target) => {
-                let target_lc = target.to_ascii_lowercase();
-                if state
-                    .stack_frames
-                    .iter()
-                    .any(|frame| frame.fn_name.to_ascii_lowercase().contains(&target_lc))
-                {
-                    self.set_current_mode(DebuggerMode::Step(1));
-                } else {
-                    return;
-                }
-            }
-            DebuggerMode::RunToMain => {
-                if state.in_user_code {
-                    self.set_current_mode(DebuggerMode::Step(1));
-                }
-                return;
-            }
             DebuggerMode::Continue => return,
         }
 
+        let state = DebuggerState::capture(ecx);
         let _ = self.state_tx.send(StateOrEvent::State(Box::new(state)));
     }
 
@@ -173,9 +151,7 @@ impl MiriDebuggerHandle {
                 // Reverse stepping is handled entirely in the TUI thread.
                 DebuggerCommand::StepBack => DebuggerMode::Continue,
                 DebuggerCommand::RunToTerminator(n) => DebuggerMode::RunToTerminator(n + 1),
-                DebuggerCommand::RunToFrame(_) => DebuggerMode::Continue,
                 DebuggerCommand::RunToInstance(target) => DebuggerMode::RunToInstance(target),
-                DebuggerCommand::RunToMain => DebuggerMode::Continue,
                 DebuggerCommand::RunToEnd => DebuggerMode::Continue,
                 DebuggerCommand::Quit => break 'm,
                 DebuggerCommand::QuitWithErr(_) => break 'm,

@@ -5,6 +5,7 @@ use ratatui::prelude::*;
 use tui_overlay::{Backdrop, Easing, Overlay, OverlayState};
 
 use crate::DebuggerState;
+use crate::debugger::tui::Context;
 use crate::debugger::tui::pane::FocusPane;
 use crate::debugger::tui::pane::allocs::PaneAllocs;
 use crate::debugger::tui::pane::borrow_stacks::PaneBorrowStacks;
@@ -15,7 +16,6 @@ use crate::debugger::tui::pane::output::PaneOutput;
 use crate::debugger::tui::pane::src::PaneSrc;
 use crate::debugger::tui::pane::stack::PaneStack;
 use crate::debugger::tui::pane::status_bar::PaneStatusBar;
-use crate::debugger::tui::{Context, RunTargetState};
 
 #[derive(Debug)]
 pub struct Panes {
@@ -160,9 +160,8 @@ impl Panes {
         frame.render_widget(paragraph, self.mir.rect);
     }
 
-    pub fn render_stack(&self, frame: &mut Frame<'_>, state: &DebuggerState, blink_epoch: Instant) {
-        let (list, mut list_state) =
-            self.stack.widget(state, self.is_focused(FocusPane::Stack), blink_epoch);
+    pub fn render_stack(&self, frame: &mut Frame<'_>, state: &DebuggerState) {
+        let (list, mut list_state) = self.stack.widget(state, self.is_focused(FocusPane::Stack));
         frame.render_stateful_widget(list, self.stack.rect, &mut list_state);
     }
 
@@ -201,13 +200,8 @@ impl Panes {
     }
 
     pub fn render_status_bar(&self, frame: &mut Frame<'_>, state: &DebuggerState, ctx: &Context) {
-        let paragraph = self.status_bar.widget(
-            state,
-            self.focus.as_str(),
-            &self.stack.search,
-            &self.instances.search,
-            ctx,
-        );
+        let paragraph =
+            self.status_bar.widget(state, self.focus.as_str(), &self.instances.search, ctx);
         frame.render_widget(paragraph, self.status_bar.rect);
     }
 
@@ -419,41 +413,25 @@ impl Panes {
 
     pub fn edit(&mut self, state: &DebuggerState, code: KeyCode) {
         match code {
-            KeyCode::Char('[') => {
-                self.status_bar.hscroll = self.status_bar.hscroll.saturating_sub(1);
+            KeyCode::Char('[') | KeyCode::Up =>
+                self.instances.index = self.instances.index.saturating_sub(1),
+            KeyCode::Char(']') | KeyCode::Down => {
+                self.instances.index = self.instances.index.saturating_add(1);
             }
-            KeyCode::Char(']') => {
-                self.status_bar.hscroll = self.status_bar.hscroll.saturating_add(1);
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('/') => {
+                if self.focus == FocusPane::Instances {
+                    self.instances.search.editing = false;
+                }
             }
-            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('/') =>
-                match self.focus {
-                    FocusPane::Stack => self.stack.search.editing = false,
-                    FocusPane::Instances => self.instances.search.editing = false,
-                    _ => {}
-                },
             KeyCode::Backspace =>
-                match self.focus {
-                    FocusPane::Stack => {
-                        self.stack.search.query.pop();
-                        self.stack.refresh(state);
-                    }
-                    FocusPane::Instances => {
-                        self.instances.search.query.pop();
-                        self.instances.refresh(state);
-                    }
-                    _ => {}
+                if self.focus == FocusPane::Instances {
+                    self.instances.search.query.pop();
+                    self.instances.refresh(state);
                 },
             KeyCode::Char(c) =>
-                match self.focus {
-                    FocusPane::Stack => {
-                        self.stack.search.query.push(c);
-                        self.stack.refresh(state);
-                    }
-                    FocusPane::Instances => {
-                        self.instances.search.query.push(c);
-                        self.instances.refresh(state);
-                    }
-                    _ => {}
+                if self.focus == FocusPane::Instances {
+                    self.instances.search.query.push(c);
+                    self.instances.refresh(state);
                 },
             _ => {}
         }
