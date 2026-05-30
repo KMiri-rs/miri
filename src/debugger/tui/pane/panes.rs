@@ -65,14 +65,14 @@ impl Panes {
             unreachable!()
         };
 
-        let [src, locals, instances, memory, output] = *Layout::default()
+        let [src, locals, memory, output, instances] = *Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Percentage(28),
                 Constraint::Percentage(18),
-                Constraint::Percentage(18),
                 Constraint::Percentage(16),
                 Constraint::Percentage(20),
+                Constraint::Percentage(18),
             ])
             .split(right)
         else {
@@ -101,11 +101,11 @@ impl Panes {
         self.area = area;
         self.mir.rect = new_layout.mir.rect;
         self.stack.rect = new_layout.stack.rect;
-        self.instances.rect = new_layout.instances.rect;
         self.src.rect = new_layout.src.rect;
         self.locals.rect = new_layout.locals.rect;
         self.allocs.rect = new_layout.allocs.rect;
         self.output.rect = new_layout.output.rect;
+        self.instances.rect = new_layout.instances.rect;
         self.status_bar.rect = new_layout.status_bar.rect;
     }
 
