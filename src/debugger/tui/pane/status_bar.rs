@@ -1,7 +1,7 @@
 use super::*;
 use crate::debugger::get_record_all_states;
 use crate::debugger::tui::Context;
-use crate::debugger::tui::pane::stack::StackSearchState;
+use crate::debugger::tui::pane::instances::StackSearchState;
 
 const HISTORY_CAPACITY: usize = 1000;
 
@@ -20,52 +20,31 @@ impl PaneStatusBar {
         &self,
         state: &DebuggerState,
         focus_name: &str,
-        stack_search: &StackSearchState,
         instance_search: &StackSearchState,
         ctx: &Context,
     ) -> Paragraph<'static> {
-        let search_text = match focus_name {
-            "stack" => search_text("stack", stack_search),
-            "instances" => search_text("instances", instance_search),
-            _ =>
-                format!(
-                    "{}  {}",
-                    search_text("stack", stack_search),
-                    search_text("instances", instance_search)
-                ),
-        };
-        let keys_text = if ctx.run_target.editing {
-            "keys: type function name  enter run-to-frame  esc cancel  backspace delete"
-        } else if stack_search.editing {
-            "keys: type to filter stack  enter/esc// exit search  backspace delete  [ ] scroll-cmds  F toggle-freeze  q quit"
-        } else if instance_search.editing {
-            "keys: type to filter instances  enter/esc// exit search  backspace delete  [ ] scroll-cmds  F toggle-freeze  q quit"
+        let search_text = search_text("instances", instance_search);
+        let keys_text = if instance_search.editing {
+            "keys: type to filter instances  enter run-to-instance  esc exit search  backspace delete  [ ] scroll-cmds  F toggle-freeze  q quit"
         } else if ctx.program_finished {
             "keys: q quit  / search  . next  , prev  b step-back  [ ] scroll-cmds  F toggle-freeze  esc clear  tab switch  arrows scroll"
         } else if focus_name == "instances" {
-            "keys: enter run-to-instance  / search  . next  , prev  b step-back  [ ] scroll-cmds  F toggle-freeze  q quit  tab switch  arrows scroll"
+            "keys: enter run-to-instance  / search  P search-instances  . next  , prev  b step-back  [ ] scroll-cmds  F toggle-freeze  q quit  tab switch  arrows scroll"
         } else {
-            "keys: n/space step  b step-back  p run-to-selected  P run-to-name  c continue  m run-to-main  e run-to-end  / search  . next  , prev  [ ] scroll-cmds F toggle-freeze  q quit  tab switch  arrows scroll"
+            "keys: n/space step  b step-back  P search-instances  c continue  e run-to-end  / search  . next  , prev  [ ] scroll-cmds F toggle-freeze  q quit  tab switch  arrows scroll"
         };
         let finished_text = if ctx.program_finished { "  status=finished" } else { "" };
         let reverse_mode = ctx.reverse_index.is_some();
         let mode_text = if reverse_mode { "reverse" } else { ctx.mode.as_str() };
-        let target_text = if ctx.run_target.editing {
-            format!("  target={}|", ctx.run_target.query)
-        } else {
-            String::new()
-        };
-        let run_target_text = if let Some(target) = ctx.run_to_instance_target.as_ref() {
-            format!("  instance={target}")
-        } else if let Some(target) = ctx.run_to_frame_target.as_ref() {
-            format!("  frame={target}")
-        } else {
-            String::new()
-        };
+        let run_target_text = ctx
+            .run_to_instance_target
+            .as_ref()
+            .map(|target| format!("  instance={target}"))
+            .unwrap_or_default();
         let record_all_state =
             if get_record_all_states() { " S record_always " } else { " S record_on_demand " };
         let text = format!(
-            "mode={}  steps={}  thread={}  focus={}  history={}/{} {record_all_state} {}{}{}{}  {}",
+            "mode={}  steps={}  thread={}  focus={}  history={}/{} {record_all_state} {}{}{}  {}",
             mode_text,
             state.step_count,
             state.current_thread.to_u32(),
@@ -74,7 +53,6 @@ impl PaneStatusBar {
             HISTORY_CAPACITY,
             search_text,
             finished_text,
-            target_text,
             run_target_text,
             keys_text,
         );

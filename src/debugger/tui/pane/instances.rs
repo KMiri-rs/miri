@@ -2,7 +2,14 @@ use std::borrow::Cow;
 use std::time::Instant;
 
 use super::*;
-use crate::debugger::tui::pane::stack::StackSearchState;
+
+#[derive(Default, Debug)]
+pub struct StackSearchState {
+    pub query: String,
+    pub editing: bool,
+    pub matches: Vec<usize>,
+    pub current_match: usize,
+}
 
 #[derive(Default, Debug)]
 pub struct PaneInstances {

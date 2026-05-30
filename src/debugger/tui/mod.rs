@@ -38,9 +38,7 @@ enum RunMode {
     Step,
     Continue,
     RunToTerminator,
-    RunToFrame,
     RunToInstance,
-    RunToMain,
     RunToEnd,
 }
 
@@ -50,29 +48,14 @@ impl RunMode {
             RunMode::Step => "step",
             RunMode::Continue => "continue",
             RunMode::RunToTerminator => "run-to-terminator",
-            RunMode::RunToFrame => "run-to-frame",
             RunMode::RunToInstance => "run-to-instance",
-            RunMode::RunToMain => "run-to-main",
             RunMode::RunToEnd => "run-to-end",
         }
     }
-
-    //     fn is_fast_mode(self, in_user_code: bool) -> bool {
-    //         (self == RunMode::RunToMain && !in_user_code)
-    //             || matches!(self, RunMode::RunToFrame | RunMode::RunToEnd)
-    //     }
-}
-
-#[derive(Default)]
-struct RunTargetState {
-    editing: bool,
-    query: String,
 }
 
 pub struct Context {
     mode: RunMode,
-    run_target: RunTargetState,
-    run_to_frame_target: Option<String>,
     run_to_instance_target: Option<String>,
     last_state: Option<Box<DebuggerState>>,
     history: VecDeque<DebuggerState>,
@@ -87,8 +70,6 @@ impl Context {
     fn new() -> Context {
         Context {
             mode: RunMode::Step,
-            run_target: RunTargetState::default(),
-            run_to_frame_target: None,
             run_to_instance_target: None,
             last_state: None,
             history: VecDeque::with_capacity(HISTORY_CAPACITY),
@@ -108,22 +89,6 @@ impl Context {
         }
         self.last_state = Some(Box::new(state.clone()));
         self.reverse_index = None;
-    }
-
-    fn reached_target_frame(&self, state: &DebuggerState) -> bool {
-        fn state_has_frame(state: &DebuggerState, target: &str) -> bool {
-            let target_lc = target.to_ascii_lowercase();
-            state
-                .stack_frames
-                .iter()
-                .any(|frame| frame.fn_name.to_ascii_lowercase().contains(&target_lc))
-        }
-
-        self.mode == RunMode::RunToFrame
-            && self
-                .run_to_frame_target
-                .as_ref()
-                .is_some_and(|target| state_has_frame(state, target))
     }
 
     fn reached_target_instance(&self, state: &DebuggerState) -> bool {
@@ -191,16 +156,9 @@ fn tui_loop(
                 } else {
                     panes.instances.index = 0;
                 }
-                if ctx.reached_target_frame(&state) {
-                    ctx.mode = RunMode::Step;
-                    ctx.run_to_frame_target = None;
-                }
                 if ctx.reached_target_instance(&state) {
                     ctx.mode = RunMode::Step;
                     ctx.run_to_instance_target = None;
-                }
-                if matches!(ctx.mode, RunMode::RunToMain) && state.in_user_code {
-                    ctx.mode = RunMode::Step;
                 }
                 state
             }
@@ -238,7 +196,6 @@ fn finished(
 ) -> io::Result<()> {
     ctx.mode = RunMode::Step;
     ctx.reverse_index = None;
-    panes.stack.search.editing = false;
     panes.instances.search.editing = false;
     loop {
         terminal.draw(|frame| render(&mut panes, frame, state, &ctx))?;
@@ -268,7 +225,7 @@ fn render(panes: &mut Panes, frame: &mut Frame<'_>, state: &DebuggerState, ctx: 
     panes.update_area(frame.area());
 
     panes.render_mir(frame, state);
-    panes.render_stack(frame, state, ctx.blink_epoch);
+    panes.render_stack(frame, state);
     panes.render_instances(frame, state, ctx.blink_epoch);
     panes.render_src(frame, state);
     panes.render_locals(frame, state);
