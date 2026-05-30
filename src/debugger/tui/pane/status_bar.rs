@@ -25,13 +25,13 @@ impl PaneStatusBar {
     ) -> Paragraph<'static> {
         let search_text = search_text("instances", instance_search);
         let keys_text = if instance_search.editing {
-            "keys: type to filter instances  enter run-to-instance  esc exit search  backspace delete  [ ] scroll-cmds  F toggle-freeze  q quit"
+            "keys: type to filter instances  up/down select  pageup/pagedown page  enter run-to-instance  esc exit search  backspace delete  F toggle-freeze  q quit"
         } else if ctx.program_finished {
             "keys: q quit  / search  . next  , prev  b step-back  [ ] scroll-cmds  F toggle-freeze  esc clear  tab switch  arrows scroll"
         } else if focus_name == "instances" {
-            "keys: enter run-to-instance  / search  P search-instances  . next  , prev  b step-back  [ ] scroll-cmds  F toggle-freeze  q quit  tab switch  arrows scroll"
+            "keys: enter run-to-instance  / search  ? search-clear  . next  , prev  b step-back  [ ] scroll-cmds  F toggle-freeze  q quit  tab switch  arrows scroll"
         } else {
-            "keys: n/space step  b step-back  P search-instances  c continue  e run-to-end  / search  . next  , prev  [ ] scroll-cmds F toggle-freeze  q quit  tab switch  arrows scroll"
+            "keys: n/space step  b step-back  / search  ? search-clear  c continue  e run-to-end  . next  , prev  [ ] scroll-cmds F toggle-freeze  q quit  tab switch  arrows scroll"
         };
         let finished_text = if ctx.program_finished { "  status=finished" } else { "" };
         let reverse_mode = ctx.reverse_index.is_some();

@@ -32,6 +32,26 @@ impl PaneInstances {
         }
     }
 
+    fn move_selection(&mut self, state: &DebuggerState, delta: isize) {
+        let visible = self.visible_instance_indices(state);
+        if visible.is_empty() {
+            return;
+        }
+
+        let current_pos = visible.iter().position(|idx| *idx == self.index).unwrap_or(0);
+        let max_pos = visible.len().saturating_sub(1);
+        let next_pos = if delta >= 0 {
+            current_pos.saturating_add(delta as usize).min(max_pos)
+        } else {
+            current_pos.saturating_sub(delta.unsigned_abs())
+        };
+        self.index = visible[next_pos];
+
+        if !self.search.query.is_empty() {
+            self.search.current_match = next_pos;
+        }
+    }
+
     pub fn widget(
         &self,
         state: &DebuggerState,
@@ -186,17 +206,24 @@ impl PaneInstances {
     }
 
     pub fn step_selection(&mut self, state: &DebuggerState, forward: bool) {
-        let visible = self.visible_instance_indices(state);
-        if visible.is_empty() {
-            return;
-        }
+        self.move_selection(state, if forward { 1 } else { -1 });
+    }
 
-        let current_pos = visible.iter().position(|idx| *idx == self.index).unwrap_or(0);
-        let next_pos = if forward {
-            (current_pos + 1).min(visible.len() - 1)
+    pub fn page_selection(&mut self, state: &DebuggerState, forward: bool) {
+        // Approximate each result as two rows. Wrapping long names or paths can make the jump
+        // land a bit early or late, but this keeps paging simple and predictable.
+        let page = usize::from(self.rect.height.saturating_sub(2) / 2).max(1);
+        let delta = if forward {
+            isize::try_from(page).unwrap_or(isize::MAX)
         } else {
-            current_pos.saturating_sub(1)
+            -isize::try_from(page).unwrap_or(isize::MAX)
         };
-        self.index = visible[next_pos];
+        self.move_selection(state, delta);
+        if !self.search.query.is_empty() {
+            let visible = self.visible_instance_indices(state);
+            if let Some(pos) = visible.iter().position(|idx| *idx == self.index) {
+                self.search.current_match = pos;
+            }
+        }
     }
 }
