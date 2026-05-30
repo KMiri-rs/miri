@@ -212,7 +212,7 @@ fn tui_loop(
                     Action::Return => return Ok(()),
                 }
                 let Some(state) = ctx.last_state.clone() else { continue };
-                *state
+                state
             }
             Err(RecvError) => break,
         };
