@@ -9,6 +9,88 @@ pub struct StackSearchState {
     pub editing: bool,
     pub matches: Vec<usize>,
     pub current_match: usize,
+    history: Vec<String>,
+    history_cursor: Option<usize>,
+    history_draft: Option<String>,
+}
+
+impl StackSearchState {
+    fn clear_history_navigation(&mut self) {
+        self.history_cursor = None;
+        self.history_draft = None;
+    }
+
+    pub fn record_current_query(&mut self) {
+        self.clear_history_navigation();
+        if self.query.is_empty() {
+            return;
+        }
+        if self.history.last().is_some_and(|prev| prev == &self.query) {
+            return;
+        }
+        self.history.push(self.query.clone());
+    }
+
+    pub fn begin_history_search(&mut self, clear_query: bool) {
+        self.record_current_query();
+        if clear_query {
+            self.query.clear();
+        }
+        self.editing = true;
+    }
+
+    pub fn finish_history_search(&mut self) {
+        self.record_current_query();
+        self.editing = false;
+    }
+
+    pub fn previous_history_entry(&mut self) {
+        if self.history.is_empty() {
+            return;
+        }
+
+        match self.history_cursor {
+            None => {
+                self.history_draft = Some(self.query.clone());
+                self.history_cursor = Some(self.history.len() - 1);
+                self.query = self.history[self.history.len() - 1].clone();
+            }
+            Some(0) => {
+                self.query = self.history[0].clone();
+            }
+            Some(cursor) => {
+                self.history_cursor = Some(cursor - 1);
+                self.query = self.history[cursor - 1].clone();
+            }
+        }
+    }
+
+    pub fn next_history_entry(&mut self) {
+        let Some(cursor) = self.history_cursor else {
+            return;
+        };
+
+        if cursor + 1 < self.history.len() {
+            self.history_cursor = Some(cursor + 1);
+            self.query = self.history[cursor + 1].clone();
+            return;
+        }
+
+        self.history_cursor = None;
+        if let Some(draft) = self.history_draft.take() {
+            self.query = draft;
+        }
+    }
+
+    pub fn type_char(&mut self, c: char) {
+        self.clear_history_navigation();
+        self.query.push(c);
+    }
+
+    pub fn backspace(&mut self) {
+        self.clear_history_navigation();
+        self.query.pop();
+    }
 }
 
 #[derive(Default, Debug)]
@@ -225,5 +307,46 @@ impl PaneInstances {
                 self.search.current_match = pos;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StackSearchState;
+
+    #[test]
+    fn records_only_consecutive_duplicates() {
+        let mut search = StackSearchState::default();
+
+        search.query = "alpha".to_string();
+        search.record_current_query();
+        search.record_current_query();
+
+        search.query = "beta".to_string();
+        search.record_current_query();
+
+        search.query = "alpha".to_string();
+        search.record_current_query();
+
+        assert_eq!(search.history, vec!["alpha", "beta", "alpha"]);
+    }
+
+    #[test]
+    fn history_navigation_restores_draft() {
+        let mut search = StackSearchState::default();
+        search.history = vec!["first".to_string(), "second".to_string()];
+        search.query = "draft".to_string();
+
+        search.previous_history_entry();
+        assert_eq!(search.query, "second");
+
+        search.previous_history_entry();
+        assert_eq!(search.query, "first");
+
+        search.next_history_entry();
+        assert_eq!(search.query, "second");
+
+        search.next_history_entry();
+        assert_eq!(search.query, "draft");
     }
 }
