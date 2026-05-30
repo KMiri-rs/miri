@@ -330,7 +330,7 @@ fn capture_allocs(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<AllocInfo
         }
     };
 
-    for (&alloc_id, (_alloc, dealloc)) in alloc_spans.iter().take(32) {
+    for (&alloc_id, (_alloc, dealloc)) in alloc_spans.iter() {
         let alloc_state = ecx.machine.alloc_addresses.borrow();
         let provenance_exposed = alloc_state.exposed.contains(&alloc_id);
         let base_addr = alloc_state.base_paddr.get(&alloc_id).copied();
