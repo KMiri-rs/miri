@@ -98,7 +98,6 @@ pub struct OutputLine {
 pub struct DebuggerState {
     pub current_thread: ThreadId,
     pub step_count: u64,
-    pub in_user_code: bool,
     pub stack_frames: Vec<FrameInfo>,
     pub function_instances: Vec<FunctionInstanceInfo>,
     pub current_location: CurrentLocation,
@@ -126,8 +125,6 @@ impl DebuggerState {
 
         let stack_frames: Vec<_> =
             stack.iter().rev().map(|frame| capture_frame(sm, frame)).collect();
-        let in_user_code =
-            stack_frames.first().map(|frame| is_user_code_path(&frame.source_file)).unwrap_or(true);
 
         let current_location =
             stack.last().map(|frame| capture_location(ecx, frame)).unwrap_or_else(|| {
@@ -158,7 +155,6 @@ impl DebuggerState {
         Self {
             current_thread: ecx.active_thread(),
             step_count: ecx.machine.basic_block_count,
-            in_user_code,
             stack_frames,
             function_instances,
             current_location,
@@ -174,17 +170,6 @@ impl DebuggerState {
                 .map(|bt| bt.borrow().borrow_tracker_method()),
         }
     }
-}
-
-fn is_user_code_path(path: &str) -> bool {
-    let lower = path.to_ascii_lowercase();
-    if lower.contains(".rustup\\toolchains\\miri") || lower.contains(".rustup/toolchains/miri") {
-        return false;
-    }
-    if path.starts_with('<') {
-        return false;
-    }
-    true
 }
 
 fn capture_locals(frame: &Frame<'_, Provenance, FrameExtra<'_>>) -> Vec<LocalInfo> {
