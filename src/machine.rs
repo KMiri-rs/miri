@@ -694,7 +694,7 @@ pub struct MiriMachine<'tcx> {
     pub(crate) record: Vec<std::time::Duration>,
 
     /// Optional interactive debugger handle.
-    pub debugger: Option<crate::debugger::MiriDebuggerHandle>,
+    pub debugger: Option<crate::debugger::MiriDebuggerHandle<'tcx>>,
 
     /// Captured stdout/stderr chunks from the interpreted program for debugger UI.
     pub debugger_output: RefCell<Vec<(bool, String)>>,
