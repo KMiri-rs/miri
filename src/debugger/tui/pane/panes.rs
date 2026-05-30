@@ -417,19 +417,32 @@ impl Panes {
             KeyCode::Down => self.instances.step_selection(state, true),
             KeyCode::PageUp => self.instances.page_selection(state, false),
             KeyCode::PageDown => self.instances.page_selection(state, true),
-            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('/') => {
+            KeyCode::Esc | KeyCode::Enter =>
+                if self.focus == FocusPane::Instances {
+                    self.instances.search.finish_history_search();
+                },
+            KeyCode::Char('/') =>
                 if self.focus == FocusPane::Instances {
                     self.instances.search.editing = false;
-                }
-            }
+                },
+            KeyCode::Char('[') =>
+                if self.focus == FocusPane::Instances && self.instances.search.editing {
+                    self.instances.search.previous_history_entry();
+                    self.instances.refresh(state);
+                },
+            KeyCode::Char(']') =>
+                if self.focus == FocusPane::Instances && self.instances.search.editing {
+                    self.instances.search.next_history_entry();
+                    self.instances.refresh(state);
+                },
             KeyCode::Backspace =>
                 if self.focus == FocusPane::Instances {
-                    self.instances.search.query.pop();
+                    self.instances.search.backspace();
                     self.instances.refresh(state);
                 },
             KeyCode::Char(c) =>
                 if self.focus == FocusPane::Instances {
-                    self.instances.search.query.push(c);
+                    self.instances.search.type_char(c);
                     self.instances.refresh(state);
                 },
             _ => {}

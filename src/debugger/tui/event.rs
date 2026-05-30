@@ -62,8 +62,7 @@ pub fn handle(
             }
             KeyCode::Char('?') => {
                 panes.focus = FocusPane::Instances;
-                panes.instances.search.editing = true;
-                panes.instances.search.query.clear();
+                panes.instances.search.begin_history_search(true);
                 panes.instances.refresh(state);
                 *run_to_instance_target = None;
             }
@@ -96,7 +95,9 @@ pub fn handle(
             }
             KeyCode::Esc => {
                 if panes.focus == FocusPane::Instances && !panes.instances.search.query.is_empty() {
-                    panes.instances.search = Default::default();
+                    panes.instances.search.finish_history_search();
+                    panes.instances.search.query.clear();
+                    panes.instances.refresh(state);
                 }
             }
             KeyCode::Char('n') => {
