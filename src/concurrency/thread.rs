@@ -1468,19 +1468,19 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                         if !stack.is_empty() {
                             handle.send(this);
 
-                            match handle.wait_for_continue(this) {
-                                DebuggerCommand::Quit => {
+                            match handle.wait_for_command(this) {
+                                debugger::Quit::No => (),
+                                debugger::Quit::Yes => {
                                     this.machine.handle_abnormal_termination();
                                     throw_machine_stop!(TerminationInfo::Interrupted)
                                 }
-                                DebuggerCommand::QuitWithErr(err) => {
+                                debugger::Quit::YesWithErr(err) => {
                                     use std::io::Write;
                                     let file = std::fs::File::create("miri-debugger.log").unwrap();
                                     writeln!(&file, "Debugger exited with error:\n{err}").unwrap();
                                     this.machine.handle_abnormal_termination();
                                     throw_machine_stop!(TerminationInfo::Interrupted)
                                 }
-                                _ => (),
                             }
                         }
                     }
