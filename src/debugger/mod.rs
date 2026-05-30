@@ -124,7 +124,7 @@ impl MiriDebuggerHandle {
             DebuggerMode::Continue => return,
         }
 
-        let _ = self.state_tx.send(StateOrEvent::State(state));
+        let _ = self.state_tx.send(StateOrEvent::State(Box::new(state)));
     }
 
     fn reached_terminator_or_step(&self, ecx: &MiriInterpCx<'_>) -> bool {
