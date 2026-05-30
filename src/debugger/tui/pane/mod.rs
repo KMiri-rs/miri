@@ -32,11 +32,11 @@ fn hscroll_text(text: &str, offset: u16) -> String {
 pub enum FocusPane {
     Mir,
     Stack,
-    Instances,
     Src,
     Locals,
     Allocs,
     Output,
+    Instances,
     StatusBar,
     BorrowStacks,
 }
@@ -45,12 +45,12 @@ impl FocusPane {
     pub fn next(self) -> Self {
         match self {
             FocusPane::Mir => FocusPane::Stack,
-            FocusPane::Stack => FocusPane::Instances,
-            FocusPane::Instances => FocusPane::Src,
+            FocusPane::Stack => FocusPane::Src,
             FocusPane::Src => FocusPane::Locals,
             FocusPane::Locals => FocusPane::Allocs,
             FocusPane::Allocs => FocusPane::Output,
-            FocusPane::Output => FocusPane::Mir,
+            FocusPane::Output => FocusPane::Instances,
+            FocusPane::Instances => FocusPane::Mir,
             FocusPane::StatusBar => unreachable!(),
             FocusPane::BorrowStacks => FocusPane::BorrowStacks,
         }
@@ -58,13 +58,13 @@ impl FocusPane {
 
     pub fn previous(self) -> Self {
         match self {
-            FocusPane::Mir => FocusPane::Output,
+            FocusPane::Mir => FocusPane::Instances,
             FocusPane::Stack => FocusPane::Mir,
-            FocusPane::Instances => FocusPane::Stack,
-            FocusPane::Src => FocusPane::Instances,
+            FocusPane::Src => FocusPane::Stack,
             FocusPane::Locals => FocusPane::Src,
             FocusPane::Allocs => FocusPane::Locals,
             FocusPane::Output => FocusPane::Allocs,
+            FocusPane::Instances => FocusPane::Output,
             FocusPane::StatusBar => unreachable!(),
             FocusPane::BorrowStacks => FocusPane::BorrowStacks,
         }
@@ -74,11 +74,11 @@ impl FocusPane {
         match self {
             FocusPane::Mir => "mir",
             FocusPane::Stack => "stack",
-            FocusPane::Instances => "instances",
             FocusPane::Src => "src",
             FocusPane::Locals => "locals",
             FocusPane::Allocs => "allocs",
             FocusPane::Output => "output",
+            FocusPane::Instances => "instances",
             FocusPane::StatusBar => "status_bar",
             FocusPane::BorrowStacks => "borrow_stacks",
         }
