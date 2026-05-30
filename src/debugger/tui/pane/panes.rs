@@ -413,11 +413,10 @@ impl Panes {
 
     pub fn edit(&mut self, state: &DebuggerState, code: KeyCode) {
         match code {
-            KeyCode::Char('[') | KeyCode::Up =>
-                self.instances.index = self.instances.index.saturating_sub(1),
-            KeyCode::Char(']') | KeyCode::Down => {
-                self.instances.index = self.instances.index.saturating_add(1);
-            }
+            KeyCode::Up => self.instances.step_selection(state, false),
+            KeyCode::Down => self.instances.step_selection(state, true),
+            KeyCode::PageUp => self.instances.page_selection(state, false),
+            KeyCode::PageDown => self.instances.page_selection(state, true),
             KeyCode::Esc | KeyCode::Enter | KeyCode::Char('/') => {
                 if self.focus == FocusPane::Instances {
                     self.instances.search.editing = false;

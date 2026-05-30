@@ -60,7 +60,7 @@ pub fn handle(
                 panes.focus = FocusPane::Instances;
                 panes.instances.search.editing = true;
             }
-            KeyCode::Char('P') => {
+            KeyCode::Char('?') => {
                 panes.focus = FocusPane::Instances;
                 panes.instances.search.editing = true;
                 panes.instances.search.query.clear();
