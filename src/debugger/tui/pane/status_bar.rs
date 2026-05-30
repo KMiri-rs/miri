@@ -25,7 +25,7 @@ impl PaneStatusBar {
     ) -> Paragraph<'static> {
         let search_text = search_text("instances", instance_search);
         let keys_text = if instance_search.editing {
-            "keys: type to filter instances  up/down select  pageup/pagedown page  enter run-to-instance  esc exit search  backspace delete  F toggle-freeze  q quit"
+            "keys: type to filter instances  up/down select  pageup/pagedown page  enter run-to-instance  esc exit search  backspace delete  [ ] history  F toggle-freeze  q quit"
         } else if ctx.program_finished {
             "keys: q quit  / search  . next  , prev  b step-back  [ ] scroll-cmds  F toggle-freeze  esc clear  tab switch  arrows scroll"
         } else if focus_name == "instances" {
