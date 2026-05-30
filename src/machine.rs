@@ -42,6 +42,7 @@ use crate::concurrency::sync::SyncObj;
 use crate::concurrency::{
     AllocDataRaceHandler, GenmcCtx, GenmcEvalContextExt as _, GlobalDataRaceHandler, weak_memory,
 };
+use crate::debugger::reachability::FunctionInstanceInfo;
 use crate::mirch::{self, PageState, TypedKind, kernel_code_paddr_to_vaddr};
 use crate::*;
 
@@ -578,7 +579,7 @@ pub struct MiriMachine<'tcx> {
     pub(crate) exported_symbols_cache: FxHashMap<Symbol, Option<Instance<'tcx>>>,
 
     /// The set of function instances discovered from the entry point.
-    pub(crate) reachable_function_instances: Vec<crate::debugger::state::FunctionInstanceInfo>,
+    pub(crate) reachable_function_instances: Vec<FunctionInstanceInfo>,
 
     /// Equivalent setting as RUST_BACKTRACE on encountering an error.
     pub(crate) backtrace_style: BacktraceStyle,
