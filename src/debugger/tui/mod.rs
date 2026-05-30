@@ -23,6 +23,7 @@ use super::state::LocalKind;
 use super::{DebuggerCommand, DebuggerState};
 use crate::debugger::channel::StateOrEvent;
 use crate::debugger::tui::event::Action;
+use crate::debugger::tui::pane::FocusPane;
 use crate::debugger::tui::pane::panes::Panes;
 
 mod event;
@@ -37,8 +38,8 @@ enum RunMode {
     Step,
     Continue,
     RunToTerminator,
-    RunToFrame,
-    RunToMain,
+    StepFrameTerminator,
+    RunToInstance,
     RunToEnd,
 }
 
@@ -48,28 +49,16 @@ impl RunMode {
             RunMode::Step => "step",
             RunMode::Continue => "continue",
             RunMode::RunToTerminator => "run-to-terminator",
-            RunMode::RunToFrame => "run-to-frame",
-            RunMode::RunToMain => "run-to-main",
+            RunMode::StepFrameTerminator => "step-frame-terminator",
+            RunMode::RunToInstance => "run-to-instance",
             RunMode::RunToEnd => "run-to-end",
         }
     }
-
-    //     fn is_fast_mode(self, in_user_code: bool) -> bool {
-    //         (self == RunMode::RunToMain && !in_user_code)
-    //             || matches!(self, RunMode::RunToFrame | RunMode::RunToEnd)
-    //     }
-}
-
-#[derive(Default)]
-struct RunTargetState {
-    editing: bool,
-    query: String,
 }
 
 pub struct Context {
     mode: RunMode,
-    run_target: RunTargetState,
-    run_to_frame_target: Option<String>,
+    run_to_instance_target: Option<String>,
     last_state: Option<Box<DebuggerState>>,
     history: VecDeque<DebuggerState>,
     blink_epoch: Instant,
@@ -83,8 +72,7 @@ impl Context {
     fn new() -> Context {
         Context {
             mode: RunMode::Step,
-            run_target: RunTargetState::default(),
-            run_to_frame_target: None,
+            run_to_instance_target: None,
             last_state: None,
             history: VecDeque::with_capacity(HISTORY_CAPACITY),
             blink_epoch: Instant::now(),
@@ -105,20 +93,11 @@ impl Context {
         self.reverse_index = None;
     }
 
-    fn reached_target_frame(&self, state: &DebuggerState) -> bool {
-        fn state_has_frame(state: &DebuggerState, target: &str) -> bool {
-            let target_lc = target.to_ascii_lowercase();
-            state
-                .stack_frames
-                .iter()
-                .any(|frame| frame.fn_name.to_ascii_lowercase().contains(&target_lc))
-        }
-
-        self.mode == RunMode::RunToFrame
-            && self
-                .run_to_frame_target
-                .as_ref()
-                .is_some_and(|target| state_has_frame(state, target))
+    fn reached_target_instance(&self, state: &DebuggerState) -> bool {
+        self.mode == RunMode::RunToInstance
+            && self.run_to_instance_target.as_ref().is_some_and(|target| {
+                state.stack_frames.last().is_some_and(|frame| frame.fn_name == *target)
+            })
     }
 }
 
@@ -167,17 +146,21 @@ fn tui_loop(
             Ok(StateOrEvent::State(state)) => {
                 ctx.on_new_state(&state);
                 panes.stack.refresh(&state);
+                panes.instances.refresh(&state);
                 if !state.stack_frames.is_empty() {
                     panes.stack.index = panes.stack.index.min(state.stack_frames.len() - 1);
                 } else {
                     panes.stack.index = 0;
                 }
-                if ctx.reached_target_frame(&state) {
-                    ctx.mode = RunMode::Step;
-                    ctx.run_to_frame_target = None;
+                if !state.function_instances.is_empty() {
+                    panes.instances.index =
+                        panes.instances.index.min(state.function_instances.len() - 1);
+                } else {
+                    panes.instances.index = 0;
                 }
-                if matches!(ctx.mode, RunMode::RunToMain) && state.in_user_code {
+                if ctx.reached_target_instance(&state) {
                     ctx.mode = RunMode::Step;
+                    ctx.run_to_instance_target = None;
                 }
                 state
             }
@@ -189,7 +172,7 @@ fn tui_loop(
                     Action::Return => return Ok(()),
                 }
                 let Some(state) = ctx.last_state.clone() else { continue };
-                *state
+                state
             }
             Err(RecvError) => break,
         };
@@ -215,7 +198,7 @@ fn finished(
 ) -> io::Result<()> {
     ctx.mode = RunMode::Step;
     ctx.reverse_index = None;
-    panes.stack.search.editing = false;
+    panes.instances.search.editing = false;
     loop {
         terminal.draw(|frame| render(&mut panes, frame, state, &ctx))?;
 
@@ -240,13 +223,19 @@ fn finished_without_snapshot(terminal: &mut Terminal) -> io::Result<()> {
 }
 
 fn render(panes: &mut Panes, frame: &mut Frame<'_>, state: &DebuggerState, ctx: &Context) {
+    let no_dead = ctx.filter_out_dead_allocs;
     panes.update_area(frame.area());
 
     panes.render_mir(frame, state);
-    panes.render_stack(frame, state, ctx.blink_epoch);
+    panes.render_stack(frame, state);
+    panes.render_instances(frame, state, ctx.blink_epoch);
     panes.render_src(frame, state);
     panes.render_locals(frame, state);
-    panes.render_memory(frame, state, ctx.filter_out_dead_allocs);
+    panes.render_memory(frame, state, no_dead);
     panes.render_output(frame, state);
     panes.render_status_bar(frame, state, ctx);
+
+    if panes.is_focused(FocusPane::BorrowStacks) {
+        panes.render_borrow_stack(frame, state, no_dead);
+    }
 }

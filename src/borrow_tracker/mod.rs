@@ -209,6 +209,11 @@ impl GlobalStateInner {
     pub fn borrow_tracker_method(&self) -> BorrowTrackerMethod {
         self.borrow_tracker_method
     }
+
+    /// Get `BorTag` through AllocId.
+    pub fn get_bortag(&self, id: AllocId) -> Option<BorTag> {
+        self.root_ptr_tags.get(&id).copied()
+    }
 }
 
 /// Which borrow tracking method to use

@@ -2,6 +2,7 @@ use std::borrow::Cow;
 
 use super::*;
 use crate::debugger::state::LocalKind;
+use crate::debugger::utils::{hsize, kind_str};
 use crate::{MemoryKind, MiriMemoryKind};
 
 #[derive(Default, Debug)]
@@ -51,12 +52,12 @@ impl PaneAllocs {
         let header = [
             "AllocID",
             // "Pointer",
-            "BasePAddr",
+            "BasePaddr",
             "Dealloc",
             "Kind",
             "Size",
             "Align",
-            "ProvExposed",
+            "Exposed",
             "Global",
             "Locals",
         ];
@@ -91,30 +92,4 @@ fn right_cell_with_alive(s: impl Into<Cow<'static, str>>, alive: bool) -> Cell<'
 
 fn right_cell(s: impl Into<Cow<'static, str>>) -> Cell<'static> {
     Cell::from(Text::from(s.into()).right_aligned())
-}
-
-fn hsize(n: impl humansize::ToF64 + humansize::Unsigned) -> String {
-    humansize::format_size(n, humansize::BINARY)
-}
-
-fn kind_str(kind: MemoryKind) -> &'static str {
-    match kind {
-        MemoryKind::Stack => "Stack",
-        MemoryKind::CallerLocation => "CallerLoc",
-        MemoryKind::Machine(kind) =>
-            match kind {
-                MiriMemoryKind::Kernel => "Kernel",
-                MiriMemoryKind::Rust => "Rust",
-                MiriMemoryKind::Miri => "Miri",
-                MiriMemoryKind::C => "C",
-                MiriMemoryKind::WinHeap => "WinHeap",
-                MiriMemoryKind::WinLocal => "WinLocal",
-                MiriMemoryKind::Machine => "Machine",
-                MiriMemoryKind::Runtime => "Runtime",
-                MiriMemoryKind::Global => "Global",
-                MiriMemoryKind::ExternStatic => "ExternStatic",
-                MiriMemoryKind::Tls => "Tls",
-                MiriMemoryKind::Mmap => "Mmap",
-            },
-    }
 }

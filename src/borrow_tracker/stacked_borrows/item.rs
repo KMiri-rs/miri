@@ -1,6 +1,10 @@
 use std::fmt;
 
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
+
 use crate::borrow_tracker::BorTag;
+use crate::borrow_tracker::stacked_borrows::debugger::{DebuggerBorrowStackItem, DebuggerPrevTag};
+use crate::borrow_tracker::stacked_borrows::diagnostics::RetagInfo;
 
 /// An item in the per-location borrow stack.
 #[derive(Copy, Clone, Hash, PartialEq, Eq)]
@@ -58,11 +62,38 @@ impl Item {
         // Write Permission::Disabled to the Permission bits
         self.0 |= perm.to_bits() << PERM_SHIFT;
     }
+
+    pub fn debugger(
+        &self,
+        exposed: &FxHashSet<BorTag>,
+        parent: &FxHashMap<u64, DebuggerPrevTag>,
+    ) -> DebuggerBorrowStackItem {
+        let tag = self.tag();
+        let bor_tag_id = tag.get();
+        let prev_tag = parent.get(&bor_tag_id).cloned();
+        DebuggerBorrowStackItem {
+            bor_tag_id,
+            permission: self.perm(),
+            protected: self.protected(),
+            prov_exposed: exposed.contains(&tag),
+            prev_tag,
+        }
+    }
 }
 
 impl fmt::Debug for Item {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[{:?} for {:?}]", self.perm(), self.tag())
+    }
+}
+
+impl fmt::Display for Item {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}: {}", self.tag(), self.perm())?;
+        if self.protected() {
+            write!(f, " (protected)")?;
+        }
+        Ok(())
     }
 }
 
@@ -103,5 +134,33 @@ impl Permission {
             Self::DISABLED => Permission::Disabled,
             _ => unreachable!(),
         }
+    }
+}
+
+impl fmt::Display for Permission {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let meaning = match self {
+            Permission::Unique => "unique mutable borrow",
+            Permission::SharedReadWrite => "shared mutable borrow",
+            Permission::SharedReadOnly => "shared read-only borrow",
+            Permission::Disabled => "disabled separator",
+        };
+        f.write_str(meaning)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn permission_display_uses_human_meaning() {
+        assert_eq!(Permission::SharedReadOnly.to_string(), "shared read-only borrow");
+    }
+
+    #[test]
+    fn item_display_shows_tag_and_meaning() {
+        let item = Item::new(BorTag::one(), Permission::Unique, true);
+        assert_eq!(item.to_string(), "<1>: unique mutable borrow (protected)");
     }
 }

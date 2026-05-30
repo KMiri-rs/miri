@@ -305,6 +305,10 @@ impl<'tcx> Thread<'tcx> {
             .unwrap_or(rustc_span::DUMMY_SP)
     }
 
+    pub fn last_frame(&self) -> Option<&Frame<'tcx, Provenance, FrameExtra<'tcx>>> {
+        self.stack.last()
+    }
+
     pub fn display_stack_records(&self) -> String {
         self.stack_addr_records
             .iter()
@@ -1496,8 +1500,8 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                         unsafe {
                             let value = *(mirch::paddr_to_mem(pt_address) as *mut usize);
                             let written_addr = value & !(mirch::page_size() - 1);
-                            if let PageState::Typed { .. } = mirch::physical_mem().page_states
-                                [written_addr as usize / mirch::page_size()]
+                            if let PageState::Typed { .. } =
+                                mirch::physical_mem().page_states[written_addr / mirch::page_size()]
                             {
                                 let _global_states = this.machine.alloc_addresses.borrow();
                                 //..todo!()
@@ -1519,19 +1523,19 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                         if !stack.is_empty() {
                             handle.send(this);
 
-                            match handle.wait_for_continue(this) {
-                                DebuggerCommand::Quit => {
+                            match handle.wait_for_command(this) {
+                                debugger::Quit::No => (),
+                                debugger::Quit::Yes => {
                                     this.machine.handle_abnormal_termination();
                                     throw_machine_stop!(TerminationInfo::Interrupted)
                                 }
-                                DebuggerCommand::QuitWithErr(err) => {
+                                debugger::Quit::YesWithErr(err) => {
                                     use std::io::Write;
                                     let file = std::fs::File::create("miri-debugger.log").unwrap();
                                     writeln!(&file, "Debugger exited with error:\n{err}").unwrap();
                                     this.machine.handle_abnormal_termination();
                                     throw_machine_stop!(TerminationInfo::Interrupted)
                                 }
-                                _ => (),
                             }
                         }
                     }

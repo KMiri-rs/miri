@@ -1,8 +1,7 @@
 use super::*;
 use crate::debugger::get_record_all_states;
-use crate::debugger::state::LocalKind;
-use crate::debugger::tui::pane::stack::StackSearchState;
-use crate::debugger::tui::{Context, RunMode, RunTargetState};
+use crate::debugger::tui::Context;
+use crate::debugger::tui::pane::instances::StackSearchState;
 
 const HISTORY_CAPACITY: usize = 1000;
 
@@ -21,35 +20,27 @@ impl PaneStatusBar {
         &self,
         state: &DebuggerState,
         focus_name: &str,
-        search: &StackSearchState,
+        instance_search: &StackSearchState,
         ctx: &Context,
     ) -> Paragraph<'static> {
-        let search_text = if search.editing && search.query.is_empty() {
-            "search=editing".to_string()
-        } else if search.editing {
-            format!("search=/{}, matches={} (editing)", search.query, search.matches.len())
-        } else if search.query.is_empty() {
-            "search=off".to_string()
-        } else {
-            format!("search=/{}, matches={}", search.query, search.matches.len())
-        };
-        let keys_text = if ctx.run_target.editing {
-            "keys: type function name  enter run-to-frame  esc cancel  backspace delete"
-        } else if search.editing {
-            "keys: type to filter stack  enter/esc// exit search  backspace delete  [ ] scroll-cmds  F toggle-freeze  q quit"
+        let search_text = search_text("instances", instance_search);
+        let keys_text = if instance_search.editing {
+            "keys: type to filter instances  up/down select  pageup/pagedown page  enter run-to-instance  esc exit search  backspace delete  [ ] history  F toggle-freeze  q quit"
         } else if ctx.program_finished {
             "keys: q quit  / search  . next  , prev  b step-back  [ ] scroll-cmds  F toggle-freeze  esc clear  tab switch  arrows scroll"
+        } else if focus_name == "instances" {
+            "keys: enter run-to-instance  / search  ? search-clear  . next  , prev  b step-back  [ ] scroll-cmds  F toggle-freeze  q quit  tab switch  arrows scroll"
         } else {
-            "keys: n/space step  b step-back  p run-to-selected  P run-to-name  c continue  m run-to-main  e run-to-end  / search  . next  , prev  [ ] scroll-cmds F toggle-freeze  q quit  tab switch  arrows scroll"
+            "keys: n step-over  space step-frame-terminator  b step-back  / search  ? search-clear  c continue  e run-to-end  . next  , prev  [ ] scroll-cmds F toggle-freeze  q quit  tab switch  arrows scroll"
         };
         let finished_text = if ctx.program_finished { "  status=finished" } else { "" };
         let reverse_mode = ctx.reverse_index.is_some();
         let mode_text = if reverse_mode { "reverse" } else { ctx.mode.as_str() };
-        let target_text = if ctx.run_target.editing {
-            format!("  target={}|", ctx.run_target.query)
-        } else {
-            String::new()
-        };
+        let run_target_text = ctx
+            .run_to_instance_target
+            .as_ref()
+            .map(|target| format!("  instance={target}"))
+            .unwrap_or_default();
         let record_all_state =
             if get_record_all_states() { " S record_always " } else { " S record_on_demand " };
         let text = format!(
@@ -62,12 +53,24 @@ impl PaneStatusBar {
             HISTORY_CAPACITY,
             search_text,
             finished_text,
-            target_text,
+            run_target_text,
             keys_text,
         );
 
         Paragraph::new(text)
             .style(Style::default().fg(THEME_BG).bg(THEME_ACCENT).add_modifier(Modifier::BOLD))
             .scroll((0, self.hscroll))
+    }
+}
+
+fn search_text(label: &str, search: &StackSearchState) -> String {
+    if search.editing && search.query.is_empty() {
+        format!("{label}=editing")
+    } else if search.editing {
+        format!("{label}=/{}, matches={} (editing)", search.query, search.matches.len())
+    } else if search.query.is_empty() {
+        format!("{label}=off")
+    } else {
+        format!("{label}=/{}, matches={}", search.query, search.matches.len())
     }
 }

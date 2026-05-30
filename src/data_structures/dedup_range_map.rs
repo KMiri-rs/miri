@@ -8,6 +8,10 @@
 use std::ops;
 
 use rustc_abi::Size;
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
+
+use crate::borrow_tracker::stacked_borrows::debugger::{DebuggerPrevTag, DebuggerSegment};
+use crate::{BorTag, Stack};
 
 #[derive(Clone, Debug)]
 struct Elem<T> {
@@ -238,6 +242,24 @@ impl<T> DedupRangeMap<T> {
             }
             self.v.push(elem);
         }
+    }
+}
+
+impl DedupRangeMap<Stack> {
+    pub fn debugger(
+        &self,
+        exposed: &FxHashSet<BorTag>,
+        parent: &FxHashMap<u64, DebuggerPrevTag>,
+    ) -> Vec<DebuggerSegment> {
+        self.v
+            .iter()
+            .map(|seg| {
+                DebuggerSegment {
+                    range: seg.range.clone(),
+                    stack: seg.data.debugger(exposed, parent),
+                }
+            })
+            .collect()
     }
 }
 

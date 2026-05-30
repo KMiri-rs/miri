@@ -36,6 +36,7 @@ extern crate tikv_jemalloc_sys as _;
 mod log;
 
 use std::env;
+use std::fs::File;
 use std::num::{NonZero, NonZeroI32};
 use std::ops::Range;
 use std::process::ExitCode;
@@ -84,6 +85,30 @@ impl MiriCompilerCalls {
     fn new(miri_config: MiriConfig, many_seeds: Option<ManySeedsConfig>) -> Self {
         Self { miri_config: Some(miri_config), many_seeds }
     }
+}
+
+#[cfg(unix)]
+fn redirect_debugger_diagnostics_to_file() -> std::io::Result<File> {
+    use std::fs::OpenOptions;
+    use std::os::fd::AsRawFd;
+
+    // Keep debugger UI on the terminal and move all stderr diagnostics into a file.
+    let file =
+        OpenOptions::new().create(true).truncate(true).write(true).open("miri_diagnostics.txt")?;
+
+    let diagnostics_fd = file.as_raw_fd();
+    let result = unsafe { libc::dup2(diagnostics_fd, libc::STDERR_FILENO) };
+    if result == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+
+    Ok(file)
+}
+
+#[cfg(not(unix))]
+fn redirect_debugger_diagnostics_to_file() -> std::io::Result<File> {
+    // Keep the file creation semantics consistent even when we cannot redirect the host stderr.
+    std::fs::OpenOptions::new().create(true).truncate(true).write(true).open("miri_diagnostics.txt")
 }
 
 fn entry_fn(tcx: TyCtxt<'_>) -> (DefId, MiriEntryFnType) {
@@ -718,6 +743,14 @@ fn main() -> ExitCode {
         }
     }
 
+    let diagnostics_file = if miri_config.debugger {
+        Some(redirect_debugger_diagnostics_to_file().unwrap_or_else(|err| {
+            fatal_error!("failed to redirect diagnostics to `miri_diagnostics.txt`: {err}")
+        }))
+    } else {
+        None
+    };
+
     // Native calls and strict provenance are not compatible.
     if !miri_config.native_lib.is_empty() && miri_config.provenance_mode == ProvenanceMode::Strict {
         fatal_error!("strict provenance is not compatible with calling native functions");
@@ -768,5 +801,6 @@ fn main() -> ExitCode {
             );
         }
     }
+    let _diagnostics_file = diagnostics_file;
     run_compiler_and_exit(&rustc_args, &mut MiriCompilerCalls::new(miri_config, many_seeds))
 }

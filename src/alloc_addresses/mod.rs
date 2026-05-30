@@ -701,7 +701,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             *global_state.base_paddr.get(&alloc_id).unwrap()
         };
         let alloc_map = &ecx.memory.alloc_map();
-        if kind == MemoryKind::Stack.into() {
+        if kind == MemoryKind::Stack {
             let (kind, old_allocation) = &alloc_map.get(alloc_id).unwrap();
             let alloc_size_usize = old_allocation.size().bytes_usize();
             if alloc_size_usize > 0 {

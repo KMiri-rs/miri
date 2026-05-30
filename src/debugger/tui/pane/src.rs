@@ -1,4 +1,5 @@
 use super::*;
+use crate::debugger::utils::src_view_centering;
 
 #[derive(Default, Debug)]
 pub struct PaneSrc {
@@ -14,26 +15,10 @@ impl PaneSrc {
 
     /// Center highlighted mir in view scope. Should be called prior to widget being rendered.
     pub fn view_centering(&mut self, state: &DebuggerState) {
-        let [start_idx, end_idx]: [usize; 2] =
-            if let Some([start_idx, end_idx]) = state.current_location.render_src.highlighted_idx {
-                [start_idx.into(), end_idx.into()]
-            } else {
-                // Nothing to be highlighted.
-                return;
-            };
-
-        let height: usize = self.rect.height.into();
-
-        self.scroll = if end_idx + 2 < height {
-            // The highlighted lines fit into current view from first line.
-            0
-        } else {
-            // Pan the view to the first highlighted line.
-            let gap = height.checked_sub(1 + end_idx - start_idx).unwrap_or(height) / 2;
-            start_idx.saturating_sub(gap)
-        }
-        .try_into()
-        .unwrap();
+        let Some(highlighted_idx) = state.current_location.render_src.highlighted_idx else {
+            return;
+        };
+        self.scroll = src_view_centering(highlighted_idx, self.rect.height);
     }
 
     pub fn widget(&self, state: &DebuggerState, focus: bool) -> Paragraph<'static> {

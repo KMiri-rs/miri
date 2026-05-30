@@ -7,6 +7,8 @@ use crate::debugger::tui::theme::*;
 pub mod panes;
 
 pub mod allocs;
+pub mod borrow_stacks;
+pub mod instances;
 pub mod locals;
 pub mod mir;
 pub mod output;
@@ -34,7 +36,9 @@ pub enum FocusPane {
     Locals,
     Allocs,
     Output,
+    Instances,
     StatusBar,
+    BorrowStacks,
 }
 
 impl FocusPane {
@@ -45,20 +49,24 @@ impl FocusPane {
             FocusPane::Src => FocusPane::Locals,
             FocusPane::Locals => FocusPane::Allocs,
             FocusPane::Allocs => FocusPane::Output,
-            FocusPane::Output => FocusPane::Mir,
+            FocusPane::Output => FocusPane::Instances,
+            FocusPane::Instances => FocusPane::Mir,
             FocusPane::StatusBar => unreachable!(),
+            FocusPane::BorrowStacks => FocusPane::BorrowStacks,
         }
     }
 
     pub fn previous(self) -> Self {
         match self {
-            FocusPane::Mir => FocusPane::Output,
+            FocusPane::Mir => FocusPane::Instances,
             FocusPane::Stack => FocusPane::Mir,
             FocusPane::Src => FocusPane::Stack,
             FocusPane::Locals => FocusPane::Src,
             FocusPane::Allocs => FocusPane::Locals,
             FocusPane::Output => FocusPane::Allocs,
+            FocusPane::Instances => FocusPane::Output,
             FocusPane::StatusBar => unreachable!(),
+            FocusPane::BorrowStacks => FocusPane::BorrowStacks,
         }
     }
 
@@ -70,7 +78,9 @@ impl FocusPane {
             FocusPane::Locals => "locals",
             FocusPane::Allocs => "allocs",
             FocusPane::Output => "output",
+            FocusPane::Instances => "instances",
             FocusPane::StatusBar => "status_bar",
+            FocusPane::BorrowStacks => "borrow_stacks",
         }
     }
 }

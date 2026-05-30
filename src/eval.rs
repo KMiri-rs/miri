@@ -20,6 +20,7 @@ use rustc_target::spec::Os;
 
 use crate::concurrency::GenmcCtx;
 use crate::concurrency::thread::TlsAllocAction;
+use crate::debugger::reachability::collect_reachable_function_instances;
 use crate::diagnostics::report_leaks;
 use crate::mirch::PhysConfig;
 use crate::shims::{global_ctor, tls};
@@ -297,6 +298,11 @@ pub fn create_ecx<'tcx>(
         MiriMachine::new(config, layout_cx, genmc_ctx),
     );
 
+    if config.debugger {
+        ecx.machine.reachable_function_instances =
+            collect_reachable_function_instances(tcx, entry_id, tcx.sess.source_map());
+    }
+
     // Make sure we have MIR. We check MIR for some stable monomorphic function in libcore.
     let sentinel =
         helpers::try_resolve_path(tcx, &["core", "ascii", "escape_default"], Namespace::ValueNS);
@@ -508,12 +514,6 @@ pub fn eval_entry<'tcx>(
         }
         panic::resume_unwind(panic_payload)
     });
-
-    let mut index = 0;
-    for time_record in &ecx.machine.record {
-        // println!("{}, time: {:?}", index, time_record);
-        index += 1;
-    }
 
     // Obtain the result of the execution. This is always an `Err`, but that doesn't necessarily
     // indicate an error.

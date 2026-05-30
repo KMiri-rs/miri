@@ -10,7 +10,7 @@ pub type CommandSender = Sender<DebuggerCommand>;
 pub type CommandReceiver = Receiver<DebuggerCommand>;
 
 pub enum StateOrEvent {
-    State(DebuggerState),
+    State(Box<DebuggerState>),
     Event(Event),
 }
 

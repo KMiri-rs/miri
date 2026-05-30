@@ -1,10 +1,14 @@
 use std::fmt;
+use std::sync::Arc;
 
 use rustc_abi::Size;
-use rustc_data_structures::fx::FxHashSet;
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_span::{Span, SpanData};
 use smallvec::SmallVec;
 
+use crate::borrow_tracker::stacked_borrows::debugger::{
+    DebuggerPrevTag, DebuggerSpan, DebuggerWholeAllocation,
+};
 use crate::borrow_tracker::{AccessKind, GlobalStateInner, ProtectorKind};
 use crate::*;
 
@@ -20,16 +24,55 @@ fn err_sb_ub<'tcx>(
 #[derive(Clone, Debug)]
 pub struct AllocHistory {
     id: AllocId,
-    root: (Item, Span),
+    root: (Item, Span, String, Span), // (_, highlighted_span, fn_name, body_span)
     creations: smallvec::SmallVec<[Creation; 1]>,
     invalidations: smallvec::SmallVec<[Invalidation; 1]>,
     protectors: smallvec::SmallVec<[Protection; 1]>,
+}
+
+impl AllocHistory {
+    pub fn debugger(&self, ecx: &MiriInterpCx<'_>) -> DebuggerWholeAllocation {
+        DebuggerWholeAllocation { alloc_id: self.id, info: ecx.get_alloc_info(self.id) }
+    }
+
+    pub fn debugger_parent_tags(&self) -> FxHashMap<u64, DebuggerPrevTag> {
+        self.creations
+            .iter()
+            .map(|c| {
+                let id = match c.retag.orig_tag {
+                    ProvenanceExtra::Concrete(bor_tag) => bor_tag.get(),
+                    ProvenanceExtra::Wildcard => 0,
+                };
+                (c.retag.new_tag.get(), DebuggerPrevTag { id, retag_info: c.retag.info })
+            })
+            .collect()
+    }
+
+    pub fn debugger_span(&self, ecx: &MiriInterpCx<'_>) -> FxHashMap<u64, Arc<DebuggerSpan>> {
+        let mut map =
+            FxHashMap::with_capacity_and_hasher(1 + self.creations.len(), Default::default());
+
+        let root_id = self.root.0.tag().get();
+        let root_span = DebuggerSpan::new(self.root.2.clone(), self.root.3, self.root.1, ecx);
+        map.insert(root_id, root_span);
+
+        for creation in &self.creations {
+            let id = creation.retag.new_tag.get();
+            let span =
+                DebuggerSpan::new(creation.fn_name.clone(), creation.body_span, creation.span, ecx);
+            map.insert(id, span);
+        }
+
+        map
+    }
 }
 
 #[derive(Clone, Debug)]
 struct Creation {
     retag: RetagOp,
     span: Span,
+    fn_name: String,
+    body_span: Span,
 }
 
 impl Creation {
@@ -218,7 +261,12 @@ impl AllocHistory {
     pub fn new(id: AllocId, item: Item, machine: &MiriMachine<'_>) -> Self {
         Self {
             id,
-            root: (item, machine.current_user_relevant_span()),
+            root: (
+                item,
+                machine.current_user_relevant_span(),
+                machine.debugger_fn_name(),
+                machine.debugger_body_span(),
+            ),
             creations: SmallVec::new(),
             invalidations: SmallVec::new(),
             protectors: SmallVec::new(),
@@ -264,9 +312,14 @@ impl<'history, 'ecx, 'tcx> DiagnosticCx<'history, 'ecx, 'tcx> {
         let Operation::Retag(op) = &self.operation else {
             unreachable!("log_creation must only be called during a retag")
         };
-        self.history
-            .creations
-            .push(Creation { retag: op.clone(), span: self.machine.current_user_relevant_span() });
+        let fn_name = self.machine.debugger_fn_name();
+        let body_span = self.machine.debugger_body_span();
+        self.history.creations.push(Creation {
+            retag: op.clone(),
+            span: self.machine.debugger_current_span(),
+            fn_name,
+            body_span,
+        });
     }
 
     pub fn log_invalidation(&mut self, tag: BorTag) {
