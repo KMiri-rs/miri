@@ -105,12 +105,12 @@ impl PaneInstances {
 
         let len = items.len();
         let title = if search.editing && search.query.is_empty() {
-            format!("Instances search:{} [{len}]", search_display)
+            format!("Instances search: `{}` [{len}]", search_display)
         } else if search.query.is_empty() {
             "Instances".to_string()
         } else {
             format!(
-                "Instances search:{} [{}{}]",
+                "Instances search: `{}` [{}{}]",
                 search_display,
                 search.matches.len(),
                 if search.editing { ", editing" } else { "" }
