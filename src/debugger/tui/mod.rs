@@ -38,6 +38,7 @@ enum RunMode {
     Step,
     Continue,
     RunToTerminator,
+    StepFrameTerminator,
     RunToInstance,
     RunToEnd,
 }
@@ -48,6 +49,7 @@ impl RunMode {
             RunMode::Step => "step",
             RunMode::Continue => "continue",
             RunMode::RunToTerminator => "run-to-terminator",
+            RunMode::StepFrameTerminator => "step-frame-terminator",
             RunMode::RunToInstance => "run-to-instance",
             RunMode::RunToEnd => "run-to-end",
         }

@@ -99,7 +99,7 @@ pub fn handle(
                     panes.instances.search = Default::default();
                 }
             }
-            KeyCode::Char('n') | KeyCode::Char(' ') => {
+            KeyCode::Char('n') => {
                 let n: u32 = mem::take(count).parse().unwrap_or(0);
                 let step = if let Some(idx) = *reverse_index {
                     let next = idx + if n > 1 { n.try_into().unwrap() } else { 1 };
@@ -116,6 +116,14 @@ pub fn handle(
                 };
                 *mode = RunMode::Step;
                 let _ = command_tx.send(DebuggerCommand::StepOver(step));
+                return Ok(Action::Break);
+            }
+            KeyCode::Char(' ') => {
+                *reverse_index = None;
+                *run_to_instance_target = None;
+                *mode = RunMode::StepFrameTerminator;
+                let n = mem::take(count).parse().unwrap_or(0);
+                let _ = command_tx.send(DebuggerCommand::StepFrameTerminator(n));
                 return Ok(Action::Break);
             }
             KeyCode::Char('b') => {
