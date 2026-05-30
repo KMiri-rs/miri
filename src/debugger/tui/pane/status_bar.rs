@@ -31,7 +31,7 @@ impl PaneStatusBar {
         } else if focus_name == "instances" {
             "keys: enter run-to-instance  / search  ? search-clear  . next  , prev  b step-back  [ ] scroll-cmds  F toggle-freeze  q quit  tab switch  arrows scroll"
         } else {
-            "keys: n/space step  b step-back  / search  ? search-clear  c continue  e run-to-end  . next  , prev  [ ] scroll-cmds F toggle-freeze  q quit  tab switch  arrows scroll"
+            "keys: n step-over  space step-frame-terminator  b step-back  / search  ? search-clear  c continue  e run-to-end  . next  , prev  [ ] scroll-cmds F toggle-freeze  q quit  tab switch  arrows scroll"
         };
         let finished_text = if ctx.program_finished { "  status=finished" } else { "" };
         let reverse_mode = ctx.reverse_index.is_some();
