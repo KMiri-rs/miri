@@ -230,7 +230,7 @@ fn render(panes: &mut Panes, frame: &mut Frame<'_>, state: &DebuggerState, ctx: 
     panes.render_stack(frame, state);
     panes.render_instances(frame, state, ctx.blink_epoch);
     panes.render_src(frame, state);
-    panes.render_locals(frame, state);
+    panes.render_locals(frame, state, no_dead);
     panes.render_memory(frame, state, no_dead);
     panes.render_output(frame, state);
     panes.render_status_bar(frame, state, ctx);
