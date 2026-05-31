@@ -263,7 +263,7 @@ impl AllocHistory {
             id,
             root: (
                 item,
-                machine.current_user_relevant_span(),
+                machine.debugger_current_span(),
                 machine.debugger_fn_name(),
                 machine.debugger_body_span(),
             ),

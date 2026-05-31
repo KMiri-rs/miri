@@ -95,7 +95,10 @@ impl DebuggerBorrowStacks {
             let Range { start, end } = seg.range;
 
             for (idx, item) in seg.stack.iter().rev().enumerate() {
-                iidx.bs_stack = seg.stack.len() - idx;
+                // `stack.get()` uses the underlying 0-based index, while the table is rendered
+                // from top to bottom via `rev()`. Translate the visible row back to the actual
+                // stack index here.
+                iidx.bs_stack = seg.stack.len() - idx - 1;
                 inverse_idx(*iidx);
 
                 let idx = Text::from(idx.to_string()).style(Color::DarkGray);
@@ -216,6 +219,7 @@ impl DebuggerPrevTag {
 pub struct DebuggerSpan {
     pub fn_name: String,
     pub source_file: String,
+    pub source_file_hi: String,
     pub body_span: Span,
     pub body_line_start: u16,
     pub highlighted_span: Span,
@@ -254,19 +258,27 @@ impl DebuggerSpan {
             let highlighted_span = highlighted_span.source_callsite();
             let highlighted_line_start = line_nr(sm, highlighted_span.lo());
             let highlighted_line_end = line_nr(sm, highlighted_span.hi());
+            let source_file_hi = source_file(sm, highlighted_span);
+            let source_file = source_file(sm, body_span);
             DebuggerSpan {
+                src: if body_span.is_dummy() || source_file != source_file_hi {
+                    let mut src = RenderSrc::default();
+                    src.lines = Text::from(format!(
+                        "fn_name: {fn_name}\nbody span: {body_span:?}\nspan: {highlighted_span:?}"
+                    ))
+                    .lines;
+                    src
+                } else {
+                    render_src(body_span, highlighted_span, sm)
+                },
                 fn_name,
-                source_file: source_file(sm, body_span),
+                source_file,
+                source_file_hi,
                 body_span,
                 body_line_start,
                 highlighted_span,
                 highlighted_line_start,
                 highlighted_line_end,
-                src: if body_span.is_dummy() {
-                    RenderSrc::default()
-                } else {
-                    render_src(body_span, highlighted_span, sm)
-                },
             }
             .into()
         };
@@ -294,6 +306,10 @@ impl DebuggerSpan {
             RatatuiSpan::styled(location, Style::from(Color::DarkGray)),
         ]
         .into()
+    }
+
+    pub fn span_different(&self) -> bool {
+        self.source_file != self.source_file_hi
     }
 }
 
