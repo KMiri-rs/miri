@@ -173,8 +173,13 @@ impl Panes {
         frame.render_widget(paragraph, self.src.rect);
     }
 
-    pub fn render_locals(&self, frame: &mut Frame<'_>, state: &DebuggerState) {
-        let table = self.locals.widget(state, self.is_focused(FocusPane::Locals), self.stack.index);
+    pub fn render_locals(&self, frame: &mut Frame<'_>, state: &DebuggerState, no_dead: bool) {
+        let table = self.locals.widget(
+            state,
+            self.is_focused(FocusPane::Locals),
+            self.stack.index,
+            no_dead,
+        );
         frame.render_widget(table, self.locals.rect);
     }
 
