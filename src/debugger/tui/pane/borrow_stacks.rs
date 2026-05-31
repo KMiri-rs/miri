@@ -125,36 +125,34 @@ impl PaneBorrowStacks {
         self.view_height.saturating_sub(3).max(1).into()
     }
 
+    // This function assumes that each row is rendered in single line, due to how inverse_idx works.
     pub fn find_selected_span(
         &self,
         state: &DebuggerState,
         height: u16,
     ) -> Option<Paragraph<'static>> {
-        if let Some(row_idx) = self.state.selected() {
-            if let Some(idx) = self.inverse_idx.get(&row_idx) {
-                if let Some(alloc) = state.allocs.get(idx.alloc) {
-                    if let Some(stack) = alloc.borrow_stacks.segments.get(idx.bs_segment) {
-                        if let Some(item) = stack.stack.get(idx.bs_stack) {
-                            if let Some(span) = alloc.borrow_stacks.span.get(&item.bor_tag_id) {
-                                let highlighted_idx = [
-                                    span.highlighted_line_start - span.body_line_start,
-                                    span.highlighted_line_end - span.body_line_start,
-                                ];
-                                let para = Paragraph::new(span.src.lines.clone())
-                                    .block(
-                                        Block::default()
-                                            .title(span.title())
-                                            .borders(Borders::ALL)
-                                            .border_style(pane_border_style(true)),
-                                    )
-                                    .scroll((src_view_centering(highlighted_idx, height), 0));
+        if let Some(row_idx) = self.state.selected()
+            && let Some(idx) = self.inverse_idx.get(&row_idx)
+            && let Some(alloc) = state.allocs.get(idx.alloc)
+            && let Some(stack) = alloc.borrow_stacks.segments.get(idx.bs_segment)
+            && let Some(item) = stack.stack.get(idx.bs_stack)
+            && let Some(span) = alloc.borrow_stacks.span.get(&item.bor_tag_id)
+        {
+            let mut para = Paragraph::new(span.src.lines.clone()).block(
+                Block::default()
+                    .title(span.title())
+                    .borders(Borders::ALL)
+                    .border_style(pane_border_style(true)),
+            );
 
-                                return Some(para);
-                            }
-                        }
-                    }
-                }
-            }
+            if !span.span_different()
+                && let Some(start) = span.highlighted_line_start.checked_sub(span.body_line_start)
+                && let Some(end) = span.highlighted_line_end.checked_sub(span.body_line_start)
+            {
+                para = para.scroll((src_view_centering([start, end], height), 0));
+            };
+
+            return Some(para);
         }
         None
     }
