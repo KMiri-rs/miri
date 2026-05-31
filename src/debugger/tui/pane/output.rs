@@ -1,4 +1,7 @@
+use std::mem;
+
 use super::*;
+use crate::debugger::debugger_log;
 use crate::debugger::state::LocalKind;
 
 #[derive(Default, Debug)]
@@ -14,22 +17,36 @@ impl PaneOutput {
     }
 
     pub fn widget(&self, state: &DebuggerState, focus: bool) -> List<'static> {
-        let items: Vec<ListItem<'_>> = state
-            .output
-            .iter()
-            .skip(self.scroll.into())
-            .flat_map(|entry| {
-                entry.text.lines().map(move |line| {
-                    let style = if entry.is_stderr {
-                        Style::default().fg(THEME_ERR)
-                    } else {
-                        Style::default().fg(THEME_ACCENT_SOFT)
-                    };
-                    ListItem::new(Line::from(hscroll_text(line, self.hscroll)).style(style))
-                })
-            })
-            .collect();
+        let mut output_len = 0;
+        let mut line_len = 0;
 
+        let mut lines = Vec::<Line<'static>>::new();
+        let mut still_last = true;
+        for output in &state.output {
+            if output.text.is_empty() {
+                continue;
+            }
+
+            const STYLE_NORMAL: Style = Style::new().fg(THEME_ACCENT_SOFT);
+            const STYLE_ERR: Style = Style::new().fg(THEME_ACCENT_SOFT);
+            let style = if output.is_stderr { STYLE_ERR } else { STYLE_NORMAL };
+
+            let output_lines: Vec<_> = output.text.lines().collect();
+            // content contains multiple lines
+            let mut iter = output_lines.iter();
+
+            // push the previous line; content belongs to the previous line
+            if still_last && let Some(last) = lines.last_mut() {
+                let span = Span::styled(hscroll_text(iter.next().unwrap(), self.hscroll), style);
+                last.push_span(span);
+            }
+            // push lines
+            lines.extend(iter.map(|line| Line::styled(hscroll_text(line, self.hscroll), style)));
+            // determine if the following outputs still belongs to the last line
+            still_last = !output.text.ends_with("\n");
+        }
+
+        let items = lines.into_iter().skip(self.scroll.into()).map(ListItem::new);
         List::new(items).block(
             Block::default()
                 .title("Output")
