@@ -452,7 +452,7 @@ fn prettify_local_value(raw: &str, ty: &str) -> (String, LocalKind) {
             return ((hex != 0).to_string(), LocalKind::Initialized);
         }
         if let Ok(num) = i128::try_from(hex) {
-            return (num.to_string(), LocalKind::Initialized);
+            return (format!("{num} (0x{num:x})"), LocalKind::Initialized);
         }
         return (format!("0x{hex:x}"), LocalKind::Initialized);
     }
