@@ -309,6 +309,10 @@ impl<'tcx> Thread<'tcx> {
         self.stack.last()
     }
 
+    pub fn top_user_frame(&self) -> Option<&Frame<'tcx, Provenance, FrameExtra<'tcx>>> {
+        self.top_user_relevant_frame().map(|frame_idx| &self.stack[frame_idx])
+    }
+
     pub fn display_stack_records(&self) -> String {
         self.stack_addr_records
             .iter()
