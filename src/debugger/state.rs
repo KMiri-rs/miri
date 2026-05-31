@@ -89,7 +89,7 @@ pub struct AllocInfo {
 }
 
 #[derive(Clone, Debug)]
-pub struct OutputLine {
+pub struct OutputSpan {
     pub is_stderr: bool,
     pub text: String,
 }
@@ -104,7 +104,7 @@ pub struct DebuggerState {
     pub cfg_lines: Vec<CfgLine>,
     pub locals: Vec<LocalInfo>,
     pub allocs: Vec<AllocInfo>,
-    pub output: Vec<OutputLine>,
+    pub output: Vec<OutputSpan>,
     /// The lowest allocated stack vaddr.
     pub min_stack_ptr: Option<u64>,
     // Although this is a global state that won't change after initialization.
@@ -149,7 +149,7 @@ impl DebuggerState {
             .debugger_output
             .borrow()
             .iter()
-            .map(|(is_stderr, text)| OutputLine { is_stderr: *is_stderr, text: text.clone() })
+            .map(|(is_stderr, text)| OutputSpan { is_stderr: *is_stderr, text: text.clone() })
             .collect();
 
         Self {
