@@ -367,8 +367,18 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             };
 
             ecx.memory.alloc_map().insert(alloc_id, (kind, allocation));
-            let mut global_state = ecx.machine.alloc_addresses.borrow_mut();
-            global_state.set_address(alloc_id, actual_addr);
+            {
+                let mut global_state = ecx.machine.alloc_addresses.borrow_mut();
+                global_state.set_address(alloc_id, actual_addr);
+            }
+
+            // Re-expose the root tag so wildcard/raw-pointer accesses can find a
+            // writable provenance after the typed-slot allocation is created.
+            let root_tag = {
+                let mut borrow_tracker = ecx.machine.borrow_tracker.as_ref().unwrap().borrow_mut();
+                borrow_tracker.root_ptr_tag(alloc_id, &ecx.machine)
+            };
+            ecx.expose_tag(alloc_id, root_tag).discard_err();
             return Some(alloc_id);
         }
 
@@ -460,8 +470,18 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             };
             ecx.machine.cpu_local_alloc_set.borrow_mut().insert(new_alloc_id);
             ecx.memory.alloc_map().insert(new_alloc_id, (kind, allocation));
-            let mut global_state = ecx.machine.alloc_addresses.borrow_mut();
-            global_state.set_address(new_alloc_id, paddr - offset as usize);
+            {
+                let mut global_state = ecx.machine.alloc_addresses.borrow_mut();
+                global_state.set_address(new_alloc_id, paddr - offset as usize);
+            }
+
+            // Same as typed slots: the copied allocation must keep an exposed root
+            // tag, otherwise later int-to-ptr accesses lose their writable provenance.
+            let root_tag = {
+                let mut borrow_tracker = ecx.machine.borrow_tracker.as_ref().unwrap().borrow_mut();
+                borrow_tracker.root_ptr_tag(new_alloc_id, &ecx.machine)
+            };
+            ecx.expose_tag(new_alloc_id, root_tag).discard_err();
             return Some(new_alloc_id);
         }
 
