@@ -145,7 +145,8 @@ impl GlobalStateInner {
         self.base_paddr.retain(|id, _| allocs.is_live(*id));
     }
 
-    fn set_address(&mut self, alloc_id: AllocId, paddr: usize) {
+    /// Add the info of exposed paddr and AllocId to the interpreter, like int_to_ptr_map.
+    fn set_exposed_kernel_padd(&mut self, alloc_id: AllocId, paddr: usize) {
         let paddr = paddr as u64;
         let pos = if self.int_to_ptr_map.last().is_some_and(|(last_addr, _)| *last_addr < paddr) {
             self.int_to_ptr_map.len()
@@ -346,11 +347,11 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
         if let PageState::Typed { page_type: _, type_size } = page_info {
             let alloc_id = ecx.tcx.reserve_alloc_id();
-            let actual_addr = paddr - paddr % type_size;
+            let actual_paddr = paddr - paddr % type_size;
             let kind = rustc_const_eval::interpret::MemoryKind::Machine(MiriMemoryKind::Kernel);
             let allocation = {
                 let allocation = mirch::create_allocation_at(
-                    actual_addr,
+                    actual_paddr,
                     Layout::from_size_align(type_size, type_size).unwrap(),
                     ecx.machine.get_default_alloc_params(),
                 );
@@ -366,8 +367,18 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             };
 
             ecx.memory.alloc_map().insert(alloc_id, (kind, allocation));
-            let mut global_state = ecx.machine.alloc_addresses.borrow_mut();
-            global_state.set_address(alloc_id, actual_addr);
+            {
+                let mut global_state = ecx.machine.alloc_addresses.borrow_mut();
+                global_state.set_exposed_kernel_padd(alloc_id, actual_paddr);
+            }
+
+            // Re-expose the root tag so wildcard/raw-pointer accesses can find a
+            // writable provenance after the typed-slot allocation is created.
+            let root_tag = {
+                let mut borrow_tracker = ecx.machine.borrow_tracker.as_ref().unwrap().borrow_mut();
+                borrow_tracker.root_ptr_tag(alloc_id, &ecx.machine)
+            };
+            ecx.expose_tag(alloc_id, root_tag).discard_err();
             return Some(alloc_id);
         }
 
@@ -459,8 +470,18 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             };
             ecx.machine.cpu_local_alloc_set.borrow_mut().insert(new_alloc_id);
             ecx.memory.alloc_map().insert(new_alloc_id, (kind, allocation));
-            let mut global_state = ecx.machine.alloc_addresses.borrow_mut();
-            global_state.set_address(new_alloc_id, paddr - offset as usize);
+            {
+                let mut global_state = ecx.machine.alloc_addresses.borrow_mut();
+                global_state.set_exposed_kernel_padd(new_alloc_id, paddr - offset as usize);
+            }
+
+            // Same as typed slots: the copied allocation must keep an exposed root
+            // tag, otherwise later int-to-ptr accesses lose their writable provenance.
+            let root_tag = {
+                let mut borrow_tracker = ecx.machine.borrow_tracker.as_ref().unwrap().borrow_mut();
+                borrow_tracker.root_ptr_tag(new_alloc_id, &ecx.machine)
+            };
+            ecx.expose_tag(new_alloc_id, root_tag).discard_err();
             return Some(new_alloc_id);
         }
 
@@ -701,6 +722,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             *global_state.base_paddr.get(&alloc_id).unwrap()
         };
         let alloc_map = &ecx.memory.alloc_map();
+        // kmiri: replace the stack allocation by pointing to the kernel stack region
         if kind == MemoryKind::Stack {
             let (kind, old_allocation) = &alloc_map.get(alloc_id).unwrap();
             let alloc_size_usize = old_allocation.size().bytes_usize();
