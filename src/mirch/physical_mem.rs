@@ -78,6 +78,7 @@ pub fn create_allocation_at(
                 allocation.init_mask_apply_copy(init_copy, (0..layout.size()).into(), 1);
             }
         }
+        // FIXME: what should we do when the allocation needs crossing pages?
         allocation
     }
 }
@@ -190,6 +191,7 @@ where
 }
 
 /// Inserts an initialization mask for the page at `paddr`.
+/// Currently, only be called in the kern_miri_alloc_pages shim.
 pub fn insert_init_mask(this: &MiriInterpCx<'_>, paddr: usize, params: MiriAllocParams) {
     unsafe {
         let layout = Layout::from_size_align_unchecked(page_size(), 1);
