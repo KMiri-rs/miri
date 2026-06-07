@@ -123,7 +123,7 @@ impl AllocBytes for MiriAllocBytes {
         let size = slice.len();
         let align = align.bytes();
 
-        // We can use the slice directly if it is in physical memory.
+        // We can reuse the slice directly if it is in physical memory.
         let slice_ref = slice.as_ref();
         if is_in_physical_mem(slice_ref as *const [u8] as *const ()) {
             let layout = Layout::from_size_align(size, align as usize).unwrap();
