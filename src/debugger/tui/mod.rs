@@ -21,7 +21,7 @@ use ratatui::widgets::{
 use super::channel::{CommandSender, StateReceiver};
 use super::state::LocalKind;
 use super::{DebuggerCommand, DebuggerState};
-use crate::debugger::tui::event::Action;
+use crate::debugger::tui::event::{Action, is_quit_event};
 use crate::debugger::tui::pane::FocusPane;
 use crate::debugger::tui::pane::panes::Panes;
 
@@ -202,10 +202,7 @@ fn handle_tui_event(
     command_tx: &CommandSender,
 ) -> io::Result<bool> {
     let Some(state) = ctx.last_state.clone() else {
-        if let Event::Key(key) = event
-            && key.kind == KeyEventKind::Press
-            && key.code == KeyCode::Char('q')
-        {
+        if is_quit_event(&event) {
             let _ = command_tx.send(DebuggerCommand::Quit);
             return Ok(true);
         }
