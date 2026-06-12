@@ -4,7 +4,7 @@ use std::io;
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -109,12 +109,13 @@ pub fn spawn_tui(
         .spawn(move || {
             let cmd_tx = command_tx.clone();
             if let Err(err) = run_tui(state_rx, command_tx) {
-                cmd_tx.send(DebuggerCommand::QuitWithErr(format!("{err:?}")));
+                cmd_tx.send(DebuggerCommand::QuitWithErr(format!("Failed to run tui: {err:?}")));
             }
         })
         .expect("failed to spawn debugger TUI thread")
 }
 
+#[track_caller]
 fn run_tui(state_rx: StateReceiver, command_tx: CommandSender) -> io::Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -139,30 +140,13 @@ fn tui_loop(
 ) -> io::Result<()> {
     let mut panes = Panes::new(Rect::default());
     let mut ctx = Context::new();
+    let mut needs_redraw = false;
 
     loop {
-        let mut redraw_state = None;
         match state_rx.recv_timeout(Duration::from_millis(16)) {
             Ok(state) => {
-                ctx.on_new_state(&state);
-                panes.stack.refresh(&state);
-                panes.instances.refresh(&state);
-                if !state.stack_frames.is_empty() {
-                    panes.stack.index = panes.stack.index.min(state.stack_frames.len() - 1);
-                } else {
-                    panes.stack.index = 0;
-                }
-                if !state.function_instances.is_empty() {
-                    panes.instances.index =
-                        panes.instances.index.min(state.function_instances.len() - 1);
-                } else {
-                    panes.instances.index = 0;
-                }
-                if ctx.reached_target_instance(&state) {
-                    ctx.mode = RunMode::Step;
-                    ctx.run_to_instance_target = None;
-                }
-                redraw_state = Some(state);
+                refresh_state(&mut panes, &mut ctx, &state);
+                needs_redraw = true;
             }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
@@ -170,17 +154,15 @@ fn tui_loop(
 
         while crossterm::event::poll(Duration::from_millis(0))? {
             let event = crossterm::event::read()?;
-            let Some(current_state) = ctx.last_state.clone() else { continue };
-            match event::handle(event, &mut panes, &current_state, &mut ctx, &command_tx)? {
-                Action::Continue | Action::Break => (),
-                Action::Return => return Ok(()),
+            if handle_tui_event(event, &mut panes, &mut ctx, &command_tx)? {
+                return Ok(());
             }
-            let Some(current_state) = ctx.last_state.clone() else { continue };
-            redraw_state = Some(current_state);
+            needs_redraw = true;
         }
 
-        if let Some(state) = redraw_state {
+        if needs_redraw && let Some(state) = ctx.last_state.clone() {
             terminal.draw(|frame| render(&mut panes, frame, &state, &ctx))?;
+            needs_redraw = false;
         }
     }
 
@@ -190,6 +172,49 @@ fn tui_loop(
         finished(terminal, panes, &state, ctx, command_tx)
     } else {
         finished_without_snapshot(terminal)
+    }
+}
+
+fn refresh_state(panes: &mut Panes, ctx: &mut Context, state: &DebuggerState) {
+    ctx.on_new_state(state);
+    panes.stack.refresh(state);
+    panes.instances.refresh(state);
+    if !state.stack_frames.is_empty() {
+        panes.stack.index = panes.stack.index.min(state.stack_frames.len() - 1);
+    } else {
+        panes.stack.index = 0;
+    }
+    if !state.function_instances.is_empty() {
+        panes.instances.index = panes.instances.index.min(state.function_instances.len() - 1);
+    } else {
+        panes.instances.index = 0;
+    }
+    if ctx.reached_target_instance(state) {
+        ctx.mode = RunMode::Step;
+        ctx.run_to_instance_target = None;
+    }
+}
+
+fn handle_tui_event(
+    event: Event,
+    panes: &mut Panes,
+    ctx: &mut Context,
+    command_tx: &CommandSender,
+) -> io::Result<bool> {
+    let Some(state) = ctx.last_state.clone() else {
+        if let Event::Key(key) = event
+            && key.kind == KeyEventKind::Press
+            && key.code == KeyCode::Char('q')
+        {
+            let _ = command_tx.send(DebuggerCommand::Quit);
+            return Ok(true);
+        }
+        return Ok(false);
+    };
+
+    match event::handle(event, panes, &state, ctx, command_tx)? {
+        Action::Continue | Action::Break => Ok(false),
+        Action::Return => Ok(true),
     }
 }
 
