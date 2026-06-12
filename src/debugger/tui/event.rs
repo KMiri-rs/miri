@@ -216,14 +216,18 @@ fn on_event_mouse(panes: &mut Panes, state: &DebuggerState, mouse: MouseEvent) {
     }
 }
 
+pub fn is_quit_event(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Key(key)
+            if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('q')
+    )
+}
+
 pub fn fast_quit() -> io::Result<bool> {
     // Still allow immediate quit while fast-forwarding.
-    if event::poll(Duration::from_millis(0))?
-        && let Event::Key(key) = event::read()?
-        && key.kind == KeyEventKind::Press
-        && key.code == KeyCode::Char('q')
-    {
-        return Ok(true);
+    if event::poll(Duration::from_millis(0))? {
+        return Ok(is_quit_event(&event::read()?));
     }
     Ok(false)
 }
