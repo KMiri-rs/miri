@@ -1,7 +1,7 @@
 #![deny(dead_code)]
 use std::collections::VecDeque;
 use std::io;
-use std::sync::mpsc::RecvError;
+use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
@@ -21,7 +21,6 @@ use ratatui::widgets::{
 use super::channel::{CommandSender, StateReceiver};
 use super::state::LocalKind;
 use super::{DebuggerCommand, DebuggerState};
-use crate::debugger::channel::StateOrEvent;
 use crate::debugger::tui::event::Action;
 use crate::debugger::tui::pane::FocusPane;
 use crate::debugger::tui::pane::panes::Panes;
@@ -142,8 +141,9 @@ fn tui_loop(
     let mut ctx = Context::new();
 
     loop {
-        let state = match state_rx.recv() {
-            Ok(StateOrEvent::State(state)) => {
+        let mut redraw_state = None;
+        match state_rx.recv_timeout(Duration::from_millis(16)) {
+            Ok(state) => {
                 ctx.on_new_state(&state);
                 panes.stack.refresh(&state);
                 panes.instances.refresh(&state);
@@ -162,22 +162,26 @@ fn tui_loop(
                     ctx.mode = RunMode::Step;
                     ctx.run_to_instance_target = None;
                 }
-                state
+                redraw_state = Some(state);
             }
-            Ok(StateOrEvent::Event(event)) => {
-                // Reuse the last state.
-                let Some(state) = ctx.last_state.clone() else { continue };
-                match event::handle(event, &mut panes, &state, &mut ctx, &command_tx)? {
-                    Action::Continue | Action::Break => (),
-                    Action::Return => return Ok(()),
-                }
-                let Some(state) = ctx.last_state.clone() else { continue };
-                state
-            }
-            Err(RecvError) => break,
-        };
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
 
-        terminal.draw(|frame| render(&mut panes, frame, &state, &ctx))?;
+        while crossterm::event::poll(Duration::from_millis(0))? {
+            let event = crossterm::event::read()?;
+            let Some(current_state) = ctx.last_state.clone() else { continue };
+            match event::handle(event, &mut panes, &current_state, &mut ctx, &command_tx)? {
+                Action::Continue | Action::Break => (),
+                Action::Return => return Ok(()),
+            }
+            let Some(current_state) = ctx.last_state.clone() else { continue };
+            redraw_state = Some(current_state);
+        }
+
+        if let Some(state) = redraw_state {
+            terminal.draw(|frame| render(&mut panes, frame, &state, &ctx))?;
+        }
     }
 
     // Program is done; keep the final snapshot visible until the user explicitly quits.

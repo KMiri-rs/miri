@@ -1,18 +1,11 @@
 use std::sync::mpsc::{self, Receiver, Sender};
 
-use crossterm::event::Event;
-
 use super::{DebuggerCommand, DebuggerState};
 
-pub type StateSender = Sender<StateOrEvent>;
-pub type StateReceiver = Receiver<StateOrEvent>;
+pub type StateSender = Sender<Box<DebuggerState>>;
+pub type StateReceiver = Receiver<Box<DebuggerState>>;
 pub type CommandSender = Sender<DebuggerCommand>;
 pub type CommandReceiver = Receiver<DebuggerCommand>;
-
-pub enum StateOrEvent {
-    State(Box<DebuggerState>),
-    Event(Event),
-}
 
 pub fn state_channel() -> (StateSender, StateReceiver) {
     mpsc::channel()

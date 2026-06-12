@@ -13,7 +13,6 @@ use self::channel::{CommandReceiver, StateSender};
 pub use self::state::DebuggerState;
 use crate::MiriInterpCx;
 use crate::concurrency::thread::EvalContextExt;
-use crate::debugger::channel::StateOrEvent;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DebuggerCommand {
@@ -55,18 +54,6 @@ pub struct MiriDebuggerHandle<'tcx> {
 
 impl<'tcx> MiriDebuggerHandle<'tcx> {
     pub fn new(state_tx: StateSender, cmd_rx: CommandReceiver) -> Self {
-        let handle =
-            std::thread::Builder::new().name("miri-debugger-tui-event".to_string()).spawn({
-                let state_tx = state_tx.clone();
-                move || {
-                    while let Ok(event) = crossterm::event::read() {
-                        state_tx.send(StateOrEvent::Event(event));
-                    }
-                }
-            });
-        // Make the thread run on the background and never die.
-        drop(handle);
-
         Self { state_tx, cmd_rx, mode: RefCell::new(DebuggerMode::Step(1)) }
     }
 
@@ -175,7 +162,7 @@ impl<'tcx> MiriDebuggerHandle<'tcx> {
         }
 
         let state = DebuggerState::capture(ecx);
-        let _ = self.state_tx.send(StateOrEvent::State(Box::new(state)));
+        let _ = self.state_tx.send(Box::new(state));
     }
 
     fn reached_terminator_or_step(&self, ecx: &MiriInterpCx<'tcx>) -> bool {
