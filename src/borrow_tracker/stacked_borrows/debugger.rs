@@ -115,11 +115,11 @@ impl DebuggerBorrowStacks {
                     .map(|p| (p.prev_tag(), p.retag_info()))
                     .unwrap_or_default();
                 let row = Row::new(vec![
-                    if level1 { cell_left(whole.alloc_id.0) } else { empty_cell() },
+                    if level1 { cell_left(whole.alloc_id.0) } else { empty_cell() }, // AllocId
                     level_cell(level1, || {
                         info.base_addr.map(|addr| format!("0x{addr:x}")).unwrap_or_default()
-                    }),
-                    level_cell(level1, || info.kind.map(kind_str).unwrap_or_default()),
+                    }), // BasePaddr
+                    level_cell(level1, || info.kind.map(kind_str).unwrap_or_default()), // Kind
                     level_cell(level1, || {
                         std::iter::empty()
                             .chain(&info.global)
@@ -127,18 +127,18 @@ impl DebuggerBorrowStacks {
                             .map(String::from)
                             .collect::<Vec<String>>()
                             .join(",")
-                    }),
-                    level_cell(level1, || hsize(whole.info.size.bytes())),
-                    level_cell(level1, || hsize(whole.info.align.bytes())),
-                    level_cell(level2, || start),
-                    level_cell(level2, || end),
-                    cell_right(item.bor_tag_id),
-                    Cell::new(idx.right_aligned()),
-                    Cell::new(permission.right_aligned()),
-                    cell_right(if item.protected { "✅" } else { "" }),
-                    cell_right(if item.prov_exposed { "✅" } else { "" }),
-                    prev_id,
-                    retag_info,
+                    }), // Names
+                    level_cell(level1, || hsize(whole.info.size.bytes())),           // Bytes
+                    level_cell(level1, || hsize(whole.info.align.bytes())),          // Align
+                    level_cell(level2, || start),                                    // PosStart
+                    level_cell(level2, || end),                                      // PosEnd
+                    cell_right(item.bor_tag_id),                                     // BorTagID
+                    Cell::new(idx.right_aligned()),                                  // StackIdx
+                    Cell::new(permission.right_aligned()),                           // Permission
+                    cell_right(if item.protected { "✅" } else { "" }),              // Protected
+                    cell_right(if item.prov_exposed { "✅" } else { "" }),           // Exposed
+                    prev_id,                                                         // PrevTagID
+                    retag_info,                                                      // RetagInfo
                 ]);
                 rows.push(row);
 
@@ -161,7 +161,7 @@ fn cell_left(val: impl ToString) -> Cell<'static> {
 }
 
 fn empty_cell() -> Cell<'static> {
-    Cell::default()
+    Cell::new("")
 }
 
 fn level_cell<T: ToString>(level: bool, val: impl FnOnce() -> T) -> Cell<'static> {
