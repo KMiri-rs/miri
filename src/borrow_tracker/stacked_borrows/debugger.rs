@@ -161,7 +161,7 @@ fn cell_left(val: impl ToString) -> Cell<'static> {
 }
 
 fn empty_cell() -> Cell<'static> {
-    Cell::default()
+    Cell::new("")
 }
 
 fn level_cell<T: ToString>(level: bool, val: impl FnOnce() -> T) -> Cell<'static> {
