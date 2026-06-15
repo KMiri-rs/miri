@@ -1973,15 +1973,18 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             ecx.active_thread_mut().recompute_top_user_relevant_frame(/* skip */ 1);
         }
 
-        // Resumes the stack pointer.
-        let thread = ecx.machine.threads.active_thread_mut();
-        // The second to last is the frame returned.
-        if let Some(next_stack_addr) = thread.stack_addr_records.pop() {
-            let mut current_sp = &mut *thread.next_stack_addr.borrow_mut();
-            debugger_log(format!(
-                "resume stack pointer from {current_sp:x} to {next_stack_addr:x}"
-            ));
-            *current_sp = next_stack_addr;
+        // Record all stack allocations.
+        {
+            let alloc_map = ecx.memory.alloc_map();
+            let alloc_addresses = &mut *ecx.machine.alloc_addresses.borrow_mut();
+            alloc_addresses.stack_allocations_before_stack_pop.clear();
+            for alloc_id in alloc_addresses.base_paddr.keys().copied() {
+                if let Some((kind, _)) = alloc_map.get(alloc_id)
+                    && *kind == MemoryKind::Stack
+                {
+                    alloc_addresses.stack_allocations_before_stack_pop.insert(alloc_id);
+                }
+            }
         }
 
         // tracing-tree can automatically annotate scope changes, but it gets very confused by our
@@ -2012,6 +2015,72 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         if !ecx.active_thread_stack().is_empty() {
             info!("Continuing in {}", ecx.frame().instance());
         }
+
+        // Get the new stack allocations during stack popping.
+        let mut new_stack_allocs = Vec::new();
+        {
+            let alloc_map = ecx.memory.alloc_map();
+            let alloc_addresses = &*ecx.machine.alloc_addresses.borrow();
+            for alloc_id in alloc_addresses.base_paddr.keys().copied() {
+                if let Some((kind, _)) = alloc_map.get(alloc_id)
+                    && *kind == MemoryKind::Stack
+                {
+                    if !alloc_addresses.stack_allocations_before_stack_pop.contains(&alloc_id) {
+                        new_stack_allocs.push(alloc_id);
+                    }
+                }
+            }
+            new_stack_allocs.sort_unstable();
+        }
+
+        // Resumes the stack pointer.
+        let thread = ecx.machine.threads.active_thread_mut();
+        if let Some(next_stack_addr) = thread.stack_addr_records.pop() {
+            let mut current_sp = &mut *thread.next_stack_addr.borrow_mut();
+            *current_sp = if new_stack_allocs.is_empty() {
+                // Directly reset the stack pointer due to no stack allocation happens
+                next_stack_addr
+            } else {
+                dbg!(new_stack_allocs.len());
+                // the adjustment is for linear stack allocation
+                let alloc_map = ecx.memory.alloc_map();
+                let alloc_addresses = &mut *ecx.machine.alloc_addresses.borrow_mut();
+
+                let min_gap = {
+                    let min_alloc = new_stack_allocs.first().unwrap();
+                    let min_alloc_paddr = *alloc_addresses.base_paddr.get(min_alloc).unwrap();
+                    dbg!(min_alloc, min_alloc_paddr);
+                    let min_alloc_vaddr =
+                        kernel_code_paddr_to_vaddr(min_alloc_paddr as usize) as u64;
+                    next_stack_addr.checked_sub(min_alloc_vaddr).unwrap_or_else(|| {
+                        panic!("{next_stack_addr:x} - {min_alloc_vaddr:x} fails")
+                    })
+                };
+
+                // fill the gap for these new stack allocations
+                // FIXME: consider alignment and provenance (adjust_alloc_root_pointer)
+                for alloc_id in &new_stack_allocs {
+                    let paddr = alloc_addresses.base_paddr.get_mut(alloc_id).unwrap();
+                    *paddr = paddr.checked_sub(min_gap).unwrap();
+                }
+                for (paddr, alloc_id) in &mut alloc_addresses.int_to_ptr_map {
+                    if new_stack_allocs.iter_mut().find(|id| *id == alloc_id).is_some() {
+                        *paddr = paddr.checked_add(min_gap).unwrap();
+                    }
+                }
+                alloc_addresses.int_to_ptr_map.sort_unstable();
+
+                {
+                    let max_alloc = new_stack_allocs.last().unwrap();
+                    let max_alloc_paddr = *alloc_addresses.base_paddr.get(max_alloc).unwrap();
+                    dbg!(max_alloc, max_alloc_paddr, min_gap);
+                    let max_alloc_vaddr =
+                        kernel_code_paddr_to_vaddr(max_alloc_paddr as usize) as u64;
+                    max_alloc_vaddr.checked_add(min_gap).unwrap()
+                }
+            }
+        }
+
         // Resumes the stack pointer.
         // let thread = ecx.machine.threads.active_thread_mut();
         // if let Some(next_stack_addr) = thread.stack_addr_records.pop() {
