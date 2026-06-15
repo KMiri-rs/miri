@@ -618,7 +618,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                         {
                             Ok(found) => {
                                 let found_alloc_id = global_state.int_to_ptr_map[found].1;
-                                if found_alloc_id == alloc_id {
+                                if found_alloc_id != alloc_id {
                                     debugger_log(format!(
                                         "{base_paddr} has two AllocId {alloc_id:?} and {found_alloc_id:?}"
                                     ))
