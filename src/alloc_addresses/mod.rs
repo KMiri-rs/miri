@@ -73,7 +73,25 @@ pub struct GlobalStateInner {
     /// This is used for allocating addresses for cpu-local allocations.
     next_cpu_local_paddr: u64,
     /// This is used for allocating addresses for stack allocations.
+    /// FIXME: this field seems unused as real stack allocations, because thread next_stack_addr is
+    /// used instead.
     next_stack_paddr: u64,
+    /// This is a temporary set used to record the stack allocations before a function returns.
+    ///
+    /// The process during stack popping is roughly as follows:
+    /// ```text
+    /// before_stack_pop
+    ///   -> stack_frame.pop()
+    ///   -> copy_op_allow_transmute (new stack allocations can happen)
+    ///   -> cleanup_stack_frame (deallocate callee locals)
+    /// after_stack_pop
+    /// ```
+    ///
+    /// This set is added new AllocIds in before_stack_pop, and computes the diff with
+    /// base_paddr to know what new allocations happen.
+    /// Then in after_stack_pop, rewrite the address (u64) for these new allocations based on the next_stack_addr recored,
+    /// and adjust the next_stack_addr when resuming the stack pointer.
+    pub stack_allocations_before_stack_pop: FxHashSet<AllocId>,
 }
 
 impl VisitProvenance for GlobalStateInner {
@@ -88,6 +106,7 @@ impl VisitProvenance for GlobalStateInner {
             next_base_paddr: _,
             next_cpu_local_paddr: _,
             next_stack_paddr: _,
+            stack_allocations_before_stack_pop: _,
         } = self;
         // Though base_addr, int_to_ptr_map, and exposed contain AllocIds, we do not want to visit them.
         // int_to_ptr_map and exposed must contain only live allocations, and those
@@ -116,6 +135,7 @@ impl GlobalStateInner {
             next_base_paddr: kernel_code_paddr_to_vaddr(mirch::kernel_static_start_addr()) as u64,
             next_stack_paddr: kernel_code_paddr_to_vaddr(mirch::kernel_stack_end_addr()) as u64,
             next_cpu_local_paddr: kernel_code_paddr_to_vaddr(mirch::cpu_local_start_addr()) as u64,
+            stack_allocations_before_stack_pop: FxHashSet::default(),
         }
     }
 
