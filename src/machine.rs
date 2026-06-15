@@ -44,7 +44,9 @@ use crate::concurrency::{
 };
 use crate::debugger::debugger_log;
 use crate::debugger::reachability::FunctionInstanceInfo;
-use crate::mirch::{self, PageState, TypedKind, kernel_code_paddr_to_vaddr};
+use crate::mirch::{
+    self, PageState, TypedKind, kernel_code_paddr_to_vaddr, kernel_code_vaddr_to_paddr,
+};
 use crate::*;
 
 /// First real-time signal.
@@ -2016,7 +2018,9 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             info!("Continuing in {}", ecx.frame().instance());
         }
 
-        // Get the new stack allocations during stack popping.
+        // Get the new stack allocations during stack popping. These allocations materialize the
+        // caller's return place while the callee frame is being popped, so after the callee locals
+        // are gone we lay them out again directly below the caller's saved stack pointer.
         let mut new_stack_allocs = Vec::new();
         {
             let alloc_map = ecx.memory.alloc_map();
@@ -2024,61 +2028,81 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             for alloc_id in alloc_addresses.base_paddr.keys().copied() {
                 if let Some((kind, _)) = alloc_map.get(alloc_id)
                     && *kind == MemoryKind::Stack
+                    && !alloc_addresses.stack_allocations_before_stack_pop.contains(&alloc_id)
                 {
-                    if !alloc_addresses.stack_allocations_before_stack_pop.contains(&alloc_id) {
-                        new_stack_allocs.push(alloc_id);
-                    }
+                    let old_paddr = *alloc_addresses.base_paddr.get(&alloc_id).unwrap();
+                    let old_vaddr = kernel_code_paddr_to_vaddr(old_paddr as usize) as u64;
+                    new_stack_allocs.push((old_vaddr, alloc_id));
                 }
             }
-            new_stack_allocs.sort_unstable();
+            // Stack allocations grow downward; the highest temporary address was allocated first.
+            // Replaying that order preserves the relative stack layout of these new allocations.
+            new_stack_allocs.sort_unstable_by(|(left_addr, left_id), (right_addr, right_id)| {
+                right_addr.cmp(left_addr).then_with(|| left_id.cmp(right_id))
+            });
         }
 
         // Resumes the stack pointer.
-        let thread = ecx.machine.threads.active_thread_mut();
-        if let Some(next_stack_addr) = thread.stack_addr_records.pop() {
-            let mut current_sp = &mut *thread.next_stack_addr.borrow_mut();
-            *current_sp = if new_stack_allocs.is_empty() {
-                // Directly reset the stack pointer due to no stack allocation happens
-                next_stack_addr
+        let saved_stack_addr = {
+            let thread = ecx.machine.threads.active_thread_mut();
+            thread.stack_addr_records.pop()
+        };
+        if let Some(saved_stack_addr) = saved_stack_addr {
+            let next_stack_addr = if new_stack_allocs.is_empty() {
+                // No caller-owned stack allocation happened during return-copy.
+                saved_stack_addr
             } else {
-                dbg!(new_stack_allocs.len());
-                // the adjustment is for linear stack allocation
                 let alloc_map = ecx.memory.alloc_map();
                 let alloc_addresses = &mut *ecx.machine.alloc_addresses.borrow_mut();
+                let mut replay_sp = saved_stack_addr;
 
-                let min_gap = {
-                    let min_alloc = new_stack_allocs.first().unwrap();
-                    let min_alloc_paddr = *alloc_addresses.base_paddr.get(min_alloc).unwrap();
-                    dbg!(min_alloc, min_alloc_paddr);
-                    let min_alloc_vaddr =
-                        kernel_code_paddr_to_vaddr(min_alloc_paddr as usize) as u64;
-                    next_stack_addr.checked_sub(min_alloc_vaddr).unwrap_or_else(|| {
-                        panic!("{next_stack_addr:x} - {min_alloc_vaddr:x} fails")
-                    })
-                };
+                for (_, alloc_id) in &new_stack_allocs {
+                    let Some((kind, _)) = alloc_map.get(*alloc_id) else {
+                        bug!("new stack allocation {alloc_id:?} disappeared during stack pop");
+                    };
+                    assert_eq!(*kind, MemoryKind::Stack);
 
-                // fill the gap for these new stack allocations
-                // FIXME: consider alignment and provenance (adjust_alloc_root_pointer)
-                for alloc_id in &new_stack_allocs {
-                    let paddr = alloc_addresses.base_paddr.get_mut(alloc_id).unwrap();
-                    *paddr = paddr.checked_sub(min_gap).unwrap();
-                }
-                for (paddr, alloc_id) in &mut alloc_addresses.int_to_ptr_map {
-                    if new_stack_allocs.iter_mut().find(|id| *id == alloc_id).is_some() {
-                        *paddr = paddr.checked_add(min_gap).unwrap();
+                    let info = ecx.get_alloc_info(*alloc_id);
+                    let size = info.size.bytes().max(1);
+                    let align = info.align.bytes();
+                    let Some(new_base_vaddr) = replay_sp.checked_sub(size) else {
+                        throw_exhaust!(AddressSpaceFull);
+                    };
+                    let new_base_vaddr = new_base_vaddr - new_base_vaddr % align;
+                    if new_base_vaddr < ecx.active_thread_ref().stack_bottom {
+                        throw_exhaust!(AddressSpaceFull);
                     }
-                }
-                alloc_addresses.int_to_ptr_map.sort_unstable();
 
-                {
-                    let max_alloc = new_stack_allocs.last().unwrap();
-                    let max_alloc_paddr = *alloc_addresses.base_paddr.get(max_alloc).unwrap();
-                    dbg!(max_alloc, max_alloc_paddr, min_gap);
-                    let max_alloc_vaddr =
-                        kernel_code_paddr_to_vaddr(max_alloc_paddr as usize) as u64;
-                    max_alloc_vaddr.checked_add(min_gap).unwrap()
+                    let old_paddr = *alloc_addresses.base_paddr.get(alloc_id).unwrap();
+                    let old_pos = alloc_addresses
+                        .int_to_ptr_map
+                        .binary_search_by_key(&old_paddr, |(addr, _)| *addr)
+                        .unwrap_or_else(|pos| {
+                            panic!(
+                                "new stack allocation {alloc_id:?} old addr 0x{old_paddr:x} \
+                                 missing from int_to_ptr_map at insertion point {pos}"
+                            )
+                        });
+                    let removed = alloc_addresses.int_to_ptr_map.remove(old_pos);
+                    assert_eq!(removed, (old_paddr, *alloc_id));
+
+                    let new_paddr = kernel_code_vaddr_to_paddr(new_base_vaddr as usize) as u64;
+                    alloc_addresses.base_paddr.insert(*alloc_id, new_paddr);
+
+                    let new_pos = alloc_addresses
+                        .int_to_ptr_map
+                        .binary_search_by_key(&new_paddr, |(addr, _)| *addr)
+                        .unwrap_err();
+                    alloc_addresses.int_to_ptr_map.insert(new_pos, (new_paddr, *alloc_id));
+
+                    replay_sp = new_base_vaddr;
                 }
-            }
+
+                replay_sp
+            };
+
+            let thread = ecx.machine.threads.active_thread_mut();
+            *thread.next_stack_addr.borrow_mut() = next_stack_addr;
         }
 
         // Resumes the stack pointer.
