@@ -279,6 +279,9 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 }
                 *next_stack_addr = base_addr;
 
+                debugger_log(format!(
+                    "[addr_from_alloc_id_uncached] {alloc_id:?} addr=0x{base_addr:x}"
+                ));
                 base_addr
             } else {
                 let (next_address, limit) =
@@ -883,8 +886,17 @@ impl<'tcx> MiriMachine<'tcx> {
         // To avoid a linear scan we first look up the address in `base_addr`, and then find it in
         // `int_to_ptr_map`.
         let addr = *global_state.base_paddr.get(&dead_id).unwrap();
-        let pos =
-            global_state.int_to_ptr_map.binary_search_by_key(&addr, |(addr, _)| *addr).unwrap();
+        debugger_log(format!("free {dead_id:?} (addr=0x{addr:x}={addr})"));
+        let pos = match global_state.int_to_ptr_map.binary_search_by_key(&addr, |(addr, _)| *addr) {
+            Ok(pos) => pos,
+            Err(t_pos) => {
+                debugger_log(format!(
+                    "dead_id={dead_id:?} addr=0x{addr:x}({addr}) t_pos={t_pos}\nint_to_ptr_map={:#?}",
+                    &global_state.int_to_ptr_map
+                ));
+                panic!("addr ({addr}) ({dead_id:?}) is not in int_to_ptr_map");
+            }
+        };
         let removed = global_state.int_to_ptr_map.remove(pos);
         // log!("[free_alloc_id] addr={addr:#x} alloc_id={dead_id:?} kind={kind:?}");
         assert_eq!(removed, (addr, dead_id)); // double-check that we removed the right thing
