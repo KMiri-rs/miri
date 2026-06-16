@@ -617,8 +617,18 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     {
                         global_state.int_to_ptr_map.len()
                     } else {
-                        match global_state.int_to_ptr_map.binary_search(&(base_paddr, alloc_id)) {
-                            Ok(found) => return interp_ok(base_paddr),
+                        match global_state
+                            .int_to_ptr_map
+                            .binary_search_by_key(&base_paddr, |(addr, id)| *addr)
+                        {
+                            Ok(found) => {
+                                let found_alloc_id = global_state.int_to_ptr_map[found].1;
+                                assert_ne!(
+                                    found_alloc_id, alloc_id,
+                                    "0x{base_paddr:x} has two AllocId {alloc_id:?} and {found_alloc_id:?}"
+                                );
+                                return interp_ok(base_paddr);
+                            }
                             Err(pos) => pos,
                         }
                     };
