@@ -1973,18 +1973,6 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             ecx.active_thread_mut().recompute_top_user_relevant_frame(/* skip */ 1);
         }
 
-        // Resumes the stack pointer.
-        let thread = ecx.machine.threads.active_thread_mut();
-        if let Some(next_stack_addr) = thread.stack_addr_records.pop() {
-            let mut current_sp = &mut *thread.next_stack_addr.borrow_mut();
-            // FIXME: this is wrong to directly set sp, because the allocation of return value
-            // and the allocations of callee locals can overlap. This means that multiple
-            // AllocIds points to the same base_paddr.
-            // But we can't resume SP in after_stack_pop, because it makes callee allocations
-            // linger longer than the time it returns, leading to dead allocation leak.
-            *current_sp = next_stack_addr;
-        }
-
         // tracing-tree can automatically annotate scope changes, but it gets very confused by our
         // concurrency and what it prints is just plain wrong. So we print our own information
         // instead. (Cc https://github.com/rust-lang/miri/issues/2266)
@@ -2014,13 +2002,16 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             info!("Continuing in {}", ecx.frame().instance());
         }
 
-        // The return place has been materialized in the caller before pushing this frame, so return
-        // value copying should not allocate stack memory while the callee locals are still live.
-        // Restore the caller stack pointer only after callee locals have been deallocated; this keeps
-        // stack addresses one-to-one in `base_paddr` and `int_to_ptr_map`.
+        // Resumes the stack pointer.
         let thread = ecx.machine.threads.active_thread_mut();
         if let Some(next_stack_addr) = thread.stack_addr_records.pop() {
-            *thread.next_stack_addr.borrow_mut() = next_stack_addr;
+            let mut current_sp = &mut *thread.next_stack_addr.borrow_mut();
+            // Update stack ptr only when the recorded sp is lower than current sp.
+            // That's to say do nothing if current sp is lower than recorded sp,
+            // which is possible when returning to frame with more locals allocated.
+            if *current_sp > next_stack_addr {
+                *current_sp = next_stack_addr;
+            }
         }
 
         // log!("stack (pop after):\n{}", thread.display_stack_records());
