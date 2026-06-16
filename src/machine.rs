@@ -1178,16 +1178,11 @@ fn allocate_stack_base<'tcx>(
 /// out again from the restored caller stack pointer.
 ///
 /// The rebase is intentionally based on sorted `AllocId`s, not materialization order, so the final
-/// stack layout is deterministic even if Miri observes locals at slightly different times. For each
-/// still-live allocation, this updates the physical-address maps (`base_paddr` and
-/// `int_to_ptr_map`) and, when the base changes, moves the pseudo-physical backing allocation while
-/// preserving initialized bytes and provenance metadata.
-///
-/// A temporary address can collide with a callee local that is freed before the rebase, so a live
-/// allocation may be missing from `int_to_ptr_map`. In that case we still insert the allocation at
-/// its recomputed address. If the temporary address is owned by another live allocation, we leave
-/// the existing mapping intact and skip rebasing that allocation to avoid corrupting the inverse
-/// address map.
+/// stack layout is deterministic even if Miri observes locals at slightly different times. The
+/// temporary address-to-allocation mappings were isolated in `StackPopAllocTracker`, so this
+/// function publishes only the final physical addresses into the global `int_to_ptr_map`. For each
+/// still-live allocation, this updates `base_paddr` and, when the base changes, moves the
+/// pseudo-physical backing allocation while preserving initialized bytes and provenance metadata.
 fn rebase_stack_allocs_after_pop<'tcx>(
     ecx: &mut MiriInterpCx<'tcx>,
     mut next_stack_addr: u64,
@@ -1222,30 +1217,6 @@ fn rebase_stack_allocs_after_pop<'tcx>(
             let Some(old_base_paddr) = global_state.base_paddr.get(&alloc_id).copied() else {
                 continue;
             };
-
-            let old_pos = global_state
-                .int_to_ptr_map
-                .binary_search_by_key(&old_base_paddr, |(addr, _)| *addr);
-            match old_pos {
-                Ok(pos) => {
-                    let removed = global_state.int_to_ptr_map.remove(pos);
-                    if removed != (old_base_paddr, alloc_id) {
-                        // Another allocation owned this temporary base address. Keep the existing
-                        // mapping intact and skip this allocation rather than corrupting the
-                        // address-to-AllocId index.
-                        global_state.int_to_ptr_map.insert(pos, removed);
-                        continue;
-                    }
-                }
-                Err(_) => {
-                    // The temporary stack address may have collided with a callee local that was
-                    // freed before this rebase. In that case the allocation is still live but was
-                    // never represented in `int_to_ptr_map`; insert it below at the recomputed base.
-                    // debugger_log(format!(
-                    //     "[stack_pop_rebase_missing_old] {alloc_id:?} old=0x{old_base_paddr:x}"
-                    // ));
-                }
-            }
 
             global_state.base_paddr.insert(alloc_id, new_base_paddr);
 
@@ -2227,8 +2198,11 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             .copied()
             .unwrap_or_else(|| *thread.next_stack_addr.borrow());
         debug_assert!(thread.stack_pop_allocs.borrow().is_none());
-        *thread.stack_pop_allocs.borrow_mut() =
-            Some(StackPopAllocTracker { next_stack_addr, alloc_ids: Vec::new() });
+        *thread.stack_pop_allocs.borrow_mut() = Some(StackPopAllocTracker {
+            next_stack_addr,
+            int_to_ptr_map: Vec::new(),
+            alloc_ids: Vec::new(),
+        });
         interp_ok(())
     }
 
