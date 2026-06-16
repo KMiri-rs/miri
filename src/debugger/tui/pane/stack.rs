@@ -15,12 +15,8 @@ impl PaneStack {
     pub fn widget(&self, state: &DebuggerState, focus: bool) -> (List<'static>, ListState) {
         let min_sp =
             state.min_stack_ptr.map(|ptr| format!(", min_sp=0x{ptr:x}")).unwrap_or_default();
-        let record_sp = state
-            .last_recorded_stack_ptr
-            .map(|ptr| format!(", last_sp=0x{ptr:x}"))
-            .unwrap_or_default();
 
-        let title = format!("Stack (t{}{min_sp}{record_sp})", state.current_thread.to_u32());
+        let title = format!("Stack (thread {}{min_sp})", state.current_thread.to_u32());
 
         let items: Vec<_> = state
             .stack_frames
