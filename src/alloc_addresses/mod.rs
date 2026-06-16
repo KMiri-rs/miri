@@ -888,14 +888,11 @@ impl<'tcx> MiriMachine<'tcx> {
         // `int_to_ptr_map`.
         let addr = *global_state.base_paddr.get(&dead_id).unwrap();
         debugger_log(format!("free {dead_id:?} (addr=0x{addr:x}={addr})"));
-        // int_to_ptr_map may contain a address pointed by multiple AllocIds.
-        if let Ok(pos) = global_state.int_to_ptr_map.binary_search(&(addr, dead_id)) {
-            global_state.int_to_ptr_map.remove(pos);
-            // log!("[free_alloc_id] addr={addr:#x} alloc_id={dead_id:?} kind={kind:?}");
-            // assert_eq!(removed, (addr, dead_id)); // double-check that we removed the right thing
-        } else {
-            panic!("free {dead_id:?} at 0x{addr:x}, but it is not present in int_to_ptr_map");
-        }
+        let pos =
+            global_state.int_to_ptr_map.binary_search_by_key(&addr, |(addr, _)| *addr).unwrap();
+        let removed = global_state.int_to_ptr_map.remove(pos);
+        // log!("[free_alloc_id] addr={addr:#x} alloc_id={dead_id:?} kind={kind:?}");
+        assert_eq!(removed, (addr, dead_id)); // double-check that we removed the right thing
         // We can also remove it from `exposed`, since this allocation can anyway not be returned by
         // `alloc_id_from_addr` any more.
         global_state.exposed.remove(&dead_id);
