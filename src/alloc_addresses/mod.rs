@@ -17,7 +17,6 @@ use self::reuse_pool::ReusePool;
 use crate::alloc::MiriAllocParams;
 use crate::alloc_addresses::address_generator::align_addr;
 use crate::concurrency::VClock;
-use crate::debugger::debugger_log;
 use crate::diagnostics::SpanDedupDiagnostic;
 use crate::mirch::{
     CodeSection, PageState, kernel_code_paddr_to_vaddr, kernel_code_vaddr_to_paddr,
@@ -271,38 +270,33 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
         } else {
             let base_addr = if memory_kind == MemoryKind::Stack {
                 let thread = this.machine.threads.active_thread_ref();
-                let base_addr = if let Some(stack_pop_allocs) =
-                    thread.stack_pop_allocs.borrow_mut().as_mut()
-                {
-                    // Stack locals can be materialized after `before_stack_pop` but before
-                    // `after_stack_pop`. Allocate them from the caller's recorded stack pointer
-                    // and remember their AllocIds so `after_stack_pop` can re-run stack layout in a
-                    // deterministic AllocId order.
-                    let base_addr = stack_pop_allocs.next_stack_addr - info.size.bytes().max(1);
-                    let base_addr = base_addr - base_addr % info.align.bytes();
+                let base_addr =
+                    if let Some(stack_pop_allocs) = thread.stack_pop_allocs.borrow_mut().as_mut() {
+                        // Stack locals can be materialized after `before_stack_pop` but before
+                        // `after_stack_pop`. Allocate them from the caller's recorded stack pointer
+                        // and remember their AllocIds so `after_stack_pop` can re-run stack layout in a
+                        // deterministic AllocId order.
+                        let base_addr = stack_pop_allocs.next_stack_addr - info.size.bytes().max(1);
+                        let base_addr = base_addr - base_addr % info.align.bytes();
 
-                    if base_addr < thread.stack_bottom {
-                        throw_exhaust!(AddressSpaceFull);
-                    }
-                    stack_pop_allocs.next_stack_addr = base_addr;
-                    stack_pop_allocs.alloc_ids.push(alloc_id);
-                    debugger_log(format!("[stack_pop_alloc] {alloc_id:?} addr=0x{base_addr:x}"));
-                    base_addr
-                } else {
-                    let mut next_stack_addr = thread.next_stack_addr.borrow_mut();
-                    let base_addr = *next_stack_addr - info.size.bytes().max(1);
-                    let base_addr = base_addr - base_addr % info.align.bytes();
+                        if base_addr < thread.stack_bottom {
+                            throw_exhaust!(AddressSpaceFull);
+                        }
+                        stack_pop_allocs.next_stack_addr = base_addr;
+                        stack_pop_allocs.alloc_ids.push(alloc_id);
+                        base_addr
+                    } else {
+                        let mut next_stack_addr = thread.next_stack_addr.borrow_mut();
+                        let base_addr = *next_stack_addr - info.size.bytes().max(1);
+                        let base_addr = base_addr - base_addr % info.align.bytes();
 
-                    if base_addr < thread.stack_bottom {
-                        throw_exhaust!(AddressSpaceFull);
-                    }
-                    *next_stack_addr = base_addr;
-                    base_addr
-                };
+                        if base_addr < thread.stack_bottom {
+                            throw_exhaust!(AddressSpaceFull);
+                        }
+                        *next_stack_addr = base_addr;
+                        base_addr
+                    };
 
-                debugger_log(format!(
-                    "[addr_from_alloc_id_uncached] {alloc_id:?} addr=0x{base_addr:x}"
-                ));
                 base_addr
             } else {
                 let (next_address, limit) =
@@ -906,7 +900,6 @@ impl<'tcx> MiriMachine<'tcx> {
         // To avoid a linear scan we first look up the address in `base_addr`, and then find it in
         // `int_to_ptr_map`.
         let addr = *global_state.base_paddr.get(&dead_id).unwrap();
-        debugger_log(format!("free {dead_id:?} (addr=0x{addr:x}={addr})"));
         let pos =
             global_state.int_to_ptr_map.binary_search_by_key(&addr, |(addr, _)| *addr).unwrap();
         let removed = global_state.int_to_ptr_map.remove(pos);
