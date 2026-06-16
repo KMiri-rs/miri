@@ -237,6 +237,12 @@ impl PhysicalMemory {
                 PageState::Typed { page_type: TypedKind::Interpreter, type_size: page_size() };
         }
 
+        #[allow(clippy::needless_range_loop)]
+        for i in kernel_stack_start_addr() / page_size()..kernel_stack_end_addr() / page_size() {
+            page_states[i] =
+                PageState::Typed { page_type: TypedKind::Stack, type_size: page_size() };
+        }
+
         Self { mem, page_states, init_masks: BTreeMap::new(), page_table: None }
     }
 }

@@ -39,7 +39,6 @@ use crate::alloc_addresses::EvalContextExt;
 use crate::concurrency::cpu_affinity::{self, CpuAffinityMask};
 use crate::concurrency::data_race::{self, NaReadType, NaWriteType};
 use crate::concurrency::sync::SyncObj;
-use crate::concurrency::thread::StackPopAllocTracker;
 use crate::concurrency::{
     AllocDataRaceHandler, GenmcCtx, GenmcEvalContextExt as _, GlobalDataRaceHandler, weak_memory,
 };
@@ -1152,172 +1151,6 @@ impl VisitProvenance for MiriMachine<'_> {
 /// A rustc InterpCx for Miri.
 pub type MiriInterpCx<'tcx> = InterpCx<'tcx, MiriMachine<'tcx>>;
 
-fn allocate_stack_base<'tcx>(
-    next_stack_addr: &mut u64,
-    size: Size,
-    align: Align,
-    stack_bottom: u64,
-) -> InterpResult<'tcx, u64> {
-    // KMiri stack allocations grow downward and reserve at least one byte so zero-sized
-    // allocations still get distinct addresses.
-    let base_addr = next_stack_addr
-        .checked_sub(size.bytes().max(1))
-        .ok_or_else(|| err_exhaust!(AddressSpaceFull))?;
-    let base_addr = base_addr - base_addr % align.bytes();
-
-    if base_addr < stack_bottom {
-        throw_exhaust!(AddressSpaceFull);
-    }
-
-    *next_stack_addr = base_addr;
-    interp_ok(base_addr)
-}
-
-/// Recompute the final addresses of stack allocations created during a stack-pop window.
-///
-/// Miri may materialize caller-side stack locals after `before_stack_pop` has run but before
-/// `after_stack_pop` restores the caller's stack pointer. Those allocations are first placed using
-/// a temporary stack pointer so allocation can succeed immediately; this function then lays them
-/// out again from the restored caller stack pointer.
-///
-/// The rebase is intentionally based on sorted `AllocId`s, not materialization order, so the final
-/// stack layout is deterministic even if Miri observes locals at slightly different times. The
-/// temporary address-to-allocation mappings were isolated in `StackPopAllocTracker`, so this
-/// function publishes only the final physical addresses into the global `int_to_ptr_map`. For each
-/// still-live allocation, this updates `base_paddr` and, when the base changes, moves the
-/// pseudo-physical backing allocation while preserving initialized bytes and provenance metadata.
-fn rebase_stack_allocs_after_pop<'tcx>(
-    ecx: &mut MiriInterpCx<'tcx>,
-    mut next_stack_addr: u64,
-    stack_bottom: u64,
-    alloc_ids: &[AllocId],
-) -> InterpResult<'tcx, u64> {
-    let mut alloc_ids = alloc_ids.to_vec();
-    alloc_ids.sort_by_key(|alloc_id| alloc_id.0);
-    alloc_ids.dedup();
-
-    for alloc_id in alloc_ids {
-        if !ecx.is_alloc_live(alloc_id) {
-            continue;
-        }
-        let info = ecx.get_alloc_info(alloc_id);
-        if matches!(info.kind, AllocKind::Dead) {
-            continue;
-        }
-
-        // `addr_from_alloc_id_uncached` returns a virtual address for stack allocations; the global
-        // maps store physical addresses, so mirror the normal vaddr-to-paddr conversion here.
-        let new_base_vaddr =
-            allocate_stack_base(&mut next_stack_addr, info.size, info.align, stack_bottom)?;
-        let new_base_paddr = mirch::page_walk_or(new_base_vaddr as usize, || {
-            mirch::try_kernel_code_vaddr_to_paddr(new_base_vaddr as usize)
-                .unwrap_or(new_base_vaddr as usize)
-        })
-        .unwrap() as u64;
-
-        let old_base_paddr = {
-            let mut global_state = ecx.machine.alloc_addresses.borrow_mut();
-            let Some(old_base_paddr) = global_state.base_paddr.get(&alloc_id).copied() else {
-                continue;
-            };
-
-            global_state.base_paddr.insert(alloc_id, new_base_paddr);
-
-            let pos = if global_state
-                .int_to_ptr_map
-                .last()
-                .is_some_and(|(last_addr, _)| *last_addr < new_base_paddr)
-            {
-                global_state.int_to_ptr_map.len()
-            } else {
-                match global_state
-                    .int_to_ptr_map
-                    .binary_search_by_key(&new_base_paddr, |(addr, _)| *addr)
-                {
-                    Ok(found) => {
-                        let found_alloc_id = global_state.int_to_ptr_map[found].1;
-                        assert_eq!(
-                            found_alloc_id, alloc_id,
-                            "0x{new_base_paddr:x} has two AllocId {alloc_id:?} and {found_alloc_id:?}"
-                        );
-                        found
-                    }
-                    Err(pos) => pos,
-                }
-            };
-            if global_state
-                .int_to_ptr_map
-                .get(pos)
-                .is_none_or(|(addr, id)| *addr != new_base_paddr || *id != alloc_id)
-            {
-                global_state.int_to_ptr_map.insert(pos, (new_base_paddr, alloc_id));
-            }
-
-            Some(old_base_paddr)
-        };
-
-        let Some(old_base_paddr) = old_base_paddr else {
-            continue;
-        };
-        // debugger_log(format!(
-        //     "[stack_pop_rebase] {alloc_id:?} old=0x{old_base_paddr:x} new=0x{new_base_paddr:x}"
-        // ));
-        if old_base_paddr == new_base_paddr || info.size.bytes() == 0 {
-            continue;
-        }
-
-        // The address maps are not enough: stack allocations backed by pseudo physical memory also
-        // need their backing allocation moved so later reads/writes hit the recomputed base.
-        let alloc_map = ecx.memory.alloc_map();
-        let (kind, old_allocation) = &alloc_map.get(alloc_id).unwrap();
-        let alloc_size_usize = old_allocation.size().bytes_usize();
-        let (new_allocation, kind) = {
-            let mut allocation = mirch::create_allocation_at(
-                new_base_paddr as usize,
-                Layout::from_size_align(
-                    old_allocation.size().bytes_usize(),
-                    old_allocation.align.bytes_usize(),
-                )
-                .unwrap(),
-                ecx.machine.get_default_alloc_params(),
-            );
-            let extra = MiriMachine::init_allocation(
-                ecx,
-                alloc_id,
-                *kind,
-                old_allocation.size(),
-                old_allocation.align,
-            )?;
-
-            let alloc_range =
-                rustc_middle::mir::interpret::alloc_range(Size::ZERO, old_allocation.size());
-            let init_mask = old_allocation.init_mask();
-
-            if !init_mask.is_range_initialized(alloc_range).is_err_and(|range| {
-                range.start == alloc_range.start && range.size == alloc_range.size
-            }) {
-                let src_ptr = old_allocation.get_bytes_unchecked_raw();
-                let dst_ptr = allocation.get_bytes_unchecked_raw_mut();
-                unsafe {
-                    core::ptr::copy(src_ptr, dst_ptr, alloc_size_usize);
-                }
-
-                let init_copy = init_mask.prepare_copy((0..alloc_size_usize).into());
-                allocation.init_mask_apply_copy(init_copy, alloc_range, 1);
-
-                let provenance_copy =
-                    old_allocation.provenance().prepare_copy(alloc_range, &[0], ecx);
-                allocation.provenance_apply_copy(provenance_copy, alloc_range, 1);
-            }
-            (allocation.with_extra(extra), *kind)
-        };
-
-        alloc_map.insert(alloc_id, (kind, new_allocation));
-    }
-
-    interp_ok(next_stack_addr)
-}
-
 /// A little trait that's useful to be inherited by extension traits.
 pub trait MiriInterpCxExt<'tcx> {
     fn eval_context_ref<'a>(&'a self) -> &'a MiriInterpCx<'tcx>;
@@ -2173,26 +2006,10 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             // We have to skip the frame that is just being popped.
             ecx.active_thread_mut().recompute_top_user_relevant_frame(/* skip */ 1);
         }
-
         // tracing-tree can automatically annotate scope changes, but it gets very confused by our
         // concurrency and what it prints is just plain wrong. So we print our own information
         // instead. (Cc https://github.com/rust-lang/miri/issues/2266)
         // log!("Leaving {}", ecx.frame().instance().bright_red());
-        let thread = ecx.active_thread_mut();
-        // Start a short-lived allocation window before the frame is actually removed. Any stack
-        // locals materialized during this window belong to the caller and are rebased once the pop
-        // finishes.
-        let next_stack_addr = thread
-            .stack_addr_records
-            .last()
-            .copied()
-            .unwrap_or_else(|| *thread.next_stack_addr.borrow());
-        debug_assert!(thread.stack_pop_allocs.borrow().is_none());
-        *thread.stack_pop_allocs.borrow_mut() = Some(StackPopAllocTracker {
-            next_stack_addr,
-            int_to_ptr_map: Vec::new(),
-            alloc_ids: Vec::new(),
-        });
         interp_ok(())
     }
 
@@ -2217,31 +2034,16 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         if !ecx.active_thread_stack().is_empty() {
             info!("Continuing in {}", ecx.frame().instance());
         }
-
         // Resumes the stack pointer.
-        let (next_stack_addr, stack_bottom, stack_pop_allocs) = {
-            let thread = ecx.machine.threads.active_thread_mut();
-            // Take the pop-window allocations before rebasing so any nested stack allocation during
-            // rebase uses the regular stack path instead of recursively extending this window.
-            let stack_pop_allocs = thread
-                .stack_pop_allocs
-                .borrow_mut()
-                .take()
-                .map(|tracker| tracker.alloc_ids)
-                .unwrap_or_default();
-            (thread.stack_addr_records.pop(), thread.stack_bottom, stack_pop_allocs)
-        };
-        if let Some(next_stack_addr) = next_stack_addr {
-            let next_stack_addr = rebase_stack_allocs_after_pop(
-                ecx,
-                next_stack_addr,
-                stack_bottom,
-                &stack_pop_allocs,
-            )?;
-
-            let thread = ecx.machine.threads.active_thread_mut();
-            let current_sp = &mut *thread.next_stack_addr.borrow_mut();
-            *current_sp = next_stack_addr;
+        let thread = ecx.machine.threads.active_thread_mut();
+        if let Some(next_stack_addr) = thread.stack_addr_records.pop() {
+            let mut current_sp = thread.next_stack_addr.borrow_mut();
+            // Update stack ptr only when the recorded sp is lower than current sp.
+            // That's to say do nothing if current sp is lower than recorded sp,
+            // which is possible when returning to frame with more locals allocated.
+            if *current_sp > next_stack_addr {
+                *current_sp = next_stack_addr;
+            }
         }
 
         // log!("stack (pop after):\n{}", thread.display_stack_records());

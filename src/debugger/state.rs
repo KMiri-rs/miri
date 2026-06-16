@@ -13,7 +13,6 @@ use crate::debugger::debugger_log;
 use crate::debugger::reachability::FunctionInstanceInfo;
 use crate::debugger::tui::theme::STYLE_HIGHTLIGHTED;
 use crate::debugger::utils::{pos_to_line_nr, source_file};
-use crate::mirch::kernel_code_vaddr_to_paddr;
 use crate::*;
 
 #[derive(Clone, Debug)]
@@ -108,7 +107,6 @@ pub struct DebuggerState {
     pub output: Vec<OutputSpan>,
     /// The lowest allocated stack vaddr.
     pub min_stack_ptr: Option<u64>,
-    pub last_recorded_stack_ptr: Option<u64>,
     // Although this is a global state that won't change after initialization.
     pub borrow_tracker_method: Option<BorrowTrackerMethod>,
 }
@@ -124,13 +122,6 @@ impl DebuggerState {
             .borrow()
             .min_allocated_stack_paddr()
             .map(|(paddr, _)| paddr);
-        let last_recorded_stack_ptr = ecx
-            .machine
-            .threads
-            .active_thread_ref()
-            .stack_addr_records
-            .last()
-            .map(|&vaddr| kernel_code_vaddr_to_paddr(vaddr as usize) as u64);
 
         let stack_frames: Vec<_> =
             stack.iter().rev().map(|frame| capture_frame(sm, frame)).collect();
@@ -172,7 +163,6 @@ impl DebuggerState {
             allocs,
             output,
             min_stack_ptr,
-            last_recorded_stack_ptr,
             borrow_tracker_method: ecx
                 .machine
                 .borrow_tracker
