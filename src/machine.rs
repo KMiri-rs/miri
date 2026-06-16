@@ -43,7 +43,6 @@ use crate::concurrency::thread::StackPopAllocTracker;
 use crate::concurrency::{
     AllocDataRaceHandler, GenmcCtx, GenmcEvalContextExt as _, GlobalDataRaceHandler, weak_memory,
 };
-use crate::debugger::debugger_log;
 use crate::debugger::reachability::FunctionInstanceInfo;
 use crate::mirch::{self, PageState, TypedKind, kernel_code_paddr_to_vaddr};
 use crate::*;
@@ -1224,9 +1223,6 @@ fn rebase_stack_allocs_after_pop<'tcx>(
                         // Another allocation owned this temporary base address. Keep the existing
                         // mapping intact and skip this allocation rather than corrupting the
                         // address-to-AllocId index.
-                        debugger_log(format!(
-                            "[stack_pop_rebase_skip] {alloc_id:?} old=0x{old_base_paddr:x} removed={removed:?}"
-                        ));
                         global_state.int_to_ptr_map.insert(pos, removed);
                         continue;
                     }
@@ -1235,9 +1231,9 @@ fn rebase_stack_allocs_after_pop<'tcx>(
                     // The temporary stack address may have collided with a callee local that was
                     // freed before this rebase. In that case the allocation is still live but was
                     // never represented in `int_to_ptr_map`; insert it below at the recomputed base.
-                    debugger_log(format!(
-                        "[stack_pop_rebase_missing_old] {alloc_id:?} old=0x{old_base_paddr:x}"
-                    ));
+                    // debugger_log(format!(
+                    //     "[stack_pop_rebase_missing_old] {alloc_id:?} old=0x{old_base_paddr:x}"
+                    // ));
                 }
             }
 
@@ -1279,9 +1275,9 @@ fn rebase_stack_allocs_after_pop<'tcx>(
         let Some(old_base_paddr) = old_base_paddr else {
             continue;
         };
-        debugger_log(format!(
-            "[stack_pop_rebase] {alloc_id:?} old=0x{old_base_paddr:x} new=0x{new_base_paddr:x}"
-        ));
+        // debugger_log(format!(
+        //     "[stack_pop_rebase] {alloc_id:?} old=0x{old_base_paddr:x} new=0x{new_base_paddr:x}"
+        // ));
         if old_base_paddr == new_base_paddr || info.size.bytes() == 0 {
             continue;
         }

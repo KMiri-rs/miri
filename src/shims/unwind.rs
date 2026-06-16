@@ -16,7 +16,6 @@ use rustc_abi::ExternAbi;
 use rustc_middle::mir;
 use rustc_target::spec::PanicStrategy;
 
-use crate::debugger::debugger_log;
 use crate::*;
 
 /// Holds all of the relevant data for when unwinding hits a `try` frame.
@@ -117,10 +116,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         unwinding: bool,
     ) -> InterpResult<'tcx, ReturnAction> {
         let this = self.eval_context_mut();
-        debugger_log(format!(
-            "handle_stack_pop_unwind(extra = {:?}, unwinding = {})",
-            extra, unwinding
-        ));
+        trace!("handle_stack_pop_unwind(extra = {:?}, unwinding = {})", extra, unwinding);
 
         // We only care about `catch_panic` if we're unwinding - if we're doing a normal
         // return, then we don't need to do anything special.
@@ -141,7 +137,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
             // Push the `catch_fn` stackframe.
             let f_instance = this.get_ptr_fn(catch_unwind.catch_fn)?.as_instance()?;
-            debugger_log(format!("catch_fn: {:?}", f_instance));
+            trace!("catch_fn: {:?}", f_instance);
             this.call_function(
                 f_instance,
                 ExternAbi::Rust,
