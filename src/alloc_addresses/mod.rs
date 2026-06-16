@@ -269,34 +269,31 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
         } else {
             let base_addr = if memory_kind == MemoryKind::Stack {
                 let thread = this.machine.threads.active_thread_ref();
-                let base_addr =
-                    if let Some(stack_pop_allocs) = thread.stack_pop_allocs.borrow_mut().as_mut() {
-                        // Stack locals can be materialized after `before_stack_pop` but before
-                        // `after_stack_pop`. Allocate them from the caller's recorded stack pointer
-                        // and remember their AllocIds so `after_stack_pop` can re-run stack layout in a
-                        // deterministic AllocId order.
-                        let base_addr = stack_pop_allocs.next_stack_addr - info.size.bytes().max(1);
-                        let base_addr = base_addr - base_addr % info.align.bytes();
+                if let Some(stack_pop_allocs) = thread.stack_pop_allocs.borrow_mut().as_mut() {
+                    // Stack locals can be materialized after `before_stack_pop` but before
+                    // `after_stack_pop`. Allocate them from the caller's recorded stack pointer
+                    // and remember their AllocIds so `after_stack_pop` can re-run stack layout in a
+                    // deterministic AllocId order.
+                    let base_addr = stack_pop_allocs.next_stack_addr - info.size.bytes().max(1);
+                    let base_addr = base_addr - base_addr % info.align.bytes();
 
-                        if base_addr < thread.stack_bottom {
-                            throw_exhaust!(AddressSpaceFull);
-                        }
-                        stack_pop_allocs.next_stack_addr = base_addr;
-                        stack_pop_allocs.alloc_ids.push(alloc_id);
-                        base_addr
-                    } else {
-                        let mut next_stack_addr = thread.next_stack_addr.borrow_mut();
-                        let base_addr = *next_stack_addr - info.size.bytes().max(1);
-                        let base_addr = base_addr - base_addr % info.align.bytes();
+                    if base_addr < thread.stack_bottom {
+                        throw_exhaust!(AddressSpaceFull);
+                    }
+                    stack_pop_allocs.next_stack_addr = base_addr;
+                    stack_pop_allocs.alloc_ids.push(alloc_id);
+                    base_addr
+                } else {
+                    let mut next_stack_addr = thread.next_stack_addr.borrow_mut();
+                    let base_addr = *next_stack_addr - info.size.bytes().max(1);
+                    let base_addr = base_addr - base_addr % info.align.bytes();
 
-                        if base_addr < thread.stack_bottom {
-                            throw_exhaust!(AddressSpaceFull);
-                        }
-                        *next_stack_addr = base_addr;
-                        base_addr
-                    };
-
-                base_addr
+                    if base_addr < thread.stack_bottom {
+                        throw_exhaust!(AddressSpaceFull);
+                    }
+                    *next_stack_addr = base_addr;
+                    base_addr
+                }
             } else {
                 let (next_address, limit) =
                     if this.machine.cpu_local_alloc_set.borrow().contains(&alloc_id) {
