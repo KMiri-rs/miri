@@ -43,6 +43,7 @@ use crate::concurrency::{
     AllocDataRaceHandler, GenmcCtx, GenmcEvalContextExt as _, GlobalDataRaceHandler, weak_memory,
 };
 use crate::debugger::reachability::FunctionInstanceInfo;
+use crate::helpers::adjust_stack_addr;
 use crate::mirch::{self, PageState, TypedKind, kernel_code_paddr_to_vaddr};
 use crate::*;
 
@@ -1941,13 +1942,20 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             let stack_len = ecx.active_thread_stack().len();
             ecx.active_thread_mut().set_top_user_relevant_frame(stack_len - 1);
         }
-        // log!("Entering {}", ecx.frame().instance().bright_green());
 
         // Pushes the stack pointer.
+        let ret_ty_layout = ecx.frame().return_place().layout.layout;
         let thread = ecx.machine.threads.active_thread_mut();
-        thread.stack_addr_records.push(*thread.next_stack_addr.borrow());
+        let next_stack_addr = &mut *thread.next_stack_addr.borrow_mut();
+        thread.stack_addr_records.push(*next_stack_addr);
+        // The address of return value is reserved before all locals in the frame,
+        // and base stack address starts after the return value allocation.
+        *next_stack_addr = adjust_stack_addr(
+            ret_ty_layout.size().bytes(),
+            ret_ty_layout.align().bytes(),
+            *next_stack_addr,
+        );
 
-        // log!("stack (push):\n{}", thread.display_stack_records());
         interp_ok(())
     }
 
@@ -1975,6 +1983,13 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         // concurrency and what it prints is just plain wrong. So we print our own information
         // instead. (Cc https://github.com/rust-lang/miri/issues/2266)
         // log!("Leaving {}", ecx.frame().instance().bright_red());
+
+        // Resumes the stack pointer for return value.
+        let thread = ecx.machine.threads.active_thread_mut();
+        if let Some(stack_addr_for_ret_value) = thread.stack_addr_records.last().copied() {
+            *thread.next_stack_addr.borrow_mut() = stack_addr_for_ret_value;
+        }
+
         interp_ok(())
     }
 
@@ -1984,6 +1999,7 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         frame: Frame<'tcx, Provenance, FrameExtra<'tcx>>,
         unwinding: bool,
     ) -> InterpResult<'tcx, ReturnAction> {
+        let ret_ty_layout = frame.return_place().layout.layout;
         let res = {
             // Move `frame` into a sub-scope so we control when it will be dropped.
             let mut frame = frame;
@@ -1999,19 +2015,25 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         if !ecx.active_thread_stack().is_empty() {
             info!("Continuing in {}", ecx.frame().instance());
         }
-        // Resumes the stack pointer.
+
+        // Check the reserved space of return value is correct, ensuring the stack address is correct.
         let thread = ecx.machine.threads.active_thread_mut();
-        if let Some(next_stack_addr) = thread.stack_addr_records.pop() {
-            let mut current_sp = thread.next_stack_addr.borrow_mut();
-            // Update stack ptr only when the recorded sp is lower than current sp.
-            // That's to say do nothing if current sp is lower than recorded sp,
-            // which is possible when returning to frame with more locals allocated.
-            if *current_sp > next_stack_addr {
-                *current_sp = next_stack_addr;
-            }
+        if let Some(stack_addr_for_ret_value) = thread.stack_addr_records.pop() {
+            let current_sp = *thread.next_stack_addr.borrow();
+            let stack_addr_after_ret_ty = adjust_stack_addr(
+                ret_ty_layout.size().bytes(),
+                ret_ty_layout.align().bytes(),
+                stack_addr_for_ret_value,
+            );
+            // Return value is allowed not to be allocated at all, meaning current address equals stack_addr_for_ret_value.
+            // Or the return value is allocated, meaning current address equals stack_addr_after_ret_ty.
+            assert!(
+                current_sp == stack_addr_for_ret_value || current_sp == stack_addr_after_ret_ty,
+                "the current stack address 0x{current_sp:x} must equal \
+                 0x{stack_addr_for_ret_value:x} or 0x{stack_addr_after_ret_ty:x}"
+            );
         }
 
-        // log!("stack (pop after):\n{}", thread.display_stack_records());
         res
     }
 
