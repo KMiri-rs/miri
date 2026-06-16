@@ -18,8 +18,12 @@ pub fn parse_json_file(file_path: &str) -> Result<PhysConfig, io::Error> {
     );
     assert!(
         config.kernel_code_size
-            > kernel_static_start_addr() + config.kernel_static_size + config.cpu_local_size,
-        "kernel_code_size need to be bigger enough"
+            >= kernel_static_start_addr() + config.kernel_static_size + config.cpu_local_size,
+        "kernel_code_size need to be big enough for kernel static and CPU-local sections"
+    );
+    assert!(
+        config.total_mem_size >= kernel_stack_end_addr(),
+        "total_mem_size must cover the kernel stack section"
     );
 
     const INIT_MAPPING_SIZE: usize = 0x4000_0000; // 1GB
@@ -38,14 +42,10 @@ pub fn parse_json_file(file_path: &str) -> Result<PhysConfig, io::Error> {
 ///
 /// Represents the layout of physical memory in the system with the following structure:
 ///
-/// |<-------------------------------Kernel Code Section-------------------------------->|
-/// |<-Boot PT->|<-Kernel Static Section->|<-CPU-local Section->|<-Kernel Stack Section->|
-/// |-----------|------------------------------------------------------------------------|
-/// 0x0      0x10000                                                             `kernel_code_size`
-///
-/// |<-Kernel Code Section->|<-----Free Pages------>|
-/// |-----------------------|-----------------------|
-/// 0x0              `kernel_code_size`        `total_mem_size`
+/// |<----------Kernel Reserved---------->|<-----Free Pages----->|<--Kernel Stack-->|
+/// |<-Boot PT->|<-Static->|<-CPU-local-->|                      |                  |
+/// |-----------|---------|--------------|----------------------|------------------|
+/// 0x0      0x10000  0x400000     `kernel_code_size`      0x8000000    `total_mem_size`
 ///
 #[derive(Deserialize, Clone, Copy, Debug)]
 pub struct PhysConfig {
@@ -85,20 +85,15 @@ impl PhysConfig {
 
     /// Creates a default physical memory configuration with typical values:
     ///
-    /// |<-------------------------------Kernel Code Section-------------------------------->|
-    /// |<-Boot PT->|<-Kernel Static Section->|<-CPU-local Section->|<-Kernel Stack Section->|
-    /// |-----------|-------------------------|---------------------|------------------------|
-    /// 0x0      0x1_0000                 0x40_0000             0x41_0000                0x100_0000
-    ///
-    /// |<-Kernel Code Section->|<-----Free Pages------>|
-    /// |-----------------------|-----------------------|
-    /// 0x0                 0x100_0000             0x800_0000
+    /// |<-Boot PT->|<-Kernel Static Section->|<-CPU-local Section------------>|<--- Free Pages --->|<------------Kernel Stack------------>|
+    /// |-----------|-------------------------|--------------------------------|--------------------|--------------------------------------|
+    /// 0x0      0x1_0000              0x40_0000                       0x100_0000          0x800_0000                               0xb20_0000
     pub const fn default() -> Self {
         Self {
-            total_mem_size: 0x800_0000,
+            total_mem_size: 0xb20_0000,
             kernel_code_size: 0x100_0000,
             kernel_static_size: 0x3f_0000,
-            cpu_local_size: 0x1_0000,
+            cpu_local_size: 0xc0_0000,
 
             // Size and base should align to 0x4000_0000
             kernel_code_base_vaddr: 0xffff_ffff_8000_0000,
@@ -123,9 +118,9 @@ impl CodeSection {
             Self::BootPt
         } else if paddr < cpu_local_start_addr() {
             Self::Static
-        } else if paddr < kernel_stack_start_addr() {
+        } else if paddr < cpu_local_end_addr() {
             Self::CpuLocal
-        } else if paddr <= kernel_stack_end_addr() {
+        } else if paddr >= kernel_stack_start_addr() && paddr < kernel_stack_end_addr() {
             Self::Stack
         } else {
             return Err(format!("physical addr 0x{paddr:x} doesn't locate in kernel section"));
@@ -214,14 +209,22 @@ pub fn cpu_local_end_addr() -> usize {
 }
 
 // Kernel stack accessors
-/// Returns starting physical address of kernel stacks
-pub fn kernel_stack_start_addr() -> usize {
-    cpu_local_end_addr()
+/// Returns starting physical address of kernel stacks.
+///
+/// Keep this immediately after the free-pages range, whose requested default extent is
+/// 0x1000000..0x8000000.
+pub const fn kernel_stack_start_addr() -> usize {
+    0x800_0000
 }
 
-/// Returns ending physical address of kernel stacks
-pub fn kernel_stack_end_addr() -> usize {
-    kernel_code_end()
+/// Returns the size of the kernel stack section.
+pub const fn kernel_stack_size() -> usize {
+    50 * 1024 * 1024
+}
+
+/// Returns ending physical address of kernel stacks (exclusive).
+pub const fn kernel_stack_end_addr() -> usize {
+    kernel_stack_start_addr() + kernel_stack_size()
 }
 
 // Virtual address accessors

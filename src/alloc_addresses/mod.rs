@@ -18,6 +18,7 @@ use self::reuse_pool::ReusePool;
 use crate::alloc::MiriAllocParams;
 use crate::alloc_addresses::address_generator::align_addr;
 use crate::concurrency::VClock;
+use crate::debugger::debugger_log;
 use crate::diagnostics::SpanDedupDiagnostic;
 use crate::mirch::{
     CodeSection, PageState, kernel_code_paddr_to_vaddr, kernel_code_vaddr_to_paddr,
@@ -73,8 +74,6 @@ pub struct GlobalStateInner {
     /// This is used for allocating addresses for cpu-local allocations.
     next_cpu_local_paddr: u64,
     /// This is used for allocating addresses for stack allocations.
-    /// FIXME: this field seems unused as real stack allocations, because thread next_stack_addr is
-    /// used instead.
     next_stack_paddr: u64,
 }
 
@@ -162,19 +161,6 @@ impl GlobalStateInner {
 
     pub fn get_base_addr(&self, alloc_id: AllocId) -> u64 {
         *self.base_paddr.get(&alloc_id).unwrap()
-    }
-
-    /// Removes the exact base-address mapping for an allocation.
-    ///
-    /// This is not an arbitrary address lookup: `paddr` must be the allocation base address stored
-    /// in `base_paddr`. If multiple entries with the same base address exist temporarily, remove
-    /// only the one with the matching `AllocId`.
-    pub(crate) fn remove_base_addr_mapping(&mut self, paddr: u64, alloc_id: AllocId) -> bool {
-        self.int_to_ptr_map.sort_unstable();
-        self.int_to_ptr_map.binary_search(&(paddr, alloc_id)).is_ok_and(|pos| {
-            self.int_to_ptr_map.remove(pos);
-            true
-        })
     }
 }
 
@@ -282,31 +268,17 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
         } else {
             let base_addr = if memory_kind == MemoryKind::Stack {
                 let thread = this.machine.threads.active_thread_ref();
-                if let Some(stack_pop_allocs) = thread.stack_pop_allocs.borrow_mut().as_mut() {
-                    // Stack locals can be materialized after `before_stack_pop` but before
-                    // `after_stack_pop`. Allocate them from the caller's recorded stack pointer
-                    // and remember their AllocIds so `after_stack_pop` can re-run stack layout in a
-                    // deterministic AllocId order.
-                    let base_addr = stack_pop_allocs.next_stack_addr - info.size.bytes().max(1);
-                    let base_addr = base_addr - base_addr % info.align.bytes();
+                let mut next_stack_addr = thread.next_stack_addr.borrow_mut();
 
-                    if base_addr < thread.stack_bottom {
-                        throw_exhaust!(AddressSpaceFull);
-                    }
-                    stack_pop_allocs.next_stack_addr = base_addr;
-                    stack_pop_allocs.alloc_ids.push(alloc_id);
-                    base_addr
-                } else {
-                    let mut next_stack_addr = thread.next_stack_addr.borrow_mut();
-                    let base_addr = *next_stack_addr - info.size.bytes().max(1);
-                    let base_addr = base_addr - base_addr % info.align.bytes();
+                let base_addr = *next_stack_addr - info.size.bytes().max(1);
+                let base_addr = base_addr - base_addr % info.align.bytes();
 
-                    if base_addr < thread.stack_bottom {
-                        throw_exhaust!(AddressSpaceFull);
-                    }
-                    *next_stack_addr = base_addr;
-                    base_addr
+                if base_addr < thread.stack_bottom {
+                    throw_exhaust!(AddressSpaceFull);
                 }
+                *next_stack_addr = base_addr;
+
+                base_addr
             } else {
                 let (next_address, limit) =
                     if this.machine.cpu_local_alloc_set.borrow().contains(&alloc_id) {
@@ -628,25 +600,11 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 // Store address in cache.
                 global_state.base_paddr.try_insert(alloc_id, base_paddr).unwrap();
 
-                let stack_pop_allocation = base_paddr != 0
-                    && memory_kind == MemoryKind::Stack
-                    && this
-                        .machine
-                        .threads
-                        .active_thread_ref()
-                        .stack_pop_allocs
-                        .borrow_mut()
-                        .as_mut()
-                        .is_some_and(|stack_pop_allocs| {
-                            stack_pop_allocs.insert_int_to_ptr(base_paddr, alloc_id);
-                            true
-                        });
-
                 // Also maintain the opposite mapping in `int_to_ptr_map`, ensuring we keep it
                 // sorted. We have a fast-path for the common case that this address is bigger than
                 // all previous ones. We skip this for allocations at address 0; those can't be
                 // real, they must be TypeId "fake allocations".
-                if base_paddr != 0 && !stack_pop_allocation {
+                if base_paddr != 0 {
                     let pos = if global_state
                         .int_to_ptr_map
                         .last()
@@ -656,14 +614,15 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     } else {
                         match global_state
                             .int_to_ptr_map
-                            .binary_search_by_key(&base_paddr, |(addr, id)| *addr)
+                            .binary_search_by_key(&base_paddr, |(addr, _)| *addr)
                         {
                             Ok(found) => {
                                 let found_alloc_id = global_state.int_to_ptr_map[found].1;
-                                assert_ne!(
-                                    found_alloc_id, alloc_id,
-                                    "0x{base_paddr:x} has two AllocId {alloc_id:?} and {found_alloc_id:?}"
-                                );
+                                if found_alloc_id == alloc_id {
+                                    debugger_log(format!(
+                                        "{base_paddr} has two AllocId {alloc_id:?} and {found_alloc_id:?}"
+                                    ))
+                                }
                                 return interp_ok(base_paddr);
                             }
                             Err(pos) => pos,
@@ -907,6 +866,9 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
 impl<'tcx> MiriMachine<'tcx> {
     pub fn free_alloc_id(&mut self, dead_id: AllocId, size: Size, align: Align, kind: MemoryKind) {
+        let global_state = self.alloc_addresses.get_mut();
+        let rng = self.rng.get_mut();
+
         // We can *not* remove this from `base_addr`, since the interpreter design requires that we
         // be able to retrieve an AllocId + offset for any memory access *before* we check if the
         // access is valid. Specifically, `ptr_get_alloc` is called on each attempt at a memory
@@ -919,33 +881,17 @@ impl<'tcx> MiriMachine<'tcx> {
         // returns a dead allocation.
         // To avoid a linear scan we first look up the address in `base_addr`, and then find it in
         // `int_to_ptr_map`.
-        let addr = *self.alloc_addresses.get_mut().base_paddr.get(&dead_id).unwrap();
-        let global_state = self.alloc_addresses.get_mut();
+        let addr = *global_state.base_paddr.get(&dead_id).unwrap();
+        let pos =
+            global_state.int_to_ptr_map.binary_search_by_key(&addr, |(addr, _)| *addr).unwrap();
+        let removed = global_state.int_to_ptr_map.remove(pos);
         // log!("[free_alloc_id] addr={addr:#x} alloc_id={dead_id:?} kind={kind:?}");
-        let removed_from_global = global_state.remove_base_addr_mapping(addr, dead_id);
-        let removed_from_stack_pop = if removed_from_global {
-            false
-        } else {
-            kind == MemoryKind::Stack
-                && self
-                    .threads
-                    .active_thread_ref()
-                    .stack_pop_allocs
-                    .borrow_mut()
-                    .as_mut()
-                    .is_some_and(|stack_pop_allocs| {
-                        stack_pop_allocs.remove_base_addr_mapping(addr, dead_id)
-                    })
-        };
-        assert!(removed_from_global || removed_from_stack_pop);
+        assert_eq!(removed, (addr, dead_id)); // double-check that we removed the right thing
         // We can also remove it from `exposed`, since this allocation can anyway not be returned by
         // `alloc_id_from_addr` any more.
         global_state.exposed.remove(&dead_id);
         // Also remember this address for future reuse.
-        if !removed_from_stack_pop
-            && let Some((_addr_gen, reuse)) = global_state.address_generation.as_mut()
-        {
-            let rng = self.rng.get_mut();
+        if let Some((_addr_gen, reuse)) = global_state.address_generation.as_mut() {
             let thread = self.threads.active_thread();
             reuse.add_addr(rng, addr, size, align, kind, thread, || {
                 // We cannot be in GenMC mode as then `address_generation` is `None`. We cannot use
