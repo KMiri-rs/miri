@@ -618,19 +618,8 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     {
                         global_state.int_to_ptr_map.len()
                     } else {
-                        match global_state
-                            .int_to_ptr_map
-                            .binary_search_by_key(&base_paddr, |(addr, _)| *addr)
-                        {
-                            Ok(found) => {
-                                let found_alloc_id = global_state.int_to_ptr_map[found].1;
-                                if found_alloc_id != alloc_id {
-                                    debugger_log(format!(
-                                        "{base_paddr} has two AllocId {alloc_id:?} and {found_alloc_id:?}"
-                                    ))
-                                }
-                                return interp_ok(base_paddr);
-                            }
+                        match global_state.int_to_ptr_map.binary_search(&(base_paddr, alloc_id)) {
+                            Ok(found) => return interp_ok(base_paddr),
                             Err(pos) => pos,
                         }
                     };
@@ -889,18 +878,11 @@ impl<'tcx> MiriMachine<'tcx> {
         // `int_to_ptr_map`.
         let addr = *global_state.base_paddr.get(&dead_id).unwrap();
         debugger_log(format!("free {dead_id:?} (addr=0x{addr:x}={addr})"));
-        let pos = global_state.int_to_ptr_map.binary_search_by_key(&addr, |(addr, _)| *addr);
-        if let Ok(pos) = pos {
-            if global_state.int_to_ptr_map[pos].1 == dead_id {
-                let removed = global_state.int_to_ptr_map.remove(pos);
-                // log!("[free_alloc_id] addr={addr:#x} alloc_id={dead_id:?} kind={kind:?}");
-                assert_eq!(removed, (addr, dead_id)); // double-check that we removed the right thing
-            } else {
-                panic!(
-                    "free {dead_id:?} at 0x{addr:x}, but int_to_ptr_map has {:?} at that address",
-                    global_state.int_to_ptr_map[pos].1
-                );
-            }
+        // int_to_ptr_map may contain a address pointed by multiple AllocIds.
+        if let Ok(pos) = global_state.int_to_ptr_map.binary_search(&(addr, dead_id)) {
+            global_state.int_to_ptr_map.remove(pos);
+            // log!("[free_alloc_id] addr={addr:#x} alloc_id={dead_id:?} kind={kind:?}");
+            // assert_eq!(removed, (addr, dead_id)); // double-check that we removed the right thing
         } else {
             panic!("free {dead_id:?} at 0x{addr:x}, but it is not present in int_to_ptr_map");
         }

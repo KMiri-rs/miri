@@ -1891,17 +1891,6 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         ecx: &mut InterpCx<'tcx, Self>,
         frame: Frame<'tcx, Provenance>,
     ) -> InterpResult<'tcx, Frame<'tcx, Provenance, FrameExtra<'tcx>>> {
-        // KMiri uses absolute addresses in pointers. If a caller return place is lazily
-        // materialized during `return_from_current_stack_frame`, any later address adjustment would
-        // invalidate already-created pointers. Materialize it before the callee frame is pushed, so
-        // it is allocated in the caller frame and `after_stack_push` records the SP below it.
-        if !ecx.active_thread_stack().is_empty() && !frame.return_place().layout.is_zst() {
-            let return_place = frame.return_place().clone();
-            if ecx.place_to_op(&return_place).unwrap().as_mplace_or_imm().left().is_none() {
-                ecx.force_allocation(&return_place).unwrap();
-            }
-        }
-
         // Start recording our event before doing anything else
         let timing = if let Some(profiler) = ecx.machine.profiler.as_ref() {
             let fn_name = frame.instance().to_string();
@@ -2018,6 +2007,18 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             ecx.active_thread_mut().recompute_top_user_relevant_frame(/* skip */ 1);
         }
 
+        // Resumes the stack pointer.
+        let thread = ecx.machine.threads.active_thread_mut();
+        if let Some(next_stack_addr) = thread.stack_addr_records.pop() {
+            let mut current_sp = &mut *thread.next_stack_addr.borrow_mut();
+            // FIXME: this is wrong to directly set sp, because the allocation of return value
+            // and the allocations of callee locals can overlap. This means that multiple
+            // AllocIds points to the same base_paddr.
+            // But we can't resume SP in after_stack_pop, because it makes callee allocations
+            // linger longer than the time it returns, leading to dead allocation leak.
+            *current_sp = next_stack_addr;
+        }
+
         // tracing-tree can automatically annotate scope changes, but it gets very confused by our
         // concurrency and what it prints is just plain wrong. So we print our own information
         // instead. (Cc https://github.com/rust-lang/miri/issues/2266)
@@ -2055,43 +2056,6 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         if let Some(next_stack_addr) = thread.stack_addr_records.pop() {
             *thread.next_stack_addr.borrow_mut() = next_stack_addr;
         }
-
-        // Resumes the stack pointer.
-        // let thread = ecx.machine.threads.active_thread_mut();
-        // if let Some(next_stack_addr) = thread.stack_addr_records.pop() {
-        //     let mut current_sp = &mut *thread.next_stack_addr.borrow_mut();
-        //     let do_nothing = *current_sp < next_stack_addr;
-        //
-        //     // display what is alive between current_sp and next_stack_addr
-        //     if do_nothing {
-        //         let alloc_spans = ecx.machine.allocation_spans.borrow();
-        //         let alloc_state = ecx.machine.alloc_addresses.borrow();
-        //         for (alloc_id, (alloc, dealloc)) in &*alloc_spans {
-        //             if dealloc.is_none()
-        //                 && let Some(base_paddr) = alloc_state.base_paddr.get(alloc_id).copied()
-        //                 && let base_addr = kernel_code_paddr_to_vaddr(base_paddr as usize) as u64
-        //                 && (base_addr >= *current_sp && base_addr < next_stack_addr)
-        //             {
-        //                 debugger_log(format!(
-        //                     "alloc_id={alloc_id} alloc_span={alloc:?} dealloc_span={dealloc:?} current_sp=0x{current_sp:x} \
-        //                      base_addr=0x{base_addr:x} next_stack_addr={next_stack_addr:x}"
-        //                 ));
-        //             }
-        //         }
-        //     }
-        //
-        //     // Update stack ptr only when the recorded sp is lower than current sp.
-        //     // That's to say do nothing if current sp is lower than recorded sp,
-        //     // which is possible when returning to frame with more locals allocated.
-        //     // if do_nothing {
-        //     //     debugger_log(format!(
-        //     //         "[after_stack_pop] current_sp=0x{current_sp:x} next_stack_addr={next_stack_addr:x} do_nothing"
-        //     //     ));
-        //     // }
-        //     // if *current_sp > next_stack_addr {
-        //     *current_sp = next_stack_addr;
-        //     // }
-        // }
 
         // log!("stack (pop after):\n{}", thread.display_stack_records());
         res
