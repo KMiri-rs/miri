@@ -343,47 +343,16 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
     /// If the `paddr` is not referred to a typed slot, it returns `None`.
     fn lazy_alloc_typed_slot_allocation(&self, paddr: usize) -> Option<AllocId> {
         let ecx = self.eval_context_ref();
-        let page_index = paddr / mirch::page_size();
+        let page_size = mirch::page_size();
+        let page_index = paddr / page_size;
         let page_info = mirch::physical_mem().page_states[page_index];
 
-        if let PageState::Typed { page_type: _, type_size } = page_info {
-            let alloc_id = ecx.tcx.reserve_alloc_id();
-            let actual_paddr = paddr - paddr % type_size;
-            let kind = rustc_const_eval::interpret::MemoryKind::Machine(MiriMemoryKind::Kernel);
-            let allocation = {
-                let allocation = mirch::create_allocation_at(
-                    actual_paddr,
-                    Layout::from_size_align(type_size, type_size).unwrap(),
-                    ecx.machine.get_default_alloc_params(),
-                );
-                let extra = MiriMachine::init_allocation(
-                    ecx,
-                    alloc_id,
-                    kind,
-                    allocation.size(),
-                    allocation.align,
-                )
-                .unwrap();
-                allocation.with_extra(extra)
-            };
-
-            ecx.memory.alloc_map().insert(alloc_id, (kind, allocation));
-            {
-                let mut global_state = ecx.machine.alloc_addresses.borrow_mut();
-                global_state.set_exposed_kernel_padd(alloc_id, actual_paddr);
-            }
-
-            // Re-expose the root tag so wildcard/raw-pointer accesses can find a
-            // writable provenance after the typed-slot allocation is created.
-            let root_tag = {
-                let mut borrow_tracker = ecx.machine.borrow_tracker.as_ref().unwrap().borrow_mut();
-                borrow_tracker.root_ptr_tag(alloc_id, &ecx.machine)
-            };
-            ecx.expose_tag(alloc_id, root_tag).discard_err();
-            return Some(alloc_id);
-        }
-
-        None
+        Some(match page_info {
+            PageState::Typed { page_type: _, type_size } =>
+                mirch_create_alloc_id(paddr, type_size, ecx),
+            PageState::Untyped => mirch_create_alloc_id(paddr, page_size, ecx),
+            PageState::Unused => return None,
+        })
     }
 
     /// Inits the cpu-local allocation in APs.
@@ -863,6 +832,44 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let this = self.eval_context_ref();
         this.machine.alloc_addresses.borrow().exposed.iter().copied().collect()
     }
+}
+
+/// Create a allocation, and returns a new AllocId.
+/// Paddr is aligned to type_size, and the allocation size is type_size.
+fn mirch_create_alloc_id<'tcx>(
+    paddr: usize,
+    type_size: usize,
+    ecx: &InterpCx<'tcx, MiriMachine<'tcx>>,
+) -> AllocId {
+    let alloc_id = ecx.tcx.reserve_alloc_id();
+    let actual_paddr = paddr - paddr % type_size;
+    let kind = rustc_const_eval::interpret::MemoryKind::Machine(MiriMemoryKind::Kernel);
+    let allocation = {
+        let allocation = mirch::create_allocation_at(
+            actual_paddr,
+            Layout::from_size_align(type_size, type_size).unwrap(),
+            ecx.machine.get_default_alloc_params(),
+        );
+        let extra =
+            MiriMachine::init_allocation(ecx, alloc_id, kind, allocation.size(), allocation.align)
+                .unwrap();
+        allocation.with_extra(extra)
+    };
+
+    ecx.memory.alloc_map().insert(alloc_id, (kind, allocation));
+    {
+        let mut global_state = ecx.machine.alloc_addresses.borrow_mut();
+        global_state.set_exposed_kernel_padd(alloc_id, actual_paddr);
+    }
+
+    // Re-expose the root tag so wildcard/raw-pointer accesses can find a
+    // writable provenance after the typed-slot allocation is created.
+    let root_tag = {
+        let mut borrow_tracker = ecx.machine.borrow_tracker.as_ref().unwrap().borrow_mut();
+        borrow_tracker.root_ptr_tag(alloc_id, &ecx.machine)
+    };
+    ecx.expose_tag(alloc_id, root_tag).discard_err();
+    alloc_id
 }
 
 impl<'tcx> MiriMachine<'tcx> {
