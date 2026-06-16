@@ -229,8 +229,33 @@ pub type StackEmptyCallback<'tcx> =
 pub(crate) struct StackPopAllocTracker {
     /// The temporary stack pointer used to place stack allocations during the pop window.
     pub(crate) next_stack_addr: u64,
+    /// Temporary address-to-allocation map for pop-window allocations.
+    ///
+    /// These entries are intentionally not published in the global `int_to_ptr_map` because their
+    /// temporary addresses may overlap callee stack allocations that are still live during the pop.
+    pub(crate) int_to_ptr_map: Vec<(u64, AllocId)>,
     /// Allocations created during the pop window; rebased in `after_stack_pop`.
     pub(crate) alloc_ids: Vec<AllocId>,
+}
+
+impl StackPopAllocTracker {
+    pub(crate) fn insert_int_to_ptr(&mut self, paddr: u64, alloc_id: AllocId) {
+        let pos = if self.int_to_ptr_map.last().is_some_and(|(last_addr, _)| *last_addr < paddr) {
+            self.int_to_ptr_map.len()
+        } else {
+            self.int_to_ptr_map.binary_search_by_key(&paddr, |(addr, _)| *addr).unwrap_err()
+        };
+        self.int_to_ptr_map.insert(pos, (paddr, alloc_id));
+    }
+
+    /// Removes the exact base-address mapping for an allocation in this temporary map.
+    pub(crate) fn remove_base_addr_mapping(&mut self, paddr: u64, alloc_id: AllocId) -> bool {
+        self.int_to_ptr_map.sort_unstable();
+        self.int_to_ptr_map.binary_search(&(paddr, alloc_id)).is_ok_and(|pos| {
+            self.int_to_ptr_map.remove(pos);
+            true
+        })
+    }
 }
 
 impl<'tcx> Thread<'tcx> {
