@@ -185,6 +185,14 @@ pub struct Thread<'tcx> {
     /// Records for the addresses of the stack frames in the current thread.
     pub(crate) stack_addr_records: Vec<u64>,
 
+    /// Stack allocations materialized while a frame is being popped.
+    ///
+    /// Miri can still materialize caller-side locals between `before_stack_pop` and
+    /// `after_stack_pop`. Those allocations must be based on the caller's restored stack pointer,
+    /// not on the callee's current one, otherwise they may consume stack space that is about to be
+    /// released.
+    pub(crate) stack_pop_allocs: RefCell<Option<StackPopAllocTracker>>,
+
     /// The stack address for the next stack variable.
     pub(crate) next_stack_addr: RefCell<u64>,
 
@@ -226,6 +234,13 @@ pub struct Thread<'tcx> {
 
 pub type StackEmptyCallback<'tcx> =
     Box<dyn FnMut(&mut MiriInterpCx<'tcx>) -> InterpResult<'tcx, Poll<()>> + 'tcx>;
+
+pub(crate) struct StackPopAllocTracker {
+    /// The temporary stack pointer used to place stack allocations during the pop window.
+    pub(crate) next_stack_addr: u64,
+    /// Allocations created during the pop window; rebased in `after_stack_pop`.
+    pub(crate) alloc_ids: Vec<AllocId>,
+}
 
 impl<'tcx> Thread<'tcx> {
     /// Get the name of the current thread if it was set.
@@ -345,6 +360,7 @@ impl<'tcx> Thread<'tcx> {
             thread_name: name.map(|name| Vec::from(name.as_bytes())),
             stack: Vec::new(),
             stack_addr_records: Vec::new(),
+            stack_pop_allocs: RefCell::new(None),
             next_stack_addr: RefCell::new(stack_range.end),
             stack_bottom: stack_range.start,
             origin_span: DUMMY_SP,
@@ -364,6 +380,7 @@ impl VisitProvenance for Thread<'_> {
             last_error,
             stack,
             stack_addr_records: _,
+            stack_pop_allocs: _,
             next_stack_addr: _,
             stack_bottom: _,
             origin_span: _,
