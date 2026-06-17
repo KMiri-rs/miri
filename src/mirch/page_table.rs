@@ -5,6 +5,8 @@ use crate::mirch::{paddr_to_mem, page_size};
 use crate::*;
 
 pub const NR_LEVELS: usize = 4;
+// NOTE: asterinas has trait abstractions for PTE, but the size is actually 8,
+// because asterinas only targets 64bit machines.
 pub const PTE_SIZE: usize = 8;
 
 const BOOT_PT_PADDR: usize = 0x1000;
