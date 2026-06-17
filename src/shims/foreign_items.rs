@@ -218,7 +218,10 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 // it is a function. It is okay to encounter non-functions in the search above
                 // as long as the final instance we arrive at is a function.
                 if let Some(SymbolTarget { instance, .. }) = symbol_target {
-                    if !matches!(tcx.def_kind(instance.def_id()), DefKind::Fn | DefKind::AssocFn) {
+                    if !matches!(
+                        tcx.def_kind(instance.def_id()),
+                        DefKind::Fn | DefKind::AssocFn | DefKind::Static { .. }
+                    ) {
                         throw_ub_format!(
                             "attempt to call an exported symbol that is not defined as a function"
                         );
