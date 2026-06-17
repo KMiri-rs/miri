@@ -899,37 +899,37 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 free_allocations(this, paddr, count)?;
             }
             "kern_miri_zero" => {
-                let [paddr, count] =
+                let [paddr, page_count] =
                     this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
                 let paddr = this.read_target_usize(paddr)? as usize;
-                let count = this.read_target_usize(count)? as usize;
+                let page_count = this.read_target_usize(page_count)? as usize;
+                let page_size = mirch::page_size();
                 let actual_ptr = mirch::paddr_to_mem(paddr);
                 unsafe {
-                    core::ptr::write_bytes(actual_ptr, 0, count * 4096);
+                    core::ptr::write_bytes(actual_ptr, 0, page_count * page_size);
                 }
-                let page_size = mirch::page_size();
-                for i in 0..count {
-                    let addr = paddr + i * page_size;
+                for i in 0..page_count {
+                    let paddr_page = paddr + i * page_size;
                     let init_masks = &mut mirch::physical_mem_mut().init_masks;
-                    let mask_allocation = init_masks.get_mut(&addr).unwrap();
+                    let mask_allocation = init_masks.get_mut(&paddr_page).unwrap();
                     // Notify the allocation that it has been initialized.
                     let _ = mask_allocation
-                        .get_bytes_unchecked_for_overwrite_ptr(this, (0..4096).into());
+                        .get_bytes_unchecked_for_overwrite_ptr(this, (0..page_size).into());
                 }
             }
             "kern_miri_retype_pages" => {
-                let [paddr, count, page_type, type_size] =
+                let [paddr, count, page_type, slot_size] =
                     this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
                 let paddr = this.read_target_usize(paddr)? as usize;
                 let count = this.read_target_usize(count)? as usize;
                 let page_type = this.read_target_usize(page_type)? as usize;
-                let type_size = this.read_target_usize(type_size)? as usize;
+                let slot_size = this.read_target_usize(slot_size)? as usize;
                 let page_size = mirch::page_size();
-                assert_eq!(page_size % type_size, 0);
+                assert_eq!(page_size % slot_size, 0);
                 for page_index in 0..count {
                     mirch::check_page_state(paddr + page_index * page_size, PageState::Untyped);
                 }
-                type_pages_at(paddr, count, type_size, TypedKind::from_usize(page_type).unwrap())?;
+                type_pages_at(paddr, count, slot_size, TypedKind::from_usize(page_type).unwrap())?;
             }
             "kern_miri_get_root_page_table" => {
                 let root_paddr = mirch::physical_mem().page_table.as_ref().unwrap().root_paddr();

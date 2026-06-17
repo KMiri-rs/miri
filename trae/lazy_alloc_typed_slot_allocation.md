@@ -32,15 +32,15 @@ fn lazy_alloc_typed_slot_allocation(&self, paddr: usize) -> Option<AllocId> {
     
     let page_info = mirch::physical_mem().page_states[page_index];
 
-    if let PageState::Typed { page_type: _, type_size } = page_info {
+    if let PageState::Typed { page_type: _, slot_size } = page_info {
         let alloc_id = ecx.tcx.reserve_alloc_id();
-        let actual_addr = paddr - paddr % type_size;
+        let actual_addr = paddr - paddr % slot_size;
         let kind = rustc_const_eval::interpret::MemoryKind::Machine(MiriMemoryKind::Kernel);
         
         let allocation = {
             let allocation = mirch::create_allocation_at(
                 actual_addr,
-                Layout::from_size_align(type_size, type_size).unwrap(),
+                Layout::from_size_align(slot_size, slot_size).unwrap(),
                 ecx.machine.get_default_alloc_params(),
             );
             let extra = MiriMachine::init_allocation(ecx, alloc_id, kind, allocation.size(), allocation.align).unwrap();
@@ -115,7 +115,7 @@ pub enum PageState {
     Untyped,          // 已分配但无类型信息的页面
     Typed {           // 类型化页面
         page_type: TypedKind,
-        type_size: usize,
+        slot_size: usize,
     },
 }
 ```
@@ -141,7 +141,7 @@ pub enum PageState {
 
 ### 2. 精细粒度的类型控制
 
-每个 typed page 记录了 `type_size`，使得可以：
+每个 typed page 记录了 `slot_size`，使得可以：
 - 按对象大小对齐分配
 - 支持同一页面内多个独立对象的管理
 - 在释放时按类型大小逐一清理分配
@@ -204,13 +204,13 @@ pub enum PageState {
 pub fn type_pages_at<'tcx>(
     paddr: usize,
     count: usize,
-    type_size: usize,
+    slot_size: usize,
     page_type: TypedKind,
 ) -> InterpResult<'tcx, ()> {
     let physical_mem = physical_mem_mut();
     for page_index in 0..count {
         let page_paddr = paddr + page_size() * page_index;
-        physical_mem.set_page_state(page_paddr, PageState::Typed { page_type, type_size });
+        physical_mem.set_page_state(page_paddr, PageState::Typed { page_type, slot_size });
     }
     interp_ok(())
 }

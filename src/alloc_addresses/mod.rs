@@ -347,14 +347,14 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let page_index = paddr / mirch::page_size();
         let page_info = mirch::physical_mem().page_states[page_index];
 
-        if let PageState::Typed { page_type: _, type_size } = page_info {
+        if let PageState::Typed { page_type: _, slot_size } = page_info {
             let alloc_id = ecx.tcx.reserve_alloc_id();
-            let actual_paddr = paddr - paddr % type_size;
+            let actual_paddr = paddr - paddr % slot_size;
             let kind = rustc_const_eval::interpret::MemoryKind::Machine(MiriMemoryKind::Kernel);
             let allocation = {
                 let allocation = mirch::create_allocation_at(
                     actual_paddr,
-                    Layout::from_size_align(type_size, type_size).unwrap(),
+                    Layout::from_size_align(slot_size, slot_size).unwrap(),
                     ecx.machine.get_default_alloc_params(),
                 );
                 let extra = MiriMachine::init_allocation(
