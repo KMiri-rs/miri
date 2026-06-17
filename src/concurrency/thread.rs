@@ -527,7 +527,7 @@ impl<'tcx> ThreadManager<'tcx> {
         let mut cpu_to_threads = [None; CPU_NUM];
         cpu_to_threads[0] = Some(ThreadId::MAIN_THREAD);
         let mut cpu_local_base = [0; CPU_NUM];
-        cpu_local_base[0] = mirch::kernel_code_base_vaddr() + mirch::cpu_local_start_addr();
+        cpu_local_base[0] = kernel_code_paddr_to_vaddr(mirch::cpu_local_start_addr());
         Self {
             active_thread: ThreadId::MAIN_THREAD,
             cpu_to_threads,
