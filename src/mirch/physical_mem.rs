@@ -96,9 +96,9 @@ pub fn free_allocations<'tcx>(
         let page_paddr = paddr + page_size() * page_index;
         let page_info = physical_mem.page_states[paddr / page_size()];
 
-        if let PageState::Typed { page_type: _, type_size } = page_info {
-            for index in 0..page_size() / type_size {
-                let actual_paddr = page_paddr + index * type_size;
+        if let PageState::Typed { page_type: _, slot_size } = page_info {
+            for index in 0..page_size() / slot_size {
+                let actual_paddr = page_paddr + index * slot_size;
                 let pos = global_state
                     .int_to_ptr_map
                     .binary_search_by_key(&(actual_paddr as u64), |(addr, _)| *addr);
@@ -127,13 +127,13 @@ pub fn free_allocations<'tcx>(
 pub fn type_pages_at<'tcx>(
     paddr: usize,
     count: usize,
-    type_size: usize,
+    slot_size: usize,
     page_type: TypedKind,
 ) -> InterpResult<'tcx, ()> {
     let physical_mem = physical_mem_mut();
     for page_index in 0..count {
         let page_paddr = paddr + page_size() * page_index;
-        physical_mem.set_page_state(page_paddr, PageState::Typed { page_type, type_size });
+        physical_mem.set_page_state(page_paddr, PageState::Typed { page_type, slot_size });
     }
 
     interp_ok(())
@@ -234,7 +234,7 @@ impl PhysicalMemory {
         )]
         for i in 0..kernel_code_page_num() {
             page_states[i] =
-                PageState::Typed { page_type: TypedKind::Interpreter, type_size: page_size() };
+                PageState::Typed { page_type: TypedKind::Interpreter, slot_size: page_size() };
         }
 
         Self { mem, page_states, init_masks: BTreeMap::new(), page_table: None }
@@ -268,7 +268,12 @@ impl PhysicalMemory {
 pub enum PageState {
     Unused,
     Untyped,
-    Typed { page_type: TypedKind, type_size: usize },
+    /// Page type means what the page is used for.
+    /// Slot size means the slot element is the page has the size and alignment.
+    Typed {
+        page_type: TypedKind,
+        slot_size: usize,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]

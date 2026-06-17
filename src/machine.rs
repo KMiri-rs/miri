@@ -1735,7 +1735,7 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         }
 
         let address = machine.alloc_addresses.borrow().get_base_addr(alloc_id) as usize;
-        if let PageState::Typed { page_type, type_size: _ } =
+        if let PageState::Typed { page_type, slot_size: _ } =
             mirch::physical_mem().page_states[address / mirch::page_size()]
         {
             if page_type == TypedKind::PageTable {
