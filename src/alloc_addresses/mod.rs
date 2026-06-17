@@ -578,11 +578,8 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let mut global_state = this.machine.alloc_addresses.borrow_mut();
         let global_state = &mut *global_state;
 
-        let addr = match global_state.base_paddr.get(&alloc_id) {
-            Some(&addr) => {
-                // println!("Got {alloc_id:?} at addr {addr:#x}",);
-                kernel_code_paddr_to_vaddr(addr as usize) as u64
-            }
+        let paddr = match global_state.base_paddr.get(&alloc_id) {
+            Some(&paddr) => paddr,
             None => {
                 // First time we're looking for the absolute address of this allocation.
                 let memory_kind =
@@ -635,7 +632,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 base_paddr
             }
         };
-        interp_ok(addr)
+        interp_ok(kernel_code_paddr_to_vaddr(paddr as usize) as u64)
     }
 
     fn expose_provenance(&self, provenance: Provenance) -> InterpResult<'tcx> {
