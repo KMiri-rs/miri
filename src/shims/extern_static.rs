@@ -43,6 +43,30 @@ impl<'tcx> MiriMachine<'tcx> {
         interp_ok(())
     }
 
+    /// Add static items: mainly used for statics that are defined in Rust code and
+    /// imported as extern statics in Rust code.
+    /// Allocator symbols use the trick of weak and strong symbols to provide default
+    /// allocators, while also allowing users to bring their own allocators.
+    fn add_ostd_allocator_statics(ecx: &mut MiriInterpCx<'tcx>) {
+        let symbols = ["__GLOBAL_HEAP_ALLOCATOR_REF", "__GLOBAL_FRAME_ALLOCATOR_REF"];
+        for link_name in symbols {
+            let link_name = rustc_span::Symbol::intern(link_name);
+            let Some((_, instance)) = ecx.lookup_exported_symbol(link_name).unwrap() else {
+                continue;
+            };
+            assert!(
+                matches!(
+                    ecx.tcx.def_kind(instance.def_id()),
+                    rustc_hir::def::DefKind::Static { .. }
+                ),
+                "{link_name} must be a exported static"
+            );
+            let place = ecx.eval_global(instance).unwrap();
+            let ptr = place.ptr().into_pointer_or_addr().unwrap();
+            ecx.machine.extern_statics.insert(link_name, ptr);
+        }
+    }
+
     /// Sets up the "extern statics" for this machine.
     pub fn init_extern_statics(ecx: &mut MiriInterpCx<'tcx>) -> InterpResult<'tcx> {
         if ecx.target_os_is_unix() {
@@ -50,6 +74,8 @@ impl<'tcx> MiriMachine<'tcx> {
             let environ = ecx.machine.env_vars.unix().environ();
             Self::add_extern_static(ecx, "environ", environ);
         }
+
+        Self::add_ostd_allocator_statics(ecx);
 
         match &ecx.tcx.sess.target.os {
             Os::Linux => {
