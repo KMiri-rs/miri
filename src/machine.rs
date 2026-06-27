@@ -21,7 +21,7 @@ use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_data_structures::static_assert_size;
 use rustc_hir::attrs::InlineAttr;
 use rustc_log::tracing;
-use rustc_middle::middle::codegen_fn_attrs::TargetFeatureKind;
+use rustc_middle::middle::codegen_fn_attrs::{CodegenFnAttrFlags, TargetFeatureKind};
 use rustc_middle::mir;
 use rustc_middle::query::TyCtxtAt;
 use rustc_middle::ty::layout::{
@@ -579,6 +579,9 @@ pub struct MiriMachine<'tcx> {
     /// `None` means no `Instance` exported under the given name is found.
     pub(crate) exported_symbols_cache: FxHashMap<Symbol, Option<Instance<'tcx>>>,
 
+    /// Cache of whether a foreign symbol resolves to an exported non-foreign item.
+    pub(crate) foreign_symbol_resolution_cache: RefCell<FxHashMap<Symbol, bool>>,
+
     /// The set of function instances discovered from the entry point.
     pub(crate) reachable_function_instances: Vec<FunctionInstanceInfo>,
 
@@ -590,6 +593,11 @@ pub struct MiriMachine<'tcx> {
 
     /// Mapping extern static names to their pointer.
     pub(crate) extern_statics: FxHashMap<Symbol, StrictPointer>,
+
+    /// Deferred unsupported foreign item error discovered while materializing function pointers.
+    /// `fn_ptr` in rustc calls `global_root_pointer(...).unwrap()`, so we cannot report an error
+    /// at that point without causing an ICE; report at the next interpreter checkpoint instead.
+    pub(crate) pending_unsupported_foreign_item: RefCell<Option<String>>,
 
     /// The random number generator used for resolving non-determinism.
     /// Needs to be queried by ptr_to_int, hence needs interior mutability.
@@ -796,10 +804,12 @@ impl<'tcx> MiriMachine<'tcx> {
             profiler,
             string_cache: Default::default(),
             exported_symbols_cache: FxHashMap::default(),
+            foreign_symbol_resolution_cache: RefCell::new(FxHashMap::default()),
             reachable_function_instances: Vec::new(),
             backtrace_style: config.backtrace_style,
             user_relevant_crates,
             extern_statics: FxHashMap::default(),
+            pending_unsupported_foreign_item: RefCell::new(None),
             rng: RefCell::new(rng),
             allocator: (!config.native_lib.is_empty())
                 .then(|| Rc::new(RefCell::new(crate::alloc::isolated_alloc::IsolatedAlloc::new()))),
@@ -958,6 +968,55 @@ impl<'tcx> MiriMachine<'tcx> {
     pub(crate) fn is_local(&self, instance: ty::Instance<'tcx>) -> bool {
         let def_id = instance.def_id();
         def_id.is_local() || self.user_relevant_crates.contains(&def_id.krate)
+    }
+
+    fn unresolved_foreign_fn_symbol(
+        ecx: &MiriInterpCx<'tcx>,
+        alloc_id: AllocId,
+    ) -> InterpResult<'tcx, Option<Symbol>> {
+        use crate::shims::foreign_items::EvalContextExt as _;
+
+        let Some(GlobalAlloc::Function { instance, .. }) = ecx.tcx.try_get_global_alloc(alloc_id)
+        else {
+            return interp_ok(None);
+        };
+        if !ecx.tcx.is_foreign_item(instance.def_id()) {
+            return interp_ok(None);
+        }
+
+        let link_name = Symbol::intern(ecx.tcx.symbol_name(instance).name);
+        if ecx.is_dyn_sym(link_name.as_str()) {
+            return interp_ok(None);
+        }
+        if let Some(&resolved) =
+            ecx.machine.foreign_symbol_resolution_cache.borrow().get(&link_name)
+        {
+            return if resolved { interp_ok(None) } else { interp_ok(Some(link_name)) };
+        }
+
+        let tcx = ecx.tcx.tcx;
+        let mut resolved = false;
+        crate::helpers::iter_exported_symbols(tcx, |_cnum, def_id| {
+            if tcx.is_foreign_item(def_id) {
+                return interp_ok(());
+            }
+
+            let attrs = tcx.codegen_fn_attrs(def_id);
+            if !(attrs.symbol_name.is_some()
+                || attrs.flags.contains(CodegenFnAttrFlags::NO_MANGLE)
+                || attrs.flags.contains(CodegenFnAttrFlags::RUSTC_STD_INTERNAL_SYMBOL))
+            {
+                return interp_ok(());
+            }
+
+            let symbol_name = tcx.symbol_name(Instance::mono(tcx, def_id)).name;
+            if symbol_name == link_name.as_str() {
+                resolved = true;
+            }
+            interp_ok(())
+        })?;
+        ecx.machine.foreign_symbol_resolution_cache.borrow_mut().insert(link_name, resolved);
+        if resolved { interp_ok(None) } else { interp_ok(Some(link_name)) }
     }
 
     /// Called when the interpreter is going to shut down abnormally, such as due to a Ctrl-C.
@@ -1488,6 +1547,16 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
                     }
                 }
             }
+
+            if let Some(link_name) = MiriMachine::unresolved_foreign_fn_symbol(ecx, alloc_id)? {
+                let mut pending = ecx.machine.pending_unsupported_foreign_item.borrow_mut();
+                if pending.is_none() {
+                    *pending = Some(format!(
+                        "can't use unknown foreign function symbol `{link_name}` on OS `{os}`",
+                        os = ecx.tcx.sess.target.os
+                    ));
+                }
+            }
         }
 
         if cfg!(debug_assertions) {
@@ -1902,6 +1971,10 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
     }
 
     fn before_terminator(ecx: &mut InterpCx<'tcx, Self>) -> InterpResult<'tcx> {
+        if let Some(msg) = ecx.machine.pending_unsupported_foreign_item.borrow_mut().take() {
+            throw_machine_stop!(TerminationInfo::UnsupportedForeignItem(msg));
+        }
+
         ecx.machine.basic_block_count += 1u64; // a u64 that is only incremented by 1 will "never" overflow
         ecx.machine.since_gc += 1;
         // Possibly report our progress. This will point at the terminator we are about to execute.
@@ -2054,6 +2127,10 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         local: mir::Local,
         storage_live: bool,
     ) -> InterpResult<'tcx> {
+        if let Some(msg) = ecx.machine.pending_unsupported_foreign_item.borrow_mut().take() {
+            throw_machine_stop!(TerminationInfo::UnsupportedForeignItem(msg));
+        }
+
         if let Some(data_race) = &ecx.frame().extra.data_race {
             let _trace = enter_trace_span!(data_race::after_local_write);
             data_race.local_write(local, storage_live, &ecx.machine);
@@ -2066,6 +2143,10 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         local: mir::Local,
         mplace: &MPlaceTy<'tcx>,
     ) -> InterpResult<'tcx> {
+        if let Some(msg) = ecx.machine.pending_unsupported_foreign_item.borrow_mut().take() {
+            throw_machine_stop!(TerminationInfo::UnsupportedForeignItem(msg));
+        }
+
         let Some(Provenance::Concrete { alloc_id, .. }) = mplace.ptr().provenance else {
             panic!("after_local_allocated should only be called on fresh allocations");
         };
