@@ -131,10 +131,16 @@ pub fn type_pages_at<'tcx>(
     page_type: TypedKind,
 ) -> InterpResult<'tcx, ()> {
     let physical_mem = physical_mem_mut();
+    let page_size = page_size();
+    let page_state = PageState::Typed { page_type, slot_size };
     for page_index in 0..count {
-        let page_paddr = paddr + page_size() * page_index;
-        physical_mem.set_page_state(page_paddr, PageState::Typed { page_type, slot_size });
+        let page_paddr = paddr + page_size * page_index;
+        physical_mem.set_page_state(page_paddr, page_state);
     }
+    // println!(
+    //     "[kern_miri_retype_pages] paddr=0x{paddr:x}..0x{:x} => {page_state:?}",
+    //     paddr + count * page_size
+    // );
 
     interp_ok(())
 }
@@ -160,8 +166,12 @@ pub fn remove_init_mask(paddr: usize) {
 pub fn check_page_state(paddr: usize, page_state: PageState) {
     let index = paddr / page_size();
     let physical_mem = physical_mem();
-    if physical_mem.page_states[index] != page_state {
-        panic!("Page state UB: current page state is {:?}", physical_mem.page_states[index]);
+    let current = physical_mem.page_states[index];
+    if current != page_state {
+        panic!(
+            "Page state UB: current page (paddr=0x{paddr:x}, index={index}) state is {current:?}, \
+             while the expected should be {page_state:?}"
+        );
     }
 }
 
