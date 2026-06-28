@@ -160,8 +160,12 @@ pub fn remove_init_mask(paddr: usize) {
 pub fn check_page_state(paddr: usize, page_state: PageState) {
     let index = paddr / page_size();
     let physical_mem = physical_mem();
-    if physical_mem.page_states[index] != page_state {
-        panic!("Page state UB: current page state is {:?}", physical_mem.page_states[index]);
+    let current = physical_mem.page_states[index];
+    if current != page_state {
+        panic!(
+            "Page state UB: current page (paddr=0x{paddr:x}, index={index}) state is {current:?}, \
+             while the expected should be {page_state:?}"
+        );
     }
 }
 
