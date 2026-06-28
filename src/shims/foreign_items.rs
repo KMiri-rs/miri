@@ -887,8 +887,9 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
                 let paddr = this.read_target_usize(paddr)? as usize;
                 let count = this.read_target_usize(count)? as usize;
+                let page_size = mirch::page_size();
                 for i in 0..count {
-                    let addr = paddr + i * mirch::page_size();
+                    let addr = paddr + i * page_size;
                     mirch::check_page_state(addr, PageState::Unused);
                     mirch::set_page_state(addr, PageState::Untyped);
                     insert_init_mask(this, addr, this.machine.get_default_alloc_params());
