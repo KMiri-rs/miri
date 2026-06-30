@@ -184,6 +184,7 @@ pub fn set_page_state(paddr: usize, page_state: PageState) {
 
 /// Sets the root page table.
 pub fn set_page_table(page_table: PageTable) {
+    println!("physical_mem has page_table root at paddr=0x{:x}", page_table.root_paddr());
     physical_mem_mut().page_table = Some(page_table);
 }
 
