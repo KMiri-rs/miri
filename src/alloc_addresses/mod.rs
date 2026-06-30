@@ -387,109 +387,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         None
     }
 
-    /// Inits the cpu-local allocation in APs.
-    ///
-    /// If it is a CPU-local allocation, we need to copy the context of the BSP allocation to init it.
-    ///
-    /// FIXME: We should find a way to let KernMiri inits all BSP cpu-local allocations at beginning,
-    /// so that it is the users' responsibility to init the cpu-local allocation in APs.
-    fn init_ap_cpu_local_allocation(&self, paddr: usize, vaddr: usize) -> Option<AllocId> {
-        let ecx = self.eval_context_ref();
-
-        let current_cpu_local_base = ecx.machine.threads.current_cpu_local_base();
-        if (current_cpu_local_base..current_cpu_local_base + mirch::cpu_local_segment_size())
-            .contains(&vaddr)
-        {
-            let global_state = ecx.machine.alloc_addresses.borrow();
-            let original_vaddr =
-                ecx.machine.threads.cpu_local_base[0] + vaddr - current_cpu_local_base;
-            let original_addr = mirch::page_walk_or(original_vaddr, || original_vaddr)? as u64;
-
-            let original_pos = global_state
-                .int_to_ptr_map
-                .binary_search_by_key(&original_addr, |(original_addr, _)| *original_addr);
-            let (original_alloc_id, offset) = match original_pos {
-                Ok(original_pos) => Some((global_state.int_to_ptr_map[original_pos].1, 0)),
-                Err(0) => None,
-                Err(original_pos) => {
-                    let (glb, alloc_id) = global_state.int_to_ptr_map[original_pos - 1];
-                    let offset = original_addr - glb;
-                    let size = ecx.get_alloc_info(alloc_id).size;
-
-                    if offset < size.bytes() { Some((alloc_id, offset)) } else { None }
-                }
-            }
-            .unwrap();
-
-            let original_alloc_info = ecx.get_alloc_info(original_alloc_id);
-            let (kind, original_alloc) = &ecx.memory.alloc_map().get(original_alloc_id).unwrap();
-            let kind = *kind;
-            let new_alloc_id = ecx.tcx.reserve_alloc_id();
-            let allocation = {
-                let mut new_allocation = mirch::create_allocation_at(
-                    paddr - offset as usize,
-                    Layout::from_size_align(
-                        original_alloc_info.size.bytes_usize(),
-                        original_alloc_info.align.bytes_usize(),
-                    )
-                    .unwrap(),
-                    ecx.machine.get_default_alloc_params(),
-                );
-                let extra = MiriMachine::init_allocation(
-                    ecx,
-                    new_alloc_id,
-                    kind,
-                    original_alloc_info.size,
-                    original_alloc_info.align,
-                )
-                .unwrap();
-
-                let alloc_range =
-                    rustc_middle::mir::interpret::alloc_range(Size::ZERO, original_alloc.size());
-                let init_mask = original_alloc.init_mask();
-
-                if !init_mask.is_range_initialized(alloc_range).is_err_and(|range| {
-                    range.start == alloc_range.start && range.size == alloc_range.size
-                }) {
-                    let alloc_size_usize = original_alloc.size().bytes_usize();
-                    let src_ptr = original_alloc.get_bytes_unchecked_raw();
-                    let dst_ptr = new_allocation.get_bytes_unchecked_raw_mut();
-                    unsafe {
-                        core::ptr::copy(src_ptr, dst_ptr, alloc_size_usize);
-                    }
-
-                    // Copy mask
-                    let init_copy = init_mask.prepare_copy((0..alloc_size_usize).into());
-                    new_allocation.init_mask_apply_copy(init_copy, alloc_range, 1);
-
-                    // Copy provenance
-                    let provenance_copy =
-                        original_alloc.provenance().prepare_copy(alloc_range, &[0], ecx);
-                    new_allocation.provenance_apply_copy(provenance_copy, alloc_range, 1);
-                }
-
-                new_allocation.with_extra(extra)
-            };
-            ecx.machine.cpu_local_alloc_set.borrow_mut().insert(new_alloc_id);
-            ecx.memory.alloc_map().insert(new_alloc_id, (kind, allocation));
-            {
-                let mut global_state = ecx.machine.alloc_addresses.borrow_mut();
-                global_state.set_exposed_kernel_padd(new_alloc_id, paddr - offset as usize);
-            }
-
-            // Same as typed slots: the copied allocation must keep an exposed root
-            // tag, otherwise later int-to-ptr accesses lose their writable provenance.
-            let root_tag = {
-                let mut borrow_tracker = ecx.machine.borrow_tracker.as_ref().unwrap().borrow_mut();
-                borrow_tracker.root_ptr_tag(new_alloc_id, &ecx.machine)
-            };
-            ecx.expose_tag(new_alloc_id, root_tag).discard_err();
-            return Some(new_alloc_id);
-        }
-
-        None
-    }
-
     // Returns the `AllocId` that corresponds to the specified addr,
     // or `None` if the addr is out of bounds.
     fn alloc_id_from_addr(&self, vaddr: u64, size: i64) -> Option<AllocId> {
@@ -517,11 +414,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     return typed_slot;
                 }
 
-                let cpu_local_in_ap = self.init_ap_cpu_local_allocation(paddr, vaddr as usize);
-                if cpu_local_in_ap.is_some() {
-                    return cpu_local_in_ap;
-                }
-
                 return None;
             }
             Err(pos) => {
@@ -544,11 +436,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     let typed_slot = self.lazy_alloc_typed_slot_allocation(paddr);
                     if typed_slot.is_some() {
                         return typed_slot;
-                    }
-
-                    let cpu_local_in_ap = self.init_ap_cpu_local_allocation(paddr, vaddr as usize);
-                    if cpu_local_in_ap.is_some() {
-                        return cpu_local_in_ap;
                     }
 
                     return None;
