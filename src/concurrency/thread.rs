@@ -477,8 +477,7 @@ impl<'tcx> ThreadManager<'tcx> {
         ));
         let mut cpu_to_threads = [None; CPU_NUM];
         cpu_to_threads[0] = Some(ThreadId::MAIN_THREAD);
-        let mut cpu_local_base = [0; CPU_NUM];
-        cpu_local_base[0] = kernel_code_paddr_to_vaddr(mirch::cpu_local_start_addr());
+        let cpu_local_base = [kernel_code_paddr_to_vaddr(mirch::cpu_local_start_addr()); CPU_NUM];
         Self {
             active_thread: ThreadId::MAIN_THREAD,
             cpu_to_threads,
@@ -525,7 +524,7 @@ impl<'tcx> ThreadManager<'tcx> {
     }
 
     pub fn current_cpu_local_base(&self) -> usize {
-        self.cpu_local_base[1]
+        self.cpu_local_base[self.active_cpu]
     }
 
     /// Check if we have an allocation for the given thread local static for the
