@@ -158,6 +158,7 @@ pub fn physical_copy(dst: usize, src: usize, len: usize) {
 }
 
 /// Removes the initialization mask for the page at `paddr`.
+#[expect(unused)]
 pub fn remove_init_mask(paddr: usize) {
     physical_mem_mut().init_masks.remove(&paddr);
 }
@@ -256,6 +257,7 @@ impl PhysicalMemory {
         self.init_masks.remove(&paddr);
     }
 
+    #[expect(unused)]
     pub fn check_page_state(&self, paddr: usize, page_state: PageState) {
         let index = paddr / page_size();
         if self.page_states[index] != page_state {

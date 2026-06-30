@@ -9,7 +9,6 @@ use std::path::Path;
 use std::rc::Rc;
 use std::{fmt, process};
 
-use owo_colors::OwoColorize;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use rustc_abi::{Align, ExternAbi, Size};
@@ -44,7 +43,7 @@ use crate::concurrency::{
 };
 use crate::debugger::reachability::FunctionInstanceInfo;
 use crate::helpers::adjust_stack_addr;
-use crate::mirch::{self, PageState, TypedKind, kernel_code_paddr_to_vaddr};
+use crate::mirch::{self, PageState, TypedKind};
 use crate::*;
 
 /// First real-time signal.

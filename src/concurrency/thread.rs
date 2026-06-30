@@ -20,7 +20,6 @@ use rustc_span::{DUMMY_SP, Span};
 use rustc_target::spec::Os;
 
 use crate::concurrency::GlobalDataRaceHandler;
-use crate::debugger::{DebuggerCommand, DebuggerState};
 use crate::machine::CPU_NUM;
 use crate::mirch::{self, PageState, kernel_code_paddr_to_vaddr};
 use crate::shims::tls;
@@ -735,6 +734,7 @@ impl<'tcx> ThreadManager<'tcx> {
     }
 
     /// Get the wait time for the next timeout, or `None` if no timeout is pending.
+    #[expect(unused)]
     fn next_callback_wait_time(&self, clock: &MonotonicClock) -> Option<Duration> {
         self.threads
             .iter()
@@ -854,10 +854,10 @@ trait EvalContextPrivExt<'tcx>: MiriInterpCxExt<'tcx> {
         }
 
         // We are not in GenMC mode, so we control the scheduling.
-        let thread_manager = &this.machine.threads;
+        let _thread_manager = &this.machine.threads;
         let thread_manager = &mut this.machine.threads;
-        let clock = &this.machine.monotonic_clock;
-        let rng = this.machine.rng.get_mut();
+        let _clock = &this.machine.monotonic_clock;
+        let _rng = this.machine.rng.get_mut();
 
         // kmiri: thread and cpu switch
         if let Some(res) = thread_manager.schedule_switch_thread_and_cpu() {
@@ -1501,14 +1501,12 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             match this.schedule()? {
                 SchedulingAction::ExecuteStep => {
                     if let Some(paddr) = this.machine.pt_checker {
-                        unsafe {
-                            let page_start_paddr = paddr & !(mirch::page_size() - 1);
-                            if let PageState::Typed { .. } = mirch::physical_mem().page_states
-                                [page_start_paddr / mirch::page_size()]
-                            {
-                                let _global_states = this.machine.alloc_addresses.borrow();
-                                //..todo!()
-                            }
+                        let page_start_paddr = paddr & !(mirch::page_size() - 1);
+                        if let PageState::Typed { .. } =
+                            mirch::physical_mem().page_states[page_start_paddr / mirch::page_size()]
+                        {
+                            let _global_states = this.machine.alloc_addresses.borrow();
+                            //..todo!()
                         }
                         this.machine.pt_checker = None;
                     }

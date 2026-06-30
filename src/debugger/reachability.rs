@@ -1,13 +1,11 @@
 #![allow(rustc::internal)]
 use std::collections::VecDeque;
 
-use ratatui::text::{Line, Span as RatatuiSpan};
-use rustc_data_structures::either::Either;
-use rustc_data_structures::fx::{FxHashMap, FxHashSet};
+use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::interpret::GlobalAlloc;
 use rustc_middle::mir::visit::Visitor as _;
-use rustc_middle::mir::{self, BasicBlockData, HasLocalDecls};
+use rustc_middle::mir::{self, HasLocalDecls};
 use rustc_middle::ty::{Instance, InstanceKind, Ty, TyCtxt, TyKind, TypeVisitableExt, TypingEnv};
 use rustc_span::source_map::SourceMap;
 

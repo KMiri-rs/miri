@@ -40,6 +40,7 @@ impl ReusePool {
     /// Call this when we are using up a lot of the address space: if memory reuse is enabled at all,
     /// this will bump the intra-thread reuse rate to 100% so that we can keep running this program as
     /// long as possible.
+    #[expect(unused)]
     pub fn address_space_shortage(&mut self) {
         if self.address_reuse_rate > 0.0 {
             self.address_reuse_rate = 1.0;
