@@ -4,7 +4,6 @@ use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 
 use crate::borrow_tracker::BorTag;
 use crate::borrow_tracker::stacked_borrows::debugger::{DebuggerBorrowStackItem, DebuggerPrevTag};
-use crate::borrow_tracker::stacked_borrows::diagnostics::RetagInfo;
 
 /// An item in the per-location borrow stack.
 #[derive(Copy, Clone, Hash, PartialEq, Eq)]

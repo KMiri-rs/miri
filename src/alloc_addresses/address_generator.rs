@@ -24,6 +24,7 @@ pub struct AddressGenerator {
     end: u64,
 }
 
+#[expect(unused)]
 impl AddressGenerator {
     pub fn new(addr_range: Range<u64>) -> Self {
         Self { next_base_addr: addr_range.start, end: addr_range.end }

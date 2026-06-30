@@ -1,8 +1,7 @@
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crossterm::event::KeyCode;
 use ratatui::prelude::*;
-use tui_overlay::{Backdrop, Easing, Overlay, OverlayState};
 
 use crate::DebuggerState;
 use crate::debugger::tui::Context;

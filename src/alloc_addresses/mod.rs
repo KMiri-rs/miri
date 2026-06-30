@@ -1,7 +1,6 @@
 //! This module is responsible for managing the absolute addresses that allocations are located at,
 //! and for casting between pointers and integers based on those addresses.
 
-use owo_colors::OwoColorize;
 use rand::Rng;
 mod address_generator;
 mod reuse_pool;
@@ -21,9 +20,7 @@ use crate::concurrency::VClock;
 use crate::debugger::debugger_log;
 use crate::diagnostics::SpanDedupDiagnostic;
 use crate::helpers::adjust_stack_addr;
-use crate::mirch::{
-    CodeSection, PageState, kernel_code_paddr_to_vaddr, kernel_code_vaddr_to_paddr,
-};
+use crate::mirch::{CodeSection, PageState, kernel_code_paddr_to_vaddr};
 use crate::*;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -75,6 +72,7 @@ pub struct GlobalStateInner {
     /// This is used for allocating addresses for cpu-local allocations.
     next_cpu_local_paddr: u64,
     /// This is used for allocating addresses for stack allocations.
+    #[expect(unused)]
     next_stack_paddr: u64,
 }
 

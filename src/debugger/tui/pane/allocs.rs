@@ -1,9 +1,7 @@
 use std::borrow::Cow;
 
 use super::*;
-use crate::debugger::state::LocalKind;
 use crate::debugger::utils::{hsize, kind_str};
-use crate::{MemoryKind, MiriMemoryKind};
 
 #[derive(Default, Debug)]
 pub struct PaneAllocs {

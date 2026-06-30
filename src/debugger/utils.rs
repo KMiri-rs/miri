@@ -35,6 +35,7 @@ pub fn hsize(n: impl humansize::ToF64 + humansize::Unsigned) -> String {
     humansize::format_size(n, humansize::BINARY)
 }
 
+#[expect(unused)]
 pub fn find_def_id_from_span(tcx: TyCtxt<'_>, span: Span) -> Option<(Span, DefId)> {
     let mut best: Option<(Span, DefId)> = None;
 

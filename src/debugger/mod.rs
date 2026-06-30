@@ -33,6 +33,7 @@ enum DebuggerMode<'tcx> {
     Continue,
     RunToTerminator(u32),
     RunToInstance(String),
+    #[expect(unused)]
     RunToEnd,
     StepFrameTerminator(StepFrameTerminatorState<'tcx>),
 }
