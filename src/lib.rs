@@ -84,7 +84,7 @@ extern crate rustc_driver;
 
 macro_rules! log {
     ($($t:tt)+) => {
-       $crate::debugger::debugger_log(format!($($t)+));
+       $crate::debugger::debugger_log(format_args!($($t)+));
        // println!($($t)+);
     };
 }
