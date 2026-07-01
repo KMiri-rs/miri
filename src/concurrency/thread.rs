@@ -581,9 +581,7 @@ impl<'tcx> ThreadManager<'tcx> {
         on_stack_empty: StackEmptyCallback<'tcx>,
         stack_range: Range<u64>,
     ) -> ThreadId {
-        let new_thread_id = ThreadId::new(self.threads.len());
-        self.threads.push(Thread::new(None, Some(on_stack_empty), stack_range));
-        new_thread_id
+        self.threads.push(Thread::new(None, Some(on_stack_empty), stack_range))
     }
 
     /// Set an active thread and return the id of the thread that was active before.
