@@ -881,6 +881,11 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     this.machine.layouts.unit,
                     Some(stack_end - stack_size..stack_end),
                 )?;
+                println!(
+                    "[miri_create_new_thread] stack: 0x{:x}..0x{:x}",
+                    stack_end - stack_size,
+                    stack_end
+                );
                 this.machine.thread_map.insert(task.ptr().addr(), id);
             }
             "miri_switch_to" => {
