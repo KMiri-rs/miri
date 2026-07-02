@@ -394,7 +394,12 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         assert!(global_state.provenance_mode != ProvenanceMode::Strict);
 
         // vaddr to paddr
-        let paddr = mirch::page_walk_or(vaddr as usize, || vaddr as usize)? as u64;
+        // let paddr = mirch::page_walk_or(vaddr as usize, || vaddr as usize)? as u64;
+        let vaddr = vaddr as usize;
+        let paddr = mirch::page_walk_or(vaddr, || {
+            mirch::try_kernel_code_vaddr_to_paddr(vaddr).unwrap_or(vaddr)
+        })
+        .unwrap() as u64;
 
         // We always search the allocation to the right of this address. So if the size is strictly
         // negative, we have to search for `addr-1` instead.
@@ -729,13 +734,13 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         // must have been called in the past, so we can just look up the address in the map.
         let base_paddr = *this.machine.alloc_addresses.borrow().base_paddr.get(&alloc_id).unwrap();
 
-        let actual_addr = mirch::page_walk_or(addr.bytes_usize(), || {
+        let actual_paddr = mirch::page_walk_or(addr.bytes_usize(), || {
             // kernel_code_vaddr_to_paddr(addr.bytes_usize())
             mirch::try_kernel_code_vaddr_to_paddr(addr.bytes_usize()).unwrap_or(addr.bytes_usize())
         })
         .unwrap() as u64;
 
-        let offset = actual_addr.wrapping_sub(base_paddr);
+        let offset = actual_paddr.wrapping_sub(base_paddr);
 
         // Wrapping "addr - base_addr"
         let rel_offset = this.truncate_to_target_usize(offset);
