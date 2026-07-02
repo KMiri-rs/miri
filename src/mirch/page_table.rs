@@ -75,6 +75,7 @@ impl PageTable {
     const PTE_INDEX_BITS: usize = Self::PTE_PER_PAGE.ilog2() as usize;
     const LEVEL_MASK: usize = Self::PTE_PER_PAGE - 1;
     const HUGE_BIT_MASK: usize = 1 << 7;
+    const PRESENT_BIT_MASK: usize = 0x1;
 
     /// The index of a VA's PTE in a page table node at the given level.
     fn pte_index(va: usize, level: usize) -> usize {
@@ -132,6 +133,14 @@ impl PageTable {
 
             if page_table_entry & Self::HUGE_BIT_MASK > 0 {
                 break;
+            }
+
+            if page_table_entry == 0 {
+                // The PTE is not valid.
+                // return None;
+                println!(
+                    "[page_walk] vaddr=0x{vaddr:x} (PTE=0x{page_table_entry:x}) doesn't have valid PRESENT_BIT_MASK"
+                )
             }
         }
 
