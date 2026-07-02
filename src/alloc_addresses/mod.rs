@@ -132,7 +132,7 @@ impl GlobalStateInner {
     pub fn min_allocated_stack_paddr(&self) -> Option<(u64, AllocId)> {
         let mut min_allocated_stack_addr: Option<(u64, AllocId)> = None;
         for &(paddr, alloc_id) in &self.int_to_ptr_map {
-            if CodeSection::paddr(paddr) == Ok(CodeSection::Stack) {
+            if CodeSection::paddr(paddr) == Some(CodeSection::Stack) {
                 if let Some((addr, _)) = min_allocated_stack_addr
                     && addr < paddr
                 {
