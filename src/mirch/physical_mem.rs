@@ -94,7 +94,8 @@ pub fn free_allocations<'tcx>(
 
     for page_index in 0..count {
         let page_paddr = paddr + page_size() * page_index;
-        let page_info = physical_mem.page_states[paddr / page_size()];
+        let page_idx = page_paddr / page_size();
+        let page_info = physical_mem.page_states[page_idx];
 
         if let PageState::Typed { page_type: _, slot_size } = page_info {
             for index in 0..page_size() / slot_size {
@@ -111,7 +112,7 @@ pub fn free_allocations<'tcx>(
                 }
             }
         }
-        if physical_mem.page_states[paddr / page_size()] == PageState::Unused {
+        if physical_mem.page_states[page_idx] == PageState::Unused {
             throw_ub_format!(
                 "Page state UB: Attempting to release an unused page. The paddr is 0x{:x}",
                 page_paddr
