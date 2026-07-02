@@ -117,9 +117,9 @@ pub enum CodeSection {
 }
 
 impl CodeSection {
-    pub fn paddr(paddr: u64) -> Result<Self, String> {
+    pub fn paddr(paddr: u64) -> Option<Self> {
         let paddr = paddr as usize;
-        Ok(if paddr < kernel_static_start_addr() {
+        Some(if paddr < kernel_static_start_addr() {
             Self::BootPt
         } else if paddr < cpu_local_start_addr() {
             Self::Static
@@ -128,16 +128,15 @@ impl CodeSection {
         } else if paddr <= kernel_stack_end_addr() {
             Self::Stack
         } else {
-            return Err(format!("physical addr 0x{paddr:x} doesn't locate in kernel section"));
+            return None;
         })
     }
 
     /// NOTE: this can't be called for boot_pt addr, because its base vaddr differs
     /// from other section base addr.
     #[expect(unused)]
-    pub fn vaddr(vaddr: u64) -> Result<Self, String> {
-        let paddr = try_kernel_code_vaddr_to_paddr(vaddr as usize)
-            .ok_or_else(|| format!("0x{vaddr:x} is not in kernel code"))?;
+    pub fn vaddr(vaddr: u64) -> Option<Self> {
+        let paddr = try_kernel_code_vaddr_to_paddr(vaddr as usize)?;
         Self::paddr(paddr as u64)
     }
 }
