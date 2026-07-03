@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use crate::mirch::{paddr_to_mem, page_size};
+use crate::mirch::{CodeSection, paddr_to_mem, page_size};
 use crate::*;
 
 pub const NR_LEVELS: usize = 4;
@@ -139,12 +139,14 @@ impl PageTable {
                 break;
             }
 
-            if page_table_entry == 0 {
+            if page_table_entry & Self::PRESENT_BIT_MASK == 0 {
                 // The PTE is not valid.
-                // return None;
-                println!(
-                    "[page_walk] vaddr=0x{vaddr:x} (PTE=0x{page_table_entry:x}) doesn't have valid PRESENT_BIT_MASK"
-                )
+                // log!(
+                //     "[page_walk ({})] current_paddr=0x{current_paddr:x} ({:?}) vaddr=0x{vaddr:x} (PTE=0x{page_table_entry:x}) doesn't have valid PRESENT_BIT_MASK",
+                //     current_level + 1,
+                //     CodeSection::paddr(current_level as u64)
+                // );
+                return None;
             }
         }
 
