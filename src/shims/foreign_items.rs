@@ -860,6 +860,11 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     this.machine.layouts.unit,
                     Some(stack_end - stack_size..stack_end),
                 )?;
+                println!(
+                    "[miri_create_new_thread] stack: 0x{:x}..0x{:x}",
+                    stack_end - stack_size,
+                    stack_end
+                );
                 this.machine.thread_map.insert(task.ptr().addr(), id);
             }
             "miri_switch_to" => {
@@ -870,6 +875,10 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                         "the program aborted execution due to wrong switch".to_owned()
                     ))
                 };
+                println!(
+                    "[miri_switch_to] target={thread_id:?} thread_map={:#?}",
+                    this.machine.thread_map
+                );
                 this.machine.threads.switch_to(*thread_id);
             }
             // OS memory

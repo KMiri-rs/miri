@@ -75,6 +75,7 @@ impl PageTable {
     const PTE_INDEX_BITS: usize = Self::PTE_PER_PAGE.ilog2() as usize;
     const LEVEL_MASK: usize = Self::PTE_PER_PAGE - 1;
     const HUGE_BIT_MASK: usize = 1 << 7;
+    const PRESENT_BIT_MASK: usize = 0x1;
 
     /// The index of a VA's PTE in a page table node at the given level.
     fn pte_index(va: usize, level: usize) -> usize {
@@ -98,26 +99,58 @@ impl PageTable {
         let mut current_paddr = self.root_paddr;
         let mut current_level = NR_LEVELS;
 
+        // only log after kernel is initialized
+        let samples =
+            [0xffffffff80ffff4busize, 0xffffffff80014858, 0xffff800002116f10, 0xffffffff821ffff0];
+        let should_log = current_paddr == 0x1208000 && samples.contains(&vaddr);
+
+        if should_log {
+            log!("[page_walk] vaddr=0x{vaddr:x}");
+        }
+
         while current_level >= 1 {
             let index = Self::pte_index(vaddr, current_level);
 
             let page_table_entry = unsafe {
                 let pte_paddr = (current_paddr as *const usize).add(index) as usize;
-                *(super::paddr_to_mem(pte_paddr) as *const usize)
+                let mem_addr = super::paddr_to_mem(pte_paddr) as *const usize;
+                if should_log {
+                    log!(
+                        "    current_level={current_level} pte_paddr=0x{pte_paddr:x} mem_addr={mem_addr:p} "
+                    );
+                }
+                *mem_addr
             };
 
             const PTE_MASK: usize = 0xF_FFFF_FFFF_F000;
             current_paddr = page_table_entry & PTE_MASK;
+            if should_log {
+                log!(
+                    "    current_paddr=0x{current_paddr:x} page_table_entry=0x{page_table_entry:x}"
+                );
+            }
             current_level -= 1;
 
             if page_table_entry & Self::HUGE_BIT_MASK > 0 {
                 break;
             }
+
+            if page_table_entry == 0 {
+                // The PTE is not valid.
+                // return None;
+                println!(
+                    "[page_walk] vaddr=0x{vaddr:x} (PTE=0x{page_table_entry:x}) doesn't have valid PRESENT_BIT_MASK"
+                )
+            }
         }
 
         let page_offset =
             vaddr & ((super::page_size() << (current_level * Self::PTE_INDEX_BITS)) - 1);
-        Some(current_paddr + page_offset)
+        let paddr = current_paddr + page_offset;
+        if should_log {
+            log!("    page_offset=0x{page_offset:x} paddr=0x{paddr:x}");
+        }
+        Some(paddr)
     }
 
     /// Converts a physical address to a virtual address.
