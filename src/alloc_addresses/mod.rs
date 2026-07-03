@@ -51,6 +51,11 @@ pub struct GlobalStateInner {
     /// This is the inverse of `int_to_ptr_map`.
     /// NOTE: the ptr in int_to_ptr_map and base_paddr are physical address.
     pub base_paddr: FxHashMap<AllocId, u64>,
+
+    /// kmimri: the key is paddr, the value is vaddr.
+    /// This is a workaround for now to hot fix the non-linear mapping.
+    paddr_to_vaddr: FxHashMap<u64, u64>,
+
     /// The set of exposed allocations. This cannot be put
     /// into `AllocExtra` for the same reason as `base_addr`.
     pub exposed: FxHashSet<AllocId>,
@@ -81,6 +86,7 @@ impl VisitProvenance for GlobalStateInner {
         let GlobalStateInner {
             int_to_ptr_map: _,
             base_paddr: _,
+            paddr_to_vaddr: _,
             prepared_alloc_bytes: _,
             exposed: _,
             address_generation: _,
@@ -103,6 +109,7 @@ impl GlobalStateInner {
         GlobalStateInner {
             int_to_ptr_map: Vec::default(),
             base_paddr: FxHashMap::default(),
+            paddr_to_vaddr: FxHashMap::default(),
             exposed: FxHashSet::default(),
             provenance_mode: config.provenance_mode,
             address_generation: (config.native_lib.is_empty() && config.genmc_config.is_none())
@@ -165,6 +172,7 @@ impl GlobalStateInner {
 
 impl<'tcx> EvalContextExtPriv<'tcx> for crate::MiriInterpCx<'tcx> {}
 trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
+    // kmiri: u64 returned is a vaddr.
     fn addr_from_alloc_id_uncached(
         &self,
         global_state: &mut GlobalStateInner,
@@ -470,22 +478,37 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let mut global_state = this.machine.alloc_addresses.borrow_mut();
         let global_state = &mut *global_state;
 
-        let paddr = match global_state.base_paddr.get(&alloc_id) {
-            Some(&paddr) => paddr,
+        let vaddr = match global_state.base_paddr.get(&alloc_id) {
+            Some(&paddr) =>
+                global_state
+                    .paddr_to_vaddr
+                    .get(&paddr)
+                    .cloned()
+                    .unwrap_or_else(|| kernel_code_paddr_to_vaddr(paddr as usize) as u64),
             None => {
                 // First time we're looking for the absolute address of this allocation.
                 let memory_kind =
                     memory_kind.expect("memory_kind is required since alloc_id is not cached");
                 let base_vaddr =
                     this.addr_from_alloc_id_uncached(global_state, alloc_id, memory_kind)?;
-                // log!("Assigning base address {:#x} to allocation {:?}", base_vaddr, alloc_id);
 
                 // kmiri: vaddr to paddr; or just base address if not appropriate
                 let base_paddr = mirch::page_walk_or(base_vaddr as usize, || {
-                    mirch::try_kernel_code_vaddr_to_paddr(base_vaddr as usize)
-                        .unwrap_or(base_vaddr as usize)
+                    log!(
+                        "[addr_from_alloc_id - page_walk_or] vaddr={base_vaddr:#x} ({alloc_id:?})"
+                    );
+                    mirch::try_kernel_code_vaddr_to_paddr(base_vaddr as usize).unwrap()
                 })
                 .unwrap() as u64;
+
+                {
+                    if this.machine.threads.active_thread().to_u32() == 1 {
+                        log!(
+                            "[addr_from_alloc_id] paddr={base_paddr:#x} vaddr={base_vaddr:#x} ({alloc_id:?})"
+                        );
+                        global_state.paddr_to_vaddr.insert(base_paddr, base_vaddr);
+                    }
+                }
 
                 // Store address in cache.
                 global_state.base_paddr.try_insert(alloc_id, base_paddr).unwrap();
@@ -521,10 +544,10 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     global_state.int_to_ptr_map.insert(pos, (base_paddr, alloc_id));
                 }
 
-                base_paddr
+                base_vaddr
             }
         };
-        interp_ok(kernel_code_paddr_to_vaddr(paddr as usize) as u64)
+        interp_ok(vaddr)
     }
 
     fn expose_provenance(&self, provenance: Provenance) -> InterpResult<'tcx> {
