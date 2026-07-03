@@ -284,6 +284,10 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     adjust_stack_addr(info.size.bytes(), info.align.bytes(), *next_stack_vaddr);
 
                 if base_vaddr < thread.stack_bottom {
+                    println!(
+                        "[addr_from_alloc_id_uncached - error - stack] `base_vaddr={base_vaddr:#x} < stack_bottom={:#x}` makes AddressSpaceFull",
+                        thread.stack_bottom
+                    );
                     throw_exhaust!(AddressSpaceFull);
                 }
                 *next_stack_vaddr = base_vaddr;
@@ -312,6 +316,9 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     next_vaddr.checked_add(slack).ok_or_else(|| err_exhaust!(AddressSpaceFull))?;
                 let base_vaddr = align_addr(base_vaddr, info.align.bytes());
                 if base_vaddr >= limit {
+                    println!(
+                        "[addr_from_alloc_id_uncached - error] `base_addr={base_vaddr:#x} >= limit={limit:#x}` makes AddressSpaceFull",
+                    );
                     throw_exhaust!(AddressSpaceFull);
                 }
 
@@ -324,6 +331,10 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     .ok_or_else(|| err_exhaust!(AddressSpaceFull))?;
                 // Even if `Size` didn't overflow, we might still have filled up the address space.
                 if *next_vaddr > this.target_usize_max() {
+                    println!(
+                        "[addr_from_alloc_id_uncached - error] `next_vaddr={next_vaddr:#x} > target_usize_max={:#x}` makes AddressSpaceFull",
+                        this.target_usize_max()
+                    );
                     throw_exhaust!(AddressSpaceFull);
                 }
                 base_vaddr
@@ -404,12 +415,19 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         // vaddr to paddr
         // let paddr = mirch::page_walk_or(vaddr as usize, || vaddr as usize)? as u64;
         let vaddr = vaddr as usize;
-        let paddr = mirch::page_walk_or(vaddr, || {
+        let mut boot_pt = false;
+        let paddr_fallback = || {
             // log!("[alloc_id_from_addr - page_walk_or] vaddr={vaddr:#x}");
-            // mirch::try_kernel_code_vaddr_to_paddr(vaddr).unwrap()
-            unreachable!()
-        })
-        .unwrap() as u64;
+            mirch::try_kernel_code_vaddr_to_paddr(vaddr).unwrap_or_else(|| {
+                boot_pt = true;
+                mirch::try_boot_pt_vaddr_to_paddr(vaddr).unwrap()
+            })
+        };
+        let paddr =
+            mirch::page_walk_or(vaddr, || unreachable!()).unwrap_or_else(paddr_fallback) as u64;
+        if boot_pt {
+            log!("[alloc_id_from_addr] boot_pt paddr={paddr:#x} size={size}");
+        }
 
         // We always search the allocation to the right of this address. So if the size is strictly
         // negative, we have to search for `addr-1` instead.
@@ -495,13 +513,14 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     this.addr_from_alloc_id_uncached(global_state, alloc_id, memory_kind)?;
 
                 // kmiri: vaddr to paddr; or just base address if not appropriate
-                let base_paddr = mirch::page_walk_or(base_vaddr as usize, || {
-                    log!(
-                        "[addr_from_alloc_id - page_walk_or] vaddr={base_vaddr:#x} ({alloc_id:?})"
-                    );
+                let paddr_fallback = || {
+                    // log!(
+                    //     "[addr_from_alloc_id - page_walk_or] vaddr={base_vaddr:#x} ({alloc_id:?})"
+                    // );
                     mirch::try_kernel_code_vaddr_to_paddr(base_vaddr as usize).unwrap()
-                })
-                .unwrap() as u64;
+                };
+                let base_paddr = mirch::page_walk_or(base_vaddr as usize, paddr_fallback)
+                    .unwrap_or_else(paddr_fallback) as u64;
 
                 {
                     if this.machine.threads.active_thread().to_u32() == 1 {
@@ -760,14 +779,21 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let base_paddr = *this.machine.alloc_addresses.borrow().base_paddr.get(&alloc_id).unwrap();
 
         let vaddr = vaddr.bytes_usize();
-        let paddr_fallback = || {
-            log!("[ptr_get_alloc - page_walk_or] vaddr={vaddr:#x}");
+        let mut boot_pt = false;
+        let mut paddr_fallback = || {
+            // log!("[ptr_get_alloc - page_walk_or] vaddr={vaddr:#x}");
 
             // kernel_code_vaddr_to_paddr(addr.bytes_usize())
-            mirch::try_kernel_code_vaddr_to_paddr(vaddr).unwrap_or(vaddr)
+            mirch::try_kernel_code_vaddr_to_paddr(vaddr).unwrap_or_else(|| {
+                boot_pt = true;
+                mirch::try_boot_pt_vaddr_to_paddr(vaddr).unwrap()
+            })
         };
         let actual_paddr =
-            mirch::page_walk_or(vaddr, paddr_fallback).unwrap_or_else(paddr_fallback) as u64;
+            mirch::page_walk_or(vaddr, &mut paddr_fallback).unwrap_or_else(paddr_fallback) as u64;
+        if boot_pt {
+            log!("[ptr_get_alloc] boot_pt paddr={actual_paddr:#x} size={size}");
+        }
 
         let offset = actual_paddr.wrapping_sub(base_paddr);
 
