@@ -15,6 +15,7 @@ extern crate rustc_hir;
 extern crate rustc_interface;
 extern crate rustc_log;
 extern crate rustc_middle;
+extern crate rustc_public;
 extern crate rustc_session;
 extern crate rustc_span;
 
@@ -270,76 +271,87 @@ impl rustc_driver::Callbacks for MiriCompilerCalls {
         _: &rustc_interface::interface::Compiler,
         tcx: TyCtxt<'tcx>,
     ) -> Compilation {
-        // Compilation is done, interpretation is starting. Deal with diagnostics from the
-        // compilation part. We cannot call `sess.finish_diagnostics()` as then "aborting due to
-        // previous errors" gets printed twice.
-        tcx.dcx().emit_stashed_diagnostics();
-        tcx.dcx().abort_if_errors();
-        tcx.dcx().flush_delayed();
-
-        // Miri is taking over. Start logging.
-        init_late_loggers(&EarlyDiagCtxt::new(tcx.sess.opts.error_format), tcx);
-
-        // Find the entry point.
-        if !tcx.crate_types().contains(&CrateType::Executable) {
-            tcx.dcx().fatal("miri only makes sense on bin crates");
-        }
-        let (entry_def_id, entry_type) = entry_fn(tcx);
-
-        // Obtain and complete the Miri configuration.
-        let mut config = self.miri_config.take().expect("after_analysis must only be called once");
-        // Add filename to `miri` arguments.
-        config.args.insert(0, tcx.sess.io.input.filestem().to_string());
-
-        // Adjust working directory for interpretation.
-        if let Some(cwd) = env::var_os("MIRI_CWD") {
-            env::set_current_dir(cwd).unwrap();
-        }
-
-        // Emit warnings for some unusual configurations.
-        if tcx.sess.opts.optimize != OptLevel::No {
-            tcx.dcx().warn("Miri does not support optimizations: the opt-level is ignored. The only effect \
-                    of selecting a Cargo profile that enables optimizations (such as --release) is to apply \
-                    its remaining settings, such as whether debug assertions and overflow checks are enabled.");
-        }
-        if tcx.sess.mir_opt_level() > 0 {
-            tcx.dcx().warn("You have explicitly enabled MIR optimizations, overriding Miri's default \
-                    which is to completely disable them. Any optimizations may hide UB that Miri would \
-                    otherwise detect, and it is not necessarily possible to predict what kind of UB will \
-                    be missed. If you are enabling optimizations to make Miri run faster, we advise using \
-                    cfg(miri) to shrink your workload instead. The performance benefit of enabling MIR \
-                    optimizations is usually marginal at best.");
-        }
-
-        report_unknown_local_foreign_symbol_uses(tcx);
-        tcx.dcx().abort_if_errors();
-
-        // Invoke the interpreter.
-        let res = if config.genmc_config.is_some() {
-            assert!(self.many_seeds.is_none());
-            run_genmc_mode(tcx, &config, |genmc_ctx: Rc<GenmcCtx>| {
-                miri::eval_entry(tcx, entry_def_id, entry_type, &config, Some(genmc_ctx))
-            })
-        } else if let Some(many_seeds) = self.many_seeds.take() {
-            assert!(config.seed.is_none());
-            run_many_seeds(many_seeds, |seed| {
-                let mut config = config.clone();
-                config.seed = Some(seed);
-                eprintln!("Trying seed: {seed}");
-                miri::eval_entry(tcx, entry_def_id, entry_type, &config, /* genmc_ctx */ None)
-            })
-        } else {
-            miri::eval_entry(tcx, entry_def_id, entry_type, &config, None)
-        };
-        // Process interpreter result.
-        if let Err(return_code) = res {
+        let cb = || {
+            // Compilation is done, interpretation is starting. Deal with diagnostics from the
+            // compilation part. We cannot call `sess.finish_diagnostics()` as then "aborting due to
+            // previous errors" gets printed twice.
+            tcx.dcx().emit_stashed_diagnostics();
             tcx.dcx().abort_if_errors();
-            exit(return_code.get());
-        } else {
-            exit(rustc_driver::EXIT_SUCCESS);
-        }
+            tcx.dcx().flush_delayed();
 
-        // Unreachable.
+            // Miri is taking over. Start logging.
+            init_late_loggers(&EarlyDiagCtxt::new(tcx.sess.opts.error_format), tcx);
+
+            // Find the entry point.
+            if !tcx.crate_types().contains(&CrateType::Executable) {
+                tcx.dcx().fatal("miri only makes sense on bin crates");
+            }
+            let (entry_def_id, entry_type) = entry_fn(tcx);
+
+            // Obtain and complete the Miri configuration.
+            let mut config =
+                self.miri_config.take().expect("after_analysis must only be called once");
+            // Add filename to `miri` arguments.
+            config.args.insert(0, tcx.sess.io.input.filestem().to_string());
+
+            // Adjust working directory for interpretation.
+            if let Some(cwd) = env::var_os("MIRI_CWD") {
+                env::set_current_dir(cwd).unwrap();
+            }
+
+            // Emit warnings for some unusual configurations.
+            if tcx.sess.opts.optimize != OptLevel::No {
+                tcx.dcx().warn("Miri does not support optimizations: the opt-level is ignored. The only effect \
+                of selecting a Cargo profile that enables optimizations (such as --release) is to apply \
+                its remaining settings, such as whether debug assertions and overflow checks are enabled.");
+            }
+            if tcx.sess.mir_opt_level() > 0 {
+                tcx.dcx().warn("You have explicitly enabled MIR optimizations, overriding Miri's default \
+                which is to completely disable them. Any optimizations may hide UB that Miri would \
+                otherwise detect, and it is not necessarily possible to predict what kind of UB will \
+                be missed. If you are enabling optimizations to make Miri run faster, we advise using \
+                cfg(miri) to shrink your workload instead. The performance benefit of enabling MIR \
+                optimizations is usually marginal at best.");
+            }
+
+            report_unknown_local_foreign_symbol_uses(tcx);
+            tcx.dcx().abort_if_errors();
+
+            // Invoke the interpreter.
+            let res = if config.genmc_config.is_some() {
+                assert!(self.many_seeds.is_none());
+                run_genmc_mode(tcx, &config, |genmc_ctx: Rc<GenmcCtx>| {
+                    miri::eval_entry(tcx, entry_def_id, entry_type, &config, Some(genmc_ctx))
+                })
+            } else if let Some(many_seeds) = self.many_seeds.take() {
+                assert!(config.seed.is_none());
+                run_many_seeds(many_seeds, |seed| {
+                    let mut config = config.clone();
+                    config.seed = Some(seed);
+                    eprintln!("Trying seed: {seed}");
+                    miri::eval_entry(
+                        tcx,
+                        entry_def_id,
+                        entry_type,
+                        &config,
+                        /* genmc_ctx */ None,
+                    )
+                })
+            } else {
+                miri::eval_entry(tcx, entry_def_id, entry_type, &config, None)
+            };
+            // Process interpreter result.
+            if let Err(return_code) = res {
+                tcx.dcx().abort_if_errors();
+                exit(return_code.get());
+            } else {
+                exit(rustc_driver::EXIT_SUCCESS);
+            }
+
+            // Unreachable.
+        };
+
+        rustc_public::rustc_internal::run(tcx, cb).unwrap()
     }
 }
 
@@ -437,6 +449,8 @@ impl rustc_driver::Callbacks for MiriDepCompilerCalls {
         _: &rustc_interface::interface::Compiler,
         tcx: TyCtxt<'tcx>,
     ) -> Compilation {
+        #[rustfmt::skip]
+        let cb = || {
         // While the dummy codegen backend doesn't do any codegen, we are still emulating
         // regular rustc builds, which would perform post-mono const-eval during collection.
         // So let's also do that here. In particular this is needed to make `compile_fail`
@@ -444,6 +458,8 @@ impl rustc_driver::Callbacks for MiriDepCompilerCalls {
         let _ = tcx.collect_and_partition_mono_items(());
 
         Compilation::Continue
+        };
+        rustc_public::rustc_internal::run(tcx, cb).unwrap()
     }
 }
 
