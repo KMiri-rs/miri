@@ -5,13 +5,16 @@ use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::interpret::GlobalAlloc;
 use rustc_middle::mir::visit::Visitor as _;
-use rustc_middle::mir::{self, BasicBlockData, HasLocalDecls};
-use rustc_middle::ty::{
-    self, Instance, InstanceKind, Ty, TyCtxt, TyKind, TypeVisitableExt, TypingEnv,
-};
+use rustc_middle::mir::{self, HasLocalDecls};
+use rustc_middle::ty::{self, Instance, InstanceKind, Ty, TyCtxt, TypeVisitableExt};
+use rustc_public::mir::MirVisitor;
+use rustc_public::mir::visit::Location;
+use rustc_public::ty::RigidTy;
 use rustc_span::source_map::SourceMap;
 
 use crate::debugger::utils::{pos_to_line_nr, source_file};
+
+extern crate rustc_public;
 
 #[derive(Clone, Debug)]
 pub struct FunctionInstanceInfo {
@@ -21,11 +24,75 @@ pub struct FunctionInstanceInfo {
     pub line_end: u16,
 }
 
+struct CollectInstance<'tcx> {
+    v_instance: Vec<Instance<'tcx>>,
+    tcx: TyCtxt<'tcx>,
+}
+
+impl MirVisitor for CollectInstance<'_> {
+    fn visit_ty(&mut self, ty: &rustc_public::ty::Ty, location: Location) {
+        if let rustc_public::ty::TyKind::RigidTy(RigidTy::FnDef(fn_def, args)) = ty.kind() {
+            if let Ok(instance) = rustc_public::mir::mono::Instance::resolve(fn_def, &args) {
+                log!("visit: {:?}", instance.name());
+                self.v_instance.push(rustc_public::rustc_internal::internal(self.tcx, instance));
+            }
+        }
+        self.super_ty(ty);
+    }
+}
+
+pub fn collect<'tcx>(tcx: TyCtxt<'tcx>) -> Box<[FunctionInstanceInfo]> {
+    let mut collector = CollectInstance { v_instance: Vec::with_capacity(1024), tcx };
+
+    let local_fn_defs = rustc_public::local_crate().fn_defs().into_iter();
+    let dep_fn_defs = rustc_public::external_crates()
+        .into_iter()
+        .filter(|krate| {
+            let crate_num = rustc_public::rustc_internal::internal(tcx, krate.id);
+            for path in tcx.crate_extern_paths(crate_num) {
+                if let Ok(path) = path.canonicalize() {
+                    if path.starts_with("/home/zjp/KMiri/asterinas/") {
+                        return true;
+                    }
+                }
+            }
+            false
+        })
+        .flat_map(|krate| krate.fn_defs());
+    for fn_def in local_fn_defs.chain(dep_fn_defs) {
+        if let Some(body) = fn_def.body() {
+            collector.visit_body(&body);
+        }
+    }
+
+    let sm = tcx.sess.source_map();
+    let mut v_fn: Box<[_]> = collector
+        .v_instance
+        .into_iter()
+        .map(|instance| {
+            let def_id = instance.def_id();
+            let span = tcx.def_span(def_id);
+            FunctionInstanceInfo {
+                instance: instance.to_string(),
+                source_file: source_file(sm, span),
+                line_start: pos_to_line_nr(sm, span.lo()),
+                line_end: pos_to_line_nr(sm, span.hi()),
+            }
+        })
+        .collect();
+    v_fn.sort_unstable_by(|a, b| a.instance.cmp(&b.instance));
+
+    log!("collect_and_partition_mono_items: {v_fn:#?}");
+    v_fn
+}
+
 pub fn collect_reachable_function_instances<'tcx>(
     tcx: TyCtxt<'tcx>,
     entry_id: DefId,
     sm: &SourceMap,
 ) -> Vec<FunctionInstanceInfo> {
+    collect(tcx);
+
     let mut pending = VecDeque::new();
     let mut seen = FxHashSet::default();
     let mut reachable = Vec::new();
