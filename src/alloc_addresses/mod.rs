@@ -44,6 +44,7 @@ pub struct GlobalStateInner {
     /// *full* inverse of `base_addr`; dead allocations have been removed.
     /// Note that in GenMC mode, dead allocations are *not* removed -- and also, addresses are never
     /// reused. This lets us use the address as a cross-execution-stable identifier for an allocation.
+    /// kmiri: the u64 is a paddr.
     pub int_to_ptr_map: Vec<(u64, AllocId)>,
     /// The base address for each allocation.  We cannot put that into
     /// `AllocExtra` because function pointers also have a base address, and
@@ -273,21 +274,21 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
             }
             interp_ok(reuse_addr)
         } else {
-            let base_addr = if memory_kind == MemoryKind::Stack {
+            let base_vaddr = if memory_kind == MemoryKind::Stack {
                 let thread = this.machine.threads.active_thread_ref();
-                let mut next_stack_addr = thread.next_stack_addr.borrow_mut();
+                let mut next_stack_vaddr = thread.next_stack_vaddr.borrow_mut();
 
-                let base_addr =
-                    adjust_stack_addr(info.size.bytes(), info.align.bytes(), *next_stack_addr);
+                let base_vaddr =
+                    adjust_stack_addr(info.size.bytes(), info.align.bytes(), *next_stack_vaddr);
 
-                if base_addr < thread.stack_bottom {
+                if base_vaddr < thread.stack_bottom {
                     throw_exhaust!(AddressSpaceFull);
                 }
-                *next_stack_addr = base_addr;
+                *next_stack_vaddr = base_vaddr;
 
-                base_addr
+                base_vaddr
             } else {
-                let (next_address, limit) =
+                let (next_vaddr, limit) =
                     if this.machine.cpu_local_alloc_set.borrow().contains(&alloc_id) {
                         (
                             &mut global_state.next_cpu_local_paddr,
@@ -305,11 +306,10 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 // We ensure that `(global_state.next_base_addr + slack) % 16` is uniformly distributed.
                 let slack = rng.random_range(0..16);
                 // From next_base_addr + slack, round up to adjust for alignment.
-                let base_addr = next_address
-                    .checked_add(slack)
-                    .ok_or_else(|| err_exhaust!(AddressSpaceFull))?;
-                let base_addr = align_addr(base_addr, info.align.bytes());
-                if base_addr >= limit {
+                let base_vaddr =
+                    next_vaddr.checked_add(slack).ok_or_else(|| err_exhaust!(AddressSpaceFull))?;
+                let base_vaddr = align_addr(base_vaddr, info.align.bytes());
+                if base_vaddr >= limit {
                     throw_exhaust!(AddressSpaceFull);
                 }
 
@@ -317,18 +317,18 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 // least 1 to avoid two allocations having the same base address. (The logic in
                 // `alloc_id_from_addr` assumes unique addresses, and different function/vtable pointers
                 // need to be distinguishable!)
-                *next_address = base_addr
+                *next_vaddr = base_vaddr
                     .checked_add(info.size.bytes().max(1))
                     .ok_or_else(|| err_exhaust!(AddressSpaceFull))?;
                 // Even if `Size` didn't overflow, we might still have filled up the address space.
-                if *next_address > this.target_usize_max() {
+                if *next_vaddr > this.target_usize_max() {
                     throw_exhaust!(AddressSpaceFull);
                 }
-                base_addr
+                base_vaddr
             };
             // println!("memory_kind={memory_kind:?} base_addr={base_addr:#x}");
 
-            interp_ok(base_addr)
+            interp_ok(base_vaddr)
         }
     }
 }
@@ -403,7 +403,9 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         // let paddr = mirch::page_walk_or(vaddr as usize, || vaddr as usize)? as u64;
         let vaddr = vaddr as usize;
         let paddr = mirch::page_walk_or(vaddr, || {
-            mirch::try_kernel_code_vaddr_to_paddr(vaddr).unwrap_or(vaddr)
+            // log!("[alloc_id_from_addr - page_walk_or] vaddr={vaddr:#x}");
+            // mirch::try_kernel_code_vaddr_to_paddr(vaddr).unwrap()
+            unreachable!()
         })
         .unwrap() as u64;
 
@@ -742,24 +744,28 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
     ) -> Option<(AllocId, Size)> {
         let this = self.eval_context_ref();
 
-        let (tag, addr) = ptr.into_raw_parts(); // addr is absolute (Miri provenance)
+        let (tag, vaddr) = ptr.into_raw_parts(); // addr is absolute (Miri provenance)
 
         let alloc_id = if let Provenance::Concrete { alloc_id, .. } = tag {
             alloc_id
         } else {
             // A wildcard pointer.
-            this.alloc_id_from_addr(addr.bytes(), size)?
+            this.alloc_id_from_addr(vaddr.bytes(), size)?
         };
 
         // This cannot fail: since we already have a pointer with that provenance, adjust_alloc_root_pointer
         // must have been called in the past, so we can just look up the address in the map.
         let base_paddr = *this.machine.alloc_addresses.borrow().base_paddr.get(&alloc_id).unwrap();
 
-        let actual_paddr = mirch::page_walk_or(addr.bytes_usize(), || {
+        let vaddr = vaddr.bytes_usize();
+        let paddr_fallback = || {
+            log!("[ptr_get_alloc - page_walk_or] vaddr={vaddr:#x}");
+
             // kernel_code_vaddr_to_paddr(addr.bytes_usize())
-            mirch::try_kernel_code_vaddr_to_paddr(addr.bytes_usize()).unwrap_or(addr.bytes_usize())
-        })
-        .unwrap() as u64;
+            mirch::try_kernel_code_vaddr_to_paddr(vaddr).unwrap_or(vaddr)
+        };
+        let actual_paddr =
+            mirch::page_walk_or(vaddr, paddr_fallback).unwrap_or_else(paddr_fallback) as u64;
 
         let offset = actual_paddr.wrapping_sub(base_paddr);
 

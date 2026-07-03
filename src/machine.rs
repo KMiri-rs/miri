@@ -2018,7 +2018,7 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         // Pushes the stack pointer.
         let ret_ty_layout = ecx.frame().return_place().layout.layout;
         let thread = ecx.machine.threads.active_thread_mut();
-        let next_stack_addr = &mut *thread.next_stack_addr.borrow_mut();
+        let next_stack_addr = &mut *thread.next_stack_vaddr.borrow_mut();
         thread.stack_addr_records.push(*next_stack_addr);
         // The address of return value is reserved before all locals in the frame,
         // and base stack address starts after the return value allocation.
@@ -2059,7 +2059,7 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         // Resumes the stack pointer for return value.
         let thread = ecx.machine.threads.active_thread_mut();
         if let Some(stack_addr_for_ret_value) = thread.stack_addr_records.last().copied() {
-            *thread.next_stack_addr.borrow_mut() = stack_addr_for_ret_value;
+            *thread.next_stack_vaddr.borrow_mut() = stack_addr_for_ret_value;
         }
 
         interp_ok(())
@@ -2091,7 +2091,7 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         // Check the reserved space of return value is correct, ensuring the stack address is correct.
         let thread = ecx.machine.threads.active_thread_mut();
         if let Some(stack_addr_for_ret_value) = thread.stack_addr_records.pop() {
-            let current_sp = *thread.next_stack_addr.borrow();
+            let current_sp = *thread.next_stack_vaddr.borrow();
             let stack_addr_after_ret_ty = adjust_stack_addr(
                 ret_ty_layout.size().bytes(),
                 ret_ty_layout.align().bytes(),
