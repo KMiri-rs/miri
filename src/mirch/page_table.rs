@@ -25,6 +25,10 @@ pub fn try_kernel_code_vaddr_to_paddr(vaddr: usize) -> Option<usize> {
     vaddr.checked_sub(super::kernel_code_base_vaddr())
 }
 
+pub fn try_boot_pt_vaddr_to_paddr(vaddr: usize) -> Option<usize> {
+    vaddr.checked_sub(super::boot_pt_linear_mapping_base_vaddr())
+}
+
 /// Inits a boot page table to enable paging system at the pseudo physical memory.
 ///
 /// Boot pagetable support up to 1GB of pseudo physical memory.
