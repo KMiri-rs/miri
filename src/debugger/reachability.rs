@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::interpret::GlobalAlloc;
+use rustc_middle::mir::mono::MonoItem;
 use rustc_middle::mir::visit::Visitor as _;
 use rustc_middle::mir::{self, HasLocalDecls};
 use rustc_middle::ty::{Instance, InstanceKind, Ty, TyCtxt, TyKind, TypeVisitableExt, TypingEnv};
@@ -19,11 +20,41 @@ pub struct FunctionInstanceInfo {
     pub line_end: u16,
 }
 
+pub fn collect<'tcx>(tcx: TyCtxt<'tcx>) -> Box<[FunctionInstanceInfo]> {
+    let sm = tcx.sess.source_map();
+    let mut v_fn: Box<[_]> = tcx
+        .collect_and_partition_mono_items(())
+        .codegen_units
+        .iter()
+        .flat_map(|codegen_unit| {
+            codegen_unit.items().into_iter().filter_map(|(item, _)| {
+                if let MonoItem::Fn(instance) = item {
+                    let def_id = instance.def_id();
+                    let span = tcx.def_span(def_id);
+                    Some(FunctionInstanceInfo {
+                        instance: instance.to_string(),
+                        source_file: source_file(sm, span),
+                        line_start: pos_to_line_nr(sm, span.lo()),
+                        line_end: pos_to_line_nr(sm, span.hi()),
+                    })
+                } else {
+                    None
+                }
+            })
+        })
+        .collect();
+    v_fn.sort_unstable_by(|a, b| a.instance.cmp(&b.instance));
+    log!("collect_and_partition_mono_items: {v_fn:#?}");
+    v_fn
+}
+
 pub fn collect_reachable_function_instances<'tcx>(
     tcx: TyCtxt<'tcx>,
     entry_id: DefId,
     sm: &SourceMap,
 ) -> Vec<FunctionInstanceInfo> {
+    collect(tcx);
+
     let mut pending = VecDeque::new();
     let mut seen = FxHashSet::default();
     let mut reachable = Vec::new();
