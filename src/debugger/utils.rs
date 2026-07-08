@@ -1,4 +1,7 @@
+use std::sync::{LazyLock, Mutex};
+
 use ratatui::text::{Line, Span as RatatuiSpan};
+use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::source_map::SourceMap;
@@ -7,7 +10,7 @@ use rustc_span::{FileName, RealFileName, Span};
 use crate::debugger::state::RenderSrc;
 use crate::debugger::tui::theme::STYLE_HIGHTLIGHTED;
 use crate::helpers::ToUsize;
-use crate::{MemoryKind, MiriMemoryKind};
+use crate::{MemoryKind, MiriInterpCx, MiriMemoryKind};
 
 pub fn kind_str(kind: MemoryKind) -> &'static str {
     match kind {
@@ -185,4 +188,18 @@ pub fn src_view_centering(highlighted_idx: [u16; 2], height: u16) -> u16 {
 pub fn pos_to_line_nr(sm: &SourceMap, pos: rustc_span::BytePos) -> u16 {
     let loc = sm.lookup_char_pos(pos);
     u16::try_from(loc.line).unwrap_or(0)
+}
+
+pub fn instance_name(ecx: &MiriInterpCx<'_>, def_id: DefId) -> String {
+    use rustc_middle::ty::print::{with_no_trimmed_paths, with_resolve_crate_name};
+
+    static RECORDED: LazyLock<Mutex<FxHashMap<DefId, String>>> = LazyLock::new(Default::default);
+
+    let mut recorded = RECORDED.lock().unwrap();
+    recorded
+        .entry(def_id)
+        .or_insert_with(|| {
+            with_no_trimmed_paths!(with_resolve_crate_name!(ecx.tcx.def_path_str(def_id)))
+        })
+        .clone()
 }

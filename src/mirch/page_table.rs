@@ -25,6 +25,10 @@ pub fn try_kernel_code_vaddr_to_paddr(vaddr: usize) -> Option<usize> {
     vaddr.checked_sub(super::kernel_code_base_vaddr())
 }
 
+pub fn try_boot_pt_vaddr_to_paddr(vaddr: usize) -> Option<usize> {
+    vaddr.checked_sub(super::boot_pt_linear_mapping_base_vaddr())
+}
+
 /// Inits a boot page table to enable paging system at the pseudo physical memory.
 ///
 /// Boot pagetable support up to 1GB of pseudo physical memory.
@@ -135,12 +139,14 @@ impl PageTable {
                 break;
             }
 
-            if page_table_entry == 0 {
+            if page_table_entry & Self::PRESENT_BIT_MASK == 0 {
                 // The PTE is not valid.
-                // return None;
-                println!(
-                    "[page_walk] vaddr=0x{vaddr:x} (PTE=0x{page_table_entry:x}) doesn't have valid PRESENT_BIT_MASK"
-                )
+                // log!(
+                //     "[page_walk ({})] current_paddr=0x{current_paddr:x} ({:?}) vaddr=0x{vaddr:x} (PTE=0x{page_table_entry:x}) doesn't have valid PRESENT_BIT_MASK",
+                //     current_level + 1,
+                //     CodeSection::paddr(current_level as u64)
+                // );
+                return None;
             }
         }
 
