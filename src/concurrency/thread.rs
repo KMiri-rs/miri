@@ -763,7 +763,7 @@ impl<'tcx> ThreadManager<'tcx> {
             self.cpu_to_threads[self.active_cpu] = Some(id);
             self.next_thread[self.active_cpu] = None;
             if self.threads[self.active_thread].state.is_enabled() {
-                println!(
+                info!(
                     "---------- Now executing on thread `{}` (previous: `{}`) cpu: {:?}----------------------------------------",
                     self.get_thread_display_name(id),
                     self.get_thread_display_name(old_id),
@@ -1126,7 +1126,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         // Finally switch to new thread so that we can push the first stackframe.
         // After this all accesses will be treated as occurring in the new thread.
         let old_thread_id = this.machine.threads.set_active_thread_id(new_thread_id);
-        println!("old_thread_id={old_thread_id:?} new_thread_id={new_thread_id:?}");
 
         // The child inherits its parent's cpu affinity.
         if let Some(cpuset) = this.machine.thread_cpu_affinity.get(&old_thread_id).cloned() {
@@ -1135,7 +1134,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
         // Perform the function pointer load in the new thread frame.
         let instance = this.get_ptr_fn(start_routine)?.as_instance()?;
-        println!("instance={instance} span={current_span:?}");
 
         // Note: the returned value is currently ignored (see the FIXME in
         // pthread_join in shims/unix/thread.rs) because the Rust standard library does not use
