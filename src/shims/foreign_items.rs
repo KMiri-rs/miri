@@ -881,6 +881,10 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 };
                 this.machine.threads.switch_to(*thread_id);
             }
+            "miri_terminate_current_thread" => {
+                let [] = this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                this.machine.threads.miri_terminate_current_thread()?;
+            }
             // OS memory
             "kern_miri_alloc_pages" => {
                 let [paddr, count] =
