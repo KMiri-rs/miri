@@ -224,8 +224,8 @@ impl MayLeak for MiriMemoryKind {
     fn may_leak(self) -> bool {
         use self::MiriMemoryKind::*;
         match self {
-            Rust | Miri | C | WinHeap | WinLocal | Runtime => false,
-            Kernel | Machine | Global | ExternStatic | Tls | Mmap => true,
+            Rust | Miri | C | WinHeap | WinLocal | Runtime | Kernel => false,
+            Machine | Global | ExternStatic | Tls | Mmap => true,
         }
     }
 }
