@@ -1,12 +1,13 @@
 use std::alloc::Layout;
 use std::collections::BTreeMap;
 
-use rustc_abi::Align;
+use rustc_abi::{Align, Size};
 use rustc_middle::ty::Mutability;
 
 use super::PageTable;
 use super::config::*;
 use crate::alloc::MiriAllocParams;
+use crate::mirch::config;
 use crate::*;
 
 static mut PHYSICAL_MEM: PhysicalMemory = PhysicalMemory::empty();
@@ -83,8 +84,55 @@ pub fn create_allocation_at(
     }
 }
 
+#[derive(Debug)]
+pub struct KernelMem {
+    pub alloc_id: AllocId,
+    #[allow(unused)]
+    pub provenance: Vec<String>,
+    pub size: u64,
+    pub align: u64,
+    pub buffer_ptr: *const u8,
+}
+
+pub fn free_kernel_allocations(ecx: &mut MiriInterpCx<'_>, v_kernel_mem: Vec<KernelMem>) {
+    // v_kernel_mem.sort_unstable_by_key(|m| m.buffer_ptr);
+    // log!("v_kernel_mem={v_kernel_mem:#?}");
+
+    let physical_buffer_start = physical_mem().mem as usize;
+    let physical_buffer_len = config::total_mem_size();
+    let physical_buffer_end = physical_buffer_start + physical_buffer_len;
+
+    for kernel_mem in &v_kernel_mem {
+        let KernelMem { alloc_id, size, align, buffer_ptr, .. } = kernel_mem;
+        let buffer_ptr = *buffer_ptr as usize;
+        if !(physical_buffer_start <= buffer_ptr
+            && buffer_ptr + kernel_mem.size as usize <= physical_buffer_end)
+        {
+            panic!(
+                "{kernel_mem:?} doesn't belong to physical_mem {physical_buffer_start:#x}..{physical_buffer_end:#x}"
+            );
+        }
+
+        // FIXME: why does kernel_mem has provenance?
+        // assert!(provenance.is_empty(), "{kernel_mem:?} should not have provenance!");
+
+        ecx.machine.free_alloc_id(
+            *alloc_id,
+            Size::from_bytes(*size),
+            Align::from_bytes(*align).unwrap(),
+            MemoryKind::Machine(MiriMemoryKind::Kernel),
+        );
+        ecx.memory.alloc_map().remove(alloc_id);
+    }
+
+    // SAFETY: free the whole physical buffer.
+    unsafe {
+        std::alloc::dealloc(physical_buffer_start as *mut u8, PhysicalMemory::mem_buffer_layout());
+    }
+}
+
 /// Frees `count` pages at `paddr` in the simulated physical memory.
-pub fn free_allocations<'tcx>(
+pub fn dealloc_pages<'tcx>(
     this: &mut MiriInterpCx<'tcx>,
     paddr: usize,
     count: usize,
@@ -232,13 +280,13 @@ impl PhysicalMemory {
         }
     }
 
+    pub fn mem_buffer_layout() -> Layout {
+        Layout::from_size_align(total_mem_size(), page_size()).unwrap()
+    }
+
     pub fn new(config: PhysConfig) -> Self {
         super::config::init(config);
-        let mem = unsafe {
-            std::alloc::alloc_zeroed(
-                Layout::from_size_align(total_mem_size(), page_size()).unwrap(),
-            )
-        };
+        let mem = unsafe { std::alloc::alloc_zeroed(Self::mem_buffer_layout()) };
 
         let mut page_states = vec![PageState::Unused; total_page_num()];
         #[expect(
