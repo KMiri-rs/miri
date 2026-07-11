@@ -22,7 +22,7 @@ use crate::concurrency::GenmcCtx;
 use crate::concurrency::thread::TlsAllocAction;
 use crate::debugger::reachability;
 use crate::diagnostics::report_leaks;
-use crate::mirch::PhysConfig;
+use crate::mirch::{KernelMem, PhysConfig, free_kernel_allocations};
 use crate::shims::{global_ctor, tls};
 use crate::*;
 
@@ -535,6 +535,32 @@ pub fn eval_entry<'tcx>(
                 tcx.dcx().note("set `MIRIFLAGS=-Zmiri-ignore-leaks` to disable this check");
                 break 'miri_error;
             }
+
+            // free Kernel kind memory
+            let mut v_kernel_mem = Vec::with_capacity(1024);
+            ecx.memory.alloc_map().iter(|iter| {
+                for (alloc_id, (kind, alloc)) in iter {
+                    if !matches!(kind, MemoryKind::Machine(MiriMemoryKind::Kernel)) {
+                        continue;
+                    }
+                    // let size_align = (alloc.size(), alloc.align);
+                    let size = alloc.size().bytes();
+                    let buffer = alloc.get_bytes_unchecked((0..size as usize).into());
+                    v_kernel_mem.push(KernelMem {
+                        alloc_id: *alloc_id,
+                        provenance: alloc
+                            .provenance()
+                            .provenances()
+                            .map(|prov| format!("{prov:?}"))
+                            .collect(),
+                        size,
+                        align: alloc.align.bytes(),
+                        buffer_ptr: buffer.as_ptr(),
+                    });
+                }
+            });
+            free_kernel_allocations(&mut ecx, v_kernel_mem);
+
             // Check for memory leaks.
             info!("Additional static roots: {:?}", ecx.machine.static_roots);
             let leaks = ecx.take_leaked_allocations(|ecx| &ecx.machine.static_roots);
