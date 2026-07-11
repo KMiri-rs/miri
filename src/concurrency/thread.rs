@@ -656,28 +656,6 @@ impl<'tcx> ThreadManager<'tcx> {
         self.threads[thread_id].state = ThreadState::Enabled;
     }
 
-    pub fn miri_terminate_current_thread(&mut self) -> InterpResult<'tcx> {
-        let current_thread = self.active_thread;
-        if self.has_terminated(current_thread) {
-            throw_machine_stop!(TerminationInfo::Abort(format!(
-                "Current thread {current_thread:?} has been terminated!"
-            )))
-        }
-        self.threads[current_thread].state = ThreadState::Terminated;
-        self.yield_active_thread();
-        let live_threads: Vec<_> = self
-            .threads
-            .iter()
-            .filter(|t| !t.state.is_terminated())
-            .map(|t| t.thread_display_name(current_thread))
-            .collect();
-        println!(
-            "Terminate {current_thread:?}. Live thread count: {} (Thread: {live_threads:?})",
-            live_threads.len()
-        );
-        interp_ok(())
-    }
-
     /// Get a mutable borrow of the currently active thread.
     pub fn active_thread_mut(&mut self) -> &mut Thread<'tcx> {
         &mut self.threads[self.active_thread]
