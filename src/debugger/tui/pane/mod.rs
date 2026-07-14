@@ -7,6 +7,7 @@ use crate::debugger::tui::theme::*;
 pub mod panes;
 
 pub mod allocs;
+pub mod borrow_stacks;
 pub mod locals;
 pub mod mir;
 pub mod output;

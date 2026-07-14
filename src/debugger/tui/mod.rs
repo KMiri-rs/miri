@@ -240,13 +240,18 @@ fn finished_without_snapshot(terminal: &mut Terminal) -> io::Result<()> {
 }
 
 fn render(panes: &mut Panes, frame: &mut Frame<'_>, state: &DebuggerState, ctx: &Context) {
+    let no_dead = ctx.filter_out_dead_allocs;
     panes.update_area(frame.area());
 
     panes.render_mir(frame, state);
     panes.render_stack(frame, state, ctx.blink_epoch);
     panes.render_src(frame, state);
     panes.render_locals(frame, state);
-    panes.render_memory(frame, state, ctx.filter_out_dead_allocs);
+    panes.render_memory(frame, state, no_dead);
     panes.render_output(frame, state);
     panes.render_status_bar(frame, state, ctx);
+
+    if panes.borrow_stacks.focus {
+        panes.render_borrow_stack(frame, state, no_dead);
+    }
 }
