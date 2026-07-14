@@ -8,5 +8,5 @@ pub fn collect() -> Reachability {
     let dir_target = std::path::PathBuf::from(dir_target);
     let analysis_json = dir_target.join(ANALYSIS_JSON);
     let file = std::fs::File::open(analysis_json).unwrap();
-    todo!()
+    serde_json::from_reader(file).unwrap()
 }
