@@ -43,9 +43,11 @@ use crate::concurrency::thread::StackPopAllocTracker;
 use crate::concurrency::{
     AllocDataRaceHandler, GenmcCtx, GenmcEvalContextExt as _, GlobalDataRaceHandler, weak_memory,
 };
+use crate::debugger::debugger_log;
 use crate::debugger::reachability::FunctionInstanceInfo;
+use crate::debugger::utils::hsize;
 use crate::helpers::is_no_core;
-use crate::mirch::{self, PageState, TypedKind, kernel_code_paddr_to_vaddr};
+use crate::mirch::{self, PageState, TypedKind, kernel_code_paddr_to_vaddr, kernel_stack_end_addr};
 use crate::*;
 
 /// First real-time signal.
@@ -2266,6 +2268,9 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
 
             let thread = ecx.machine.threads.active_thread_mut();
             let current_sp = &mut *thread.next_stack_addr.borrow_mut();
+            let footprint =
+                kernel_code_paddr_to_vaddr(kernel_stack_end_addr()) as u64 - *current_sp;
+            debugger_log(format!("stack usage: 0x{footprint:x} ({})", hsize(footprint)));
             *current_sp = next_stack_addr;
         }
 
