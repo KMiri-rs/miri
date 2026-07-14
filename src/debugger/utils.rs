@@ -181,3 +181,8 @@ pub fn src_view_centering(highlighted_idx: [u16; 2], height: u16) -> u16 {
     };
     scroll.try_into().unwrap()
 }
+
+pub fn pos_to_line_nr(sm: &SourceMap, pos: rustc_span::BytePos) -> u16 {
+    let loc = sm.lookup_char_pos(pos);
+    u16::try_from(loc.line).unwrap_or(0)
+}
