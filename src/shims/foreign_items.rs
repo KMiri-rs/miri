@@ -22,7 +22,7 @@ use super::backtrace::EvalContextExt as _;
 use crate::concurrency::GenmcEvalContextExt as _;
 use crate::helpers::EvalContextExt as _;
 use crate::mirch::{
-    PageState, PageTable, TypedKind, free_allocations, insert_init_mask, type_pages_at,
+    PageState, PageTable, TypedKind, dealloc_pages, insert_init_mask, type_pages_at,
 };
 use crate::*;
 
@@ -904,7 +904,7 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
                 let paddr = this.read_target_usize(paddr)? as usize;
                 let count = this.read_target_usize(count)? as usize;
-                free_allocations(this, paddr, count)?;
+                dealloc_pages(this, paddr, count)?;
             }
             "kern_miri_zero" => {
                 let [paddr, page_count] =
