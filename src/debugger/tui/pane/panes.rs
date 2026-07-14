@@ -1,11 +1,13 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crossterm::event::KeyCode;
 use ratatui::prelude::*;
+use tui_overlay::{Backdrop, Easing, Overlay, OverlayState};
 
 use crate::DebuggerState;
 use crate::debugger::tui::pane::FocusPane;
 use crate::debugger::tui::pane::allocs::PaneAllocs;
+use crate::debugger::tui::pane::borrow_stacks::PaneBorrowStacks;
 use crate::debugger::tui::pane::locals::PaneLocals;
 use crate::debugger::tui::pane::mir::PaneMir;
 use crate::debugger::tui::pane::output::PaneOutput;
@@ -16,6 +18,7 @@ use crate::debugger::tui::{Context, RunTargetState};
 
 #[derive(Debug)]
 pub struct Panes {
+    pub area: Rect,
     pub focus: FocusPane,
     pub mir: PaneMir,
     pub stack: PaneStack,
@@ -24,6 +27,7 @@ pub struct Panes {
     pub allocs: PaneAllocs,
     pub output: PaneOutput,
     pub status_bar: PaneStatusBar,
+    pub borrow_stacks: PaneBorrowStacks,
     /// The default value is true to disable manual scrolling for panes (like mir and src)
     /// where the contents are preferred to centering.
     pub freeze: bool,
@@ -69,6 +73,7 @@ impl Panes {
         };
 
         Panes {
+            area,
             focus: FocusPane::Mir,
             mir: PaneMir::new(mir),
             stack: PaneStack::new(stack),
@@ -77,12 +82,14 @@ impl Panes {
             allocs: PaneAllocs::new(memory),
             output: PaneOutput::new(output),
             status_bar: PaneStatusBar::new(status_bar),
+            borrow_stacks: PaneBorrowStacks::new(),
             freeze: true,
         }
     }
 
     pub fn update_area(&mut self, area: Rect) {
         let new_layout = Self::new(area);
+        self.area = area;
         self.mir.rect = new_layout.mir.rect;
         self.stack.rect = new_layout.stack.rect;
         self.src.rect = new_layout.src.rect;
@@ -155,8 +162,24 @@ impl Panes {
     }
 
     pub fn render_status_bar(&self, frame: &mut Frame<'_>, state: &DebuggerState, ctx: &Context) {
-        let list = self.status_bar.widget(state, self.focus.as_str(), &self.stack.search, ctx);
-        frame.render_widget(list, self.status_bar.rect);
+        let paragraph = self.status_bar.widget(state, self.focus.as_str(), &self.stack.search, ctx);
+        frame.render_widget(paragraph, self.status_bar.rect);
+    }
+
+    /// Render this modal after all main panes are rendered.
+    pub fn render_borrow_stack(
+        &mut self,
+        frame: &mut Frame<'_>,
+        state: &DebuggerState,
+        no_dead: bool,
+    ) {
+        let modal = self.borrow_stacks.modal();
+        modal.state.open();
+        frame.render_stateful_widget(modal.overlay.clone(), self.area, &mut modal.state);
+        if let Some(inner) = modal.state.inner_area() {
+            let table = self.borrow_stacks.widget(state, no_dead);
+            frame.render_widget(table, inner);
+        }
     }
 
     fn up(&mut self, on_stack: impl FnOnce(&mut PaneStack)) {

@@ -5,6 +5,7 @@ use rustc_data_structures::fx::FxHashSet;
 use rustc_span::{Span, SpanData};
 use smallvec::SmallVec;
 
+use crate::borrow_tracker::stacked_borrows::debugger::DebuggerWholeAllocation;
 use crate::borrow_tracker::{AccessKind, GlobalStateInner, ProtectorKind};
 use crate::*;
 
@@ -24,6 +25,12 @@ pub struct AllocHistory {
     creations: smallvec::SmallVec<[Creation; 1]>,
     invalidations: smallvec::SmallVec<[Invalidation; 1]>,
     protectors: smallvec::SmallVec<[Protection; 1]>,
+}
+
+impl AllocHistory {
+    pub fn debugger(&self, ecx: &MiriInterpCx<'_>) -> DebuggerWholeAllocation {
+        DebuggerWholeAllocation { alloc_id: self.id, info: ecx.get_alloc_info(self.id) }
+    }
 }
 
 #[derive(Clone, Debug)]
