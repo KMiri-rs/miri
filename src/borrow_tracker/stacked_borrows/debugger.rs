@@ -7,6 +7,8 @@ use rustc_const_eval::interpret::AllocInfo;
 
 use super::diagnostics::RetagCause;
 use crate::borrow_tracker::stacked_borrows::diagnostics::RetagInfo;
+use crate::debugger::state::AllocInfo as DebuggerAllocInfo;
+use crate::debugger::utils::{hsize, kind_str};
 use crate::*;
 
 #[derive(Clone, Debug)]
@@ -32,9 +34,12 @@ impl DebuggerBorrowStacks {
         }
     }
 
-    pub fn header() -> (Row<'static>, [Constraint; 12]) {
+    pub fn header() -> (Row<'static>, [Constraint; 15]) {
         let row = Row::new(vec![
             cell_left("AllocId"),
+            cell_right("BasePaddr"), // info
+            cell_right("Kind"),      // info
+            cell_right("Names"),     // info
             cell_right("Bytes"),
             cell_right("Align"),
             cell_right("PosStart"),
@@ -49,6 +54,9 @@ impl DebuggerBorrowStacks {
         ]);
         let widths = [
             Constraint::Min(8),  // AllocId
+            Constraint::Min(9),  // BasePaddr
+            Constraint::Min(5),  // Kind
+            Constraint::Min(10), // Names
             Constraint::Min(4),  // Bytes
             Constraint::Min(4),  // Align
             Constraint::Min(8),  // PosStart
@@ -64,7 +72,7 @@ impl DebuggerBorrowStacks {
         (row, widths)
     }
 
-    pub fn to_table_rows(&self) -> Vec<Row<'static>> {
+    pub fn to_table_rows(&self, info: &DebuggerAllocInfo) -> Vec<Row<'static>> {
         let mut level1 = true;
         let mut level2 = true;
         let mut rows = Vec::with_capacity(128);
@@ -89,10 +97,22 @@ impl DebuggerBorrowStacks {
                     .unwrap_or_default();
                 let row = Row::new(vec![
                     if level1 { cell_left(whole.alloc_id.0) } else { empty_cell() },
-                    level_cell(level1, hsize(whole.info.size.bytes())),
-                    level_cell(level1, hsize(whole.info.align.bytes())),
-                    level_cell(level2, start),
-                    level_cell(level2, end),
+                    level_cell(level1, || {
+                        info.base_addr.map(|addr| format!("0x{addr:x}")).unwrap_or_default()
+                    }),
+                    level_cell(level1, || info.kind.map(kind_str).unwrap_or_default()),
+                    level_cell(level1, || {
+                        std::iter::empty()
+                            .chain(&info.global)
+                            .chain(&info.locals)
+                            .map(String::from)
+                            .collect::<Vec<String>>()
+                            .join(",")
+                    }),
+                    level_cell(level1, || hsize(whole.info.size.bytes())),
+                    level_cell(level1, || hsize(whole.info.align.bytes())),
+                    level_cell(level2, || start),
+                    level_cell(level2, || end),
                     cell_right(item.bor_tag_id),
                     Cell::new(idx.right_aligned()),
                     Cell::new(permission.right_aligned()),
@@ -125,8 +145,8 @@ fn empty_cell() -> Cell<'static> {
     Cell::default()
 }
 
-fn level_cell(level: bool, val: impl ToString) -> Cell<'static> {
-    if level { cell_right(val.to_string()) } else { empty_cell() }
+fn level_cell<T: ToString>(level: bool, val: impl FnOnce() -> T) -> Cell<'static> {
+    if level { cell_right((val()).to_string()) } else { empty_cell() }
 }
 
 #[derive(Clone, Debug)]
@@ -165,14 +185,13 @@ impl DebuggerPrevTag {
     }
 
     fn retag_info(&self) -> Cell<'static> {
-        let in_field = if self.retag_info.in_field { "[f] " } else { "" };
         let cause = match self.retag_info.cause {
             RetagCause::Normal => "Normal",
             RetagCause::InPlaceFnPassing => "InPlaceFnPassing",
             RetagCause::FnEntry => "FnEntry",
             RetagCause::TwoPhase => "TwoPhase",
         };
-        cell_right(format_args!("{in_field}{cause}"))
+        cell_right(cause)
     }
 }
 
