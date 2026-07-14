@@ -587,17 +587,32 @@ impl Stacks {
         range: AllocRange,
         machine: &MiriMachine<'tcx>,
     ) -> InterpResult<'tcx> {
-        trace!(
-            "write access with tag {:?}: {:?}, size {}",
-            tag,
-            interpret::Pointer::new(alloc_id, range.start),
-            range.size.bytes()
-        );
+        let print = alloc_id.0.get() == 2331287;
+        let mut buf = String::with_capacity(1024);
+        if print {
+            writeln!(
+                &mut buf,
+                "[{alloc_id:?}] write access with tag {:?}: {:?}, size {}; range={:#x}..{:#x}",
+                tag,
+                interpret::Pointer::new(alloc_id, range.start),
+                range.size.bytes(),
+                range.start.bytes(),
+                range.end().bytes(),
+            )
+            .unwrap();
+        }
         let dcx = DiagnosticCxBuilder::write(machine, tag, range);
         let state = machine.borrow_tracker.as_ref().unwrap().borrow();
-        self.for_each(range, dcx, |stack, dcx, exposed_tags| {
+        let res =        self.for_each(range, dcx, |stack, dcx, exposed_tags| {
+            if print {
+                writeln!(&mut buf, "[{alloc_id:?}]  write tag={tag:?} stack={stack:?} exposed_tags={exposed_tags:?}").unwrap();
+            }
             stack.access(AccessKind::Write, tag, &state, dcx, exposed_tags)
-        })
+        });
+        if print {
+            log!("{buf}");
+        }
+        res
     }
 
     #[inline(always)]

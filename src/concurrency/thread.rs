@@ -709,7 +709,7 @@ impl<'tcx> ThreadManager<'tcx> {
             self.cpu_to_threads[self.active_cpu] = Some(id);
             self.next_thread[self.active_cpu] = None;
             if self.threads[self.active_thread].state.is_enabled() {
-                println!(
+                info!(
                     "---------- Now executing on thread `{}` (previous: `{}`) cpu: {:?}----------------------------------------",
                     self.get_thread_display_name(id),
                     self.get_thread_display_name(old_id),
