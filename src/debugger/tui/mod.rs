@@ -39,6 +39,7 @@ enum RunMode {
     Continue,
     RunToTerminator,
     RunToFrame,
+    RunToInstance,
     RunToMain,
     RunToEnd,
 }
@@ -50,6 +51,7 @@ impl RunMode {
             RunMode::Continue => "continue",
             RunMode::RunToTerminator => "run-to-terminator",
             RunMode::RunToFrame => "run-to-frame",
+            RunMode::RunToInstance => "run-to-instance",
             RunMode::RunToMain => "run-to-main",
             RunMode::RunToEnd => "run-to-end",
         }
@@ -71,6 +73,7 @@ pub struct Context {
     mode: RunMode,
     run_target: RunTargetState,
     run_to_frame_target: Option<String>,
+    run_to_instance_target: Option<String>,
     last_state: Option<Box<DebuggerState>>,
     history: VecDeque<DebuggerState>,
     blink_epoch: Instant,
@@ -86,6 +89,7 @@ impl Context {
             mode: RunMode::Step,
             run_target: RunTargetState::default(),
             run_to_frame_target: None,
+            run_to_instance_target: None,
             last_state: None,
             history: VecDeque::with_capacity(HISTORY_CAPACITY),
             blink_epoch: Instant::now(),
@@ -120,6 +124,13 @@ impl Context {
                 .run_to_frame_target
                 .as_ref()
                 .is_some_and(|target| state_has_frame(state, target))
+    }
+
+    fn reached_target_instance(&self, state: &DebuggerState) -> bool {
+        self.mode == RunMode::RunToInstance
+            && self.run_to_instance_target.as_ref().is_some_and(|target| {
+                state.stack_frames.last().is_some_and(|frame| frame.fn_name == *target)
+            })
     }
 }
 
@@ -168,14 +179,25 @@ fn tui_loop(
             Ok(StateOrEvent::State(state)) => {
                 ctx.on_new_state(&state);
                 panes.stack.refresh(&state);
+                panes.instances.refresh(&state);
                 if !state.stack_frames.is_empty() {
                     panes.stack.index = panes.stack.index.min(state.stack_frames.len() - 1);
                 } else {
                     panes.stack.index = 0;
                 }
+                if !state.function_instances.is_empty() {
+                    panes.instances.index =
+                        panes.instances.index.min(state.function_instances.len() - 1);
+                } else {
+                    panes.instances.index = 0;
+                }
                 if ctx.reached_target_frame(&state) {
                     ctx.mode = RunMode::Step;
                     ctx.run_to_frame_target = None;
+                }
+                if ctx.reached_target_instance(&state) {
+                    ctx.mode = RunMode::Step;
+                    ctx.run_to_instance_target = None;
                 }
                 if matches!(ctx.mode, RunMode::RunToMain) && state.in_user_code {
                     ctx.mode = RunMode::Step;
@@ -217,6 +239,7 @@ fn finished(
     ctx.mode = RunMode::Step;
     ctx.reverse_index = None;
     panes.stack.search.editing = false;
+    panes.instances.search.editing = false;
     loop {
         terminal.draw(|frame| render(&mut panes, frame, state, &ctx))?;
 
@@ -246,6 +269,7 @@ fn render(panes: &mut Panes, frame: &mut Frame<'_>, state: &DebuggerState, ctx: 
 
     panes.render_mir(frame, state);
     panes.render_stack(frame, state, ctx.blink_epoch);
+    panes.render_instances(frame, state, ctx.blink_epoch);
     panes.render_src(frame, state);
     panes.render_locals(frame, state);
     panes.render_memory(frame, state, no_dead);
