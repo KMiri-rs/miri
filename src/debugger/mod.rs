@@ -1,4 +1,5 @@
 pub mod channel;
+pub mod reachability;
 pub mod state;
 pub mod tui;
 pub mod utils;

@@ -23,7 +23,7 @@ use rustc_target::spec::Os;
 
 use crate::concurrency::GenmcCtx;
 use crate::concurrency::thread::TlsAllocAction;
-use crate::debugger::state::collect_reachable_function_instances;
+use crate::debugger::reachability::collect_reachable_function_instances;
 use crate::diagnostics::report_leaks;
 use crate::helpers::is_no_core;
 use crate::mirch::PhysConfig;
