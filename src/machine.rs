@@ -9,6 +9,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::{fmt, process};
 
+use owo_colors::OwoColorize;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 use rustc_abi::{Align, ExternAbi, Size};
@@ -42,7 +43,7 @@ use crate::concurrency::{
     AllocDataRaceHandler, GenmcCtx, GenmcEvalContextExt as _, GlobalDataRaceHandler, weak_memory,
 };
 use crate::helpers::is_no_core;
-use crate::mirch::{self, PageState, TypedKind};
+use crate::mirch::{self, PageState, TypedKind, kernel_code_paddr_to_vaddr};
 use crate::shims::readiness::DelayedReadinessUpdates;
 use crate::*;
 
@@ -1978,18 +1979,27 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             let stack_len = ecx.active_thread_stack().len();
             ecx.active_thread_mut().set_top_user_relevant_frame(stack_len - 1);
         }
+        log!("Entering {}", ecx.frame().instance().bright_green());
+
+        // The minimal stack addr.
+        let min_allocated_stack_var =
+            ecx.machine.alloc_addresses.borrow().min_allocated_stack_variable();
+        let min_allocated_stack_addr = min_allocated_stack_var
+            .map(|(paddr, _)| kernel_code_paddr_to_vaddr(paddr as usize) as u64);
 
         // Pushes the stack pointer.
         let thread = ecx.machine.threads.active_thread_mut();
-        let next_stack_addr = *thread.next_stack_addr.borrow();
-        thread.stack_addr_records.push(next_stack_addr);
-        // let stack = thread
-        //     .stack_addr_records
-        //     .iter()
-        //     .map(|addr| format!("  {addr:#x}"))
-        //     .collect::<Vec<String>>()
-        //     .join(",\n");
-        // println!("stack (push):\n{stack}");
+        let stack_addr =
+            min_allocated_stack_addr.unwrap_or_else(|| *thread.next_stack_addr.borrow());
+        thread.stack_addr_records.push(stack_addr);
+
+        let stack = thread
+            .stack_addr_records
+            .iter()
+            .map(|addr| format!("  {addr:#x}"))
+            .collect::<Vec<String>>()
+            .join(",\n");
+        log!("stack (push):\n{stack}");
 
         interp_ok(())
     }
@@ -2017,7 +2027,7 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         // tracing-tree can automatically annotate scope changes, but it gets very confused by our
         // concurrency and what it prints is just plain wrong. So we print our own information
         // instead. (Cc https://github.com/rust-lang/miri/issues/2266)
-        info!("Leaving {}", ecx.frame().instance());
+        log!("Leaving {}", ecx.frame().instance().bright_red());
         interp_ok(())
     }
 
@@ -2044,16 +2054,45 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         }
         // Resumes the stack pointer.
         let thread = ecx.machine.threads.active_thread_mut();
+        let stack = thread
+            .stack_addr_records
+            .iter()
+            .map(|addr| format!("  {addr:#x}"))
+            .collect::<Vec<String>>()
+            .join(",\n");
+        log!("stack (pop before):\n{stack}");
         if let Some(next_stack_addr) = thread.stack_addr_records.pop() {
-            *thread.next_stack_addr.borrow_mut() = next_stack_addr;
+            // The minimal stack addr.
+            let min_allocated_stack_var =
+                ecx.machine.alloc_addresses.borrow().min_allocated_stack_variable();
+            let min_allocated_stack_addr = min_allocated_stack_var
+                .map(|(paddr, _)| kernel_code_paddr_to_vaddr(paddr as usize) as u64);
+
+            let stack_addr = min_allocated_stack_addr.unwrap_or(next_stack_addr);
+
+            log!(
+                "resume stack addr: 0x{stack_addr:x}{}",
+                if min_allocated_stack_addr.map(|addr| addr < next_stack_addr).unwrap_or(false) {
+                    format!(" next_stack_addr=0x{next_stack_addr:x} (set to lower stack addr)")
+                } else {
+                    "".into()
+                }
+            );
+            *thread.next_stack_addr.borrow_mut() = stack_addr;
         }
-        // let stack = thread
-        //     .stack_addr_records
-        //     .iter()
-        //     .map(|addr| format!("  {addr:#x}"))
-        //     .collect::<Vec<String>>()
-        //     .join(",\n");
-        // println!("stack (pop):\n{stack}");
+
+        let stack = thread
+            .stack_addr_records
+            .iter()
+            .map(|addr| format!("  {addr:#x}"))
+            .collect::<Vec<String>>()
+            .join(",\n");
+        log!("stack (pop after):\n{stack}");
+        log!(
+            "stack pop: min_allocated_stack_addr={:?}",
+            ecx.machine.alloc_addresses.borrow().min_allocated_stack_variable()
+        );
+
         res
     }
 
