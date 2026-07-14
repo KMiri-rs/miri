@@ -280,7 +280,7 @@ impl DebuggerSpan {
                 highlighted_line_end,
             }
             .into()
-        };
+        }
 
         CACHE.with_borrow_mut(move |map| {
             let key = Key { body_span, highlighted_span, fn_name };

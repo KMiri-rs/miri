@@ -124,6 +124,7 @@ impl PageTable {
     ///
     /// TODO: This function is not used in the current implementation.
     /// It needs to work with a mechanism that adds a reverse mapping.
+    #[expect(unused)]
     pub fn paddr_to_vaddr(&self, paddr: usize) -> Option<usize> {
         let map = self.typed_page_paddr_to_vaddr.borrow();
         map.get(&paddr).copied()

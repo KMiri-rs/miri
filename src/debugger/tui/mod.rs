@@ -4,22 +4,17 @@ use std::io;
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind};
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use ratatui::Frame;
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Line;
-use ratatui::widgets::{
-    Block, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table, Wrap,
-};
+use ratatui::layout::Rect;
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use super::channel::{CommandSender, StateReceiver};
-use super::state::LocalKind;
 use super::{DebuggerCommand, DebuggerState};
 use crate::debugger::tui::event::{Action, is_quit_event};
 use crate::debugger::tui::pane::FocusPane;
@@ -109,7 +104,8 @@ pub fn spawn_tui(
         .spawn(move || {
             let cmd_tx = command_tx.clone();
             if let Err(err) = run_tui(state_rx, command_tx) {
-                cmd_tx.send(DebuggerCommand::QuitWithErr(format!("Failed to run tui: {err:?}")));
+                _ = cmd_tx
+                    .send(DebuggerCommand::QuitWithErr(format!("Failed to run tui: {err:?}")));
             }
         })
         .expect("failed to spawn debugger TUI thread")
