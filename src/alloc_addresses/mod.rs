@@ -76,22 +76,6 @@ pub struct GlobalStateInner {
     /// FIXME: this field seems unused as real stack allocations, because thread next_stack_addr is
     /// used instead.
     next_stack_paddr: u64,
-    /// Temporary snapshot of live stack allocations before a frame is popped.
-    ///
-    /// The process during stack popping is roughly as follows:
-    /// ```text
-    /// before_stack_pop
-    ///   -> stack_frame.pop()
-    ///   -> copy_op_allow_transmute (new stack allocations can happen)
-    ///   -> cleanup_stack_frame (deallocate callee locals)
-    /// after_stack_pop
-    /// ```
-    ///
-    /// `return_from_current_stack_frame` can materialize caller return places after the callee
-    /// frame is popped but before callee locals are cleaned up. `after_stack_pop` compares the
-    /// current live stack allocations against this snapshot, then replays the new allocations below
-    /// the caller's saved stack pointer.
-    pub stack_allocations_before_stack_pop: FxHashSet<AllocId>,
 }
 
 impl VisitProvenance for GlobalStateInner {
@@ -106,7 +90,6 @@ impl VisitProvenance for GlobalStateInner {
             next_base_paddr: _,
             next_cpu_local_paddr: _,
             next_stack_paddr: _,
-            stack_allocations_before_stack_pop: _,
         } = self;
         // Though base_addr, int_to_ptr_map, and exposed contain AllocIds, we do not want to visit them.
         // int_to_ptr_map and exposed must contain only live allocations, and those
@@ -135,7 +118,6 @@ impl GlobalStateInner {
             next_base_paddr: kernel_code_paddr_to_vaddr(mirch::kernel_static_start_addr()) as u64,
             next_stack_paddr: kernel_code_paddr_to_vaddr(mirch::kernel_stack_end_addr()) as u64,
             next_cpu_local_paddr: kernel_code_paddr_to_vaddr(mirch::cpu_local_start_addr()) as u64,
-            stack_allocations_before_stack_pop: FxHashSet::default(),
         }
     }
 
@@ -907,19 +889,21 @@ impl<'tcx> MiriMachine<'tcx> {
         // `int_to_ptr_map`.
         let addr = *global_state.base_paddr.get(&dead_id).unwrap();
         debugger_log(format!("free {dead_id:?} (addr=0x{addr:x}={addr})"));
-        let pos = match global_state.int_to_ptr_map.binary_search_by_key(&addr, |(addr, _)| *addr) {
-            Ok(pos) => pos,
-            Err(t_pos) => {
-                debugger_log(format!(
-                    "dead_id={dead_id:?} addr=0x{addr:x}({addr}) t_pos={t_pos}\nint_to_ptr_map={:#?}",
-                    &global_state.int_to_ptr_map
-                ));
-                panic!("addr ({addr}) ({dead_id:?}) is not in int_to_ptr_map");
+        let pos = global_state.int_to_ptr_map.binary_search_by_key(&addr, |(addr, _)| *addr);
+        if let Ok(pos) = pos {
+            if global_state.int_to_ptr_map[pos].1 == dead_id {
+                let removed = global_state.int_to_ptr_map.remove(pos);
+                // log!("[free_alloc_id] addr={addr:#x} alloc_id={dead_id:?} kind={kind:?}");
+                assert_eq!(removed, (addr, dead_id)); // double-check that we removed the right thing
+            } else {
+                panic!(
+                    "free {dead_id:?} at 0x{addr:x}, but int_to_ptr_map has {:?} at that address",
+                    global_state.int_to_ptr_map[pos].1
+                );
             }
-        };
-        let removed = global_state.int_to_ptr_map.remove(pos);
-        // log!("[free_alloc_id] addr={addr:#x} alloc_id={dead_id:?} kind={kind:?}");
-        assert_eq!(removed, (addr, dead_id)); // double-check that we removed the right thing
+        } else {
+            panic!("free {dead_id:?} at 0x{addr:x}, but it is not present in int_to_ptr_map");
+        }
         // We can also remove it from `exposed`, since this allocation can anyway not be returned by
         // `alloc_id_from_addr` any more.
         global_state.exposed.remove(&dead_id);

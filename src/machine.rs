@@ -45,9 +45,7 @@ use crate::concurrency::{
 use crate::debugger::debugger_log;
 use crate::debugger::reachability::FunctionInstanceInfo;
 use crate::helpers::is_no_core;
-use crate::mirch::{
-    self, PageState, TypedKind, kernel_code_paddr_to_vaddr, kernel_code_vaddr_to_paddr,
-};
+use crate::mirch::{self, PageState, TypedKind, kernel_code_paddr_to_vaddr};
 use crate::*;
 
 /// First real-time signal.
@@ -1893,6 +1891,17 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         ecx: &mut InterpCx<'tcx, Self>,
         frame: Frame<'tcx, Provenance>,
     ) -> InterpResult<'tcx, Frame<'tcx, Provenance, FrameExtra<'tcx>>> {
+        // KMiri uses absolute addresses in pointers. If a caller return place is lazily
+        // materialized during `return_from_current_stack_frame`, any later address adjustment would
+        // invalidate already-created pointers. Materialize it before the callee frame is pushed, so
+        // it is allocated in the caller frame and `after_stack_push` records the SP below it.
+        if !ecx.active_thread_stack().is_empty() && !frame.return_place().layout.is_zst() {
+            let return_place = frame.return_place().clone();
+            if ecx.place_to_op(&return_place).unwrap().as_mplace_or_imm().left().is_none() {
+                ecx.force_allocation(&return_place).unwrap();
+            }
+        }
+
         // Start recording our event before doing anything else
         let timing = if let Some(profiler) = ecx.machine.profiler.as_ref() {
             let fn_name = frame.instance().to_string();
@@ -2009,20 +2018,6 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             ecx.active_thread_mut().recompute_top_user_relevant_frame(/* skip */ 1);
         }
 
-        // Record all stack allocations.
-        {
-            let alloc_map = ecx.memory.alloc_map();
-            let alloc_addresses = &mut *ecx.machine.alloc_addresses.borrow_mut();
-            alloc_addresses.stack_allocations_before_stack_pop.clear();
-            for alloc_id in alloc_addresses.base_paddr.keys().copied() {
-                if let Some((kind, _)) = alloc_map.get(alloc_id)
-                    && *kind == MemoryKind::Stack
-                {
-                    alloc_addresses.stack_allocations_before_stack_pop.insert(alloc_id);
-                }
-            }
-        }
-
         // tracing-tree can automatically annotate scope changes, but it gets very confused by our
         // concurrency and what it prints is just plain wrong. So we print our own information
         // instead. (Cc https://github.com/rust-lang/miri/issues/2266)
@@ -2052,90 +2047,12 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             info!("Continuing in {}", ecx.frame().instance());
         }
 
-        // Get the new stack allocations during stack popping. These allocations materialize the
-        // caller's return place while the callee frame is being popped, so after the callee locals
-        // are gone we lay them out again directly below the caller's saved stack pointer.
-        let mut new_stack_allocs = Vec::new();
-        {
-            let alloc_map = ecx.memory.alloc_map();
-            let alloc_addresses = &*ecx.machine.alloc_addresses.borrow();
-            for alloc_id in alloc_addresses.base_paddr.keys().copied() {
-                if let Some((kind, _)) = alloc_map.get(alloc_id)
-                    && *kind == MemoryKind::Stack
-                    && !alloc_addresses.stack_allocations_before_stack_pop.contains(&alloc_id)
-                {
-                    let old_paddr = *alloc_addresses.base_paddr.get(&alloc_id).unwrap();
-                    let old_vaddr = kernel_code_paddr_to_vaddr(old_paddr as usize) as u64;
-                    new_stack_allocs.push((old_vaddr, alloc_id));
-                }
-            }
-            // Stack allocations grow downward; the highest temporary address was allocated first.
-            // Replaying that order preserves the relative stack layout of these new allocations.
-            new_stack_allocs.sort_unstable_by(|(left_addr, left_id), (right_addr, right_id)| {
-                right_addr.cmp(left_addr).then_with(|| left_id.cmp(right_id))
-            });
-        }
-
-        // Resumes the stack pointer.
-        let saved_stack_addr = {
-            let thread = ecx.machine.threads.active_thread_mut();
-            thread.stack_addr_records.pop()
-        };
-        if let Some(saved_stack_addr) = saved_stack_addr {
-            let next_stack_addr = if new_stack_allocs.is_empty() {
-                // No caller-owned stack allocation happened during return-copy.
-                saved_stack_addr
-            } else {
-                let alloc_map = ecx.memory.alloc_map();
-                let alloc_addresses = &mut *ecx.machine.alloc_addresses.borrow_mut();
-                let mut replay_sp = saved_stack_addr;
-
-                for (_, alloc_id) in &new_stack_allocs {
-                    let Some((kind, _)) = alloc_map.get(*alloc_id) else {
-                        bug!("new stack allocation {alloc_id:?} disappeared during stack pop");
-                    };
-                    assert_eq!(*kind, MemoryKind::Stack);
-
-                    let info = ecx.get_alloc_info(*alloc_id);
-                    let size = info.size.bytes().max(1);
-                    let align = info.align.bytes();
-                    let Some(new_base_vaddr) = replay_sp.checked_sub(size) else {
-                        throw_exhaust!(AddressSpaceFull);
-                    };
-                    let new_base_vaddr = new_base_vaddr - new_base_vaddr % align;
-                    if new_base_vaddr < ecx.active_thread_ref().stack_bottom {
-                        throw_exhaust!(AddressSpaceFull);
-                    }
-
-                    let old_paddr = *alloc_addresses.base_paddr.get(alloc_id).unwrap();
-                    let old_pos = alloc_addresses
-                        .int_to_ptr_map
-                        .binary_search_by_key(&old_paddr, |(addr, _)| *addr)
-                        .unwrap_or_else(|pos| {
-                            panic!(
-                                "new stack allocation {alloc_id:?} old addr 0x{old_paddr:x} \
-                                 missing from int_to_ptr_map at insertion point {pos}"
-                            )
-                        });
-                    let removed = alloc_addresses.int_to_ptr_map.remove(old_pos);
-                    assert_eq!(removed, (old_paddr, *alloc_id));
-
-                    let new_paddr = kernel_code_vaddr_to_paddr(new_base_vaddr as usize) as u64;
-                    alloc_addresses.base_paddr.insert(*alloc_id, new_paddr);
-
-                    let new_pos = alloc_addresses
-                        .int_to_ptr_map
-                        .binary_search_by_key(&new_paddr, |(addr, _)| *addr)
-                        .unwrap_err();
-                    alloc_addresses.int_to_ptr_map.insert(new_pos, (new_paddr, *alloc_id));
-
-                    replay_sp = new_base_vaddr;
-                }
-
-                replay_sp
-            };
-
-            let thread = ecx.machine.threads.active_thread_mut();
+        // The return place has been materialized in the caller before pushing this frame, so return
+        // value copying should not allocate stack memory while the callee locals are still live.
+        // Restore the caller stack pointer only after callee locals have been deallocated; this keeps
+        // stack addresses one-to-one in `base_paddr` and `int_to_ptr_map`.
+        let thread = ecx.machine.threads.active_thread_mut();
+        if let Some(next_stack_addr) = thread.stack_addr_records.pop() {
             *thread.next_stack_addr.borrow_mut() = next_stack_addr;
         }
 
