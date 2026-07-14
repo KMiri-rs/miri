@@ -14,6 +14,7 @@ use self::channel::{CommandReceiver, StateSender};
 pub use self::state::DebuggerState;
 use crate::MiriInterpCx;
 use crate::concurrency::thread::EvalContextExt;
+use crate::debugger::utils::instance_name;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DebuggerCommand {
@@ -90,7 +91,7 @@ impl<'tcx> MiriDebuggerHandle<'tcx> {
                     return match ecx
                         .active_thread_stack()
                         .last()
-                        .map(|frame| frame.instance().to_string())
+                        .map(|frame| instance_name(ecx, frame.instance().def_id()))
                     {
                         Some(current_fn) => {
                             if target == current_fn {
