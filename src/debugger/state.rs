@@ -4,14 +4,12 @@ use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::interpret::GlobalAlloc;
 use rustc_middle::mir::{self, BasicBlockData};
-use rustc_span::source_map::SourceMap;
 
 use crate::borrow_tracker::stacked_borrows::debugger::DebuggerBorrowStacks;
-use crate::debugger::debugger_log;
-use crate::debugger::reachability::FunctionInstanceInfo;
 use crate::debugger::tui::theme::STYLE_HIGHTLIGHTED;
-use crate::debugger::utils::{pos_to_line_nr, source_file};
-use crate::mirch::kernel_code_vaddr_to_paddr;
+use crate::debugger::utils::{instance_name, pos_to_line_nr, source_file};
+use crate::debugger::{debugger_log, reachability};
+// use crate::mirch::kernel_code_vaddr_to_paddr;
 use crate::*;
 
 #[derive(Clone, Debug)]
@@ -98,7 +96,7 @@ pub struct DebuggerState {
     pub current_thread: ThreadId,
     pub step_count: u64,
     pub stack_frames: Vec<FrameInfo>,
-    pub function_instances: Vec<FunctionInstanceInfo>,
+    pub function_instances: reachability::Reachability,
     pub current_location: CurrentLocation,
     pub cfg_lines: Vec<CfgLine>,
     pub locals: Vec<LocalInfo>,
@@ -113,7 +111,6 @@ pub struct DebuggerState {
 
 impl DebuggerState {
     pub fn capture<'tcx>(ecx: &MiriInterpCx<'tcx>) -> Self {
-        let sm = ecx.tcx.sess.source_map();
         let stack = ecx.active_thread_stack();
 
         let min_stack_ptr = ecx
@@ -122,16 +119,18 @@ impl DebuggerState {
             .borrow()
             .min_allocated_stack_paddr()
             .map(|(paddr, _)| paddr);
-        let last_recorded_stack_ptr = ecx
-            .machine
-            .threads
-            .active_thread_ref()
-            .stack_addr_records
-            .last()
-            .map(|&vaddr| kernel_code_vaddr_to_paddr(vaddr as usize) as u64);
+        let last_recorded_stack_ptr =
+            ecx.machine.threads.active_thread_ref().stack_addr_records.last().map(|&vaddr| {
+                let vaddr = vaddr as usize;
+                let paddr_fallback = || {
+                    mirch::try_kernel_code_vaddr_to_paddr(vaddr)
+                        .unwrap_or_else(|| mirch::try_boot_pt_vaddr_to_paddr(vaddr).unwrap())
+                };
+                mirch::page_walk_or(vaddr, paddr_fallback).unwrap_or_else(paddr_fallback) as u64
+            });
 
         let stack_frames: Vec<_> =
-            stack.iter().rev().map(|frame| capture_frame(sm, frame)).collect();
+            stack.iter().rev().map(|frame| capture_frame(ecx, frame)).collect();
 
         let current_location =
             stack.last().map(|frame| capture_location(ecx, frame)).unwrap_or_else(|| {
@@ -243,23 +242,19 @@ pub fn find_name_for_local(body: &mir::Body<'_>, local: mir::Local) -> Option<ru
     })
 }
 
-fn capture_frame(sm: &SourceMap, frame: &Frame<'_, Provenance, FrameExtra<'_>>) -> FrameInfo {
+fn capture_frame(
+    ecx: &MiriInterpCx<'_>,
+    frame: &Frame<'_, Provenance, FrameExtra<'_>>,
+) -> FrameInfo {
+    let sm = ecx.tcx.sess.source_map();
     let span = frame.current_span();
     FrameInfo {
-        fn_name: frame.instance().to_string(),
+        fn_name: instance_name(ecx, frame.instance().def_id()),
         source_file: source_file(sm, span),
         line_start: pos_to_line_nr(sm, span.lo()),
         line_end: pos_to_line_nr(sm, span.hi()),
         locals: capture_locals(frame),
     }
-}
-
-pub(crate) fn collect_reachable_function_instances<'tcx>(
-    tcx: rustc_middle::ty::TyCtxt<'tcx>,
-    entry_id: DefId,
-    sm: &SourceMap,
-) -> Vec<FunctionInstanceInfo> {
-    todo!()
 }
 
 fn capture_cfg_lines(frame: &Frame<'_, Provenance, FrameExtra<'_>>) -> Vec<CfgLine> {
