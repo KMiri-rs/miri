@@ -1148,3 +1148,9 @@ macro_rules! enter_trace_span {
         rustc_const_eval::enter_trace_span!($crate::MiriMachine<'static>, $($tt)*)
     };
 }
+
+/// For a base stack address, reserve the minimal space and returns the new stack address for the type.
+pub fn adjust_stack_addr(size: u64, align: u64, mut stack_addr: u64) -> u64 {
+    stack_addr -= size.max(1);
+    stack_addr - stack_addr % align
+}
