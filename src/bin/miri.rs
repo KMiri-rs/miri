@@ -16,6 +16,7 @@ extern crate rustc_interface;
 extern crate rustc_log;
 extern crate rustc_middle;
 extern crate rustc_session;
+extern crate rustc_span;
 
 /// See docs in https://github.com/rust-lang/rust/blob/HEAD/compiler/rustc/src/main.rs
 /// and https://github.com/rust-lang/rust/pull/146627 for why we need this.
@@ -47,8 +48,12 @@ use miri::{
     TreeBorrowsParams, ValidationMode, entry_fn, run_genmc_mode,
 };
 use rustc_codegen_ssa::traits::CodegenBackend;
+use rustc_data_structures::fx::FxHashSet;
 use rustc_data_structures::sync::{self, DynSync};
 use rustc_driver::Compilation;
+use rustc_hir::def::Res;
+use rustc_hir::def_id::LOCAL_CRATE;
+use rustc_hir::intravisit::{self, Visitor};
 use rustc_hir::{self as hir, Node};
 use rustc_interface::interface::Config;
 use rustc_interface::util::DummyCodegenBackend;
@@ -58,7 +63,7 @@ use rustc_middle::middle::exported_symbols::{
     ExportedSymbol, SymbolExportInfo, SymbolExportKind, SymbolExportLevel,
 };
 use rustc_middle::query::LocalCrate;
-use rustc_middle::ty::TyCtxt;
+use rustc_middle::ty::{self, TyCtxt};
 use rustc_session::config::{CrateType, ErrorOutputType, OptLevel};
 use rustc_session::{EarlyDiagCtxt, Session};
 
@@ -102,6 +107,89 @@ fn redirect_debugger_diagnostics_to_file() -> std::io::Result<File> {
 fn redirect_debugger_diagnostics_to_file() -> std::io::Result<File> {
     // Keep the file creation semantics consistent even when we cannot redirect the host stderr.
     std::fs::OpenOptions::new().create(true).truncate(true).write(true).open("miri_diagnostics.txt")
+}
+
+fn collect_exported_symbol_names(tcx: TyCtxt<'_>) -> FxHashSet<rustc_span::Symbol> {
+    let mut names = FxHashSet::default();
+
+    let crate_items = tcx.hir_crate_items(());
+    for def_id in crate_items.definitions() {
+        let exported = tcx.def_kind(def_id).has_codegen_attrs() && {
+            let attrs = tcx.codegen_fn_attrs(def_id);
+            attrs.contains_extern_indicator()
+                || attrs.flags.contains(CodegenFnAttrFlags::USED_COMPILER)
+                || attrs.flags.contains(CodegenFnAttrFlags::USED_LINKER)
+        };
+        if exported {
+            let name = tcx.symbol_name(ty::Instance::mono(tcx, def_id.into())).name;
+            names.insert(rustc_span::Symbol::intern(name));
+        }
+    }
+
+    let dependency_formats = tcx.dependency_formats(());
+    if let Some(dependency_format) = dependency_formats.get(&CrateType::Executable) {
+        for cnum in dependency_format.iter_enumerated().filter_map(|(num, &linkage)| {
+            (linkage != rustc_middle::middle::dependency_format::Linkage::NotLinked).then_some(num)
+        }) {
+            if cnum == LOCAL_CRATE {
+                continue;
+            }
+            for &(symbol, _export_info) in tcx.exported_non_generic_symbols(cnum) {
+                if let ExportedSymbol::NonGeneric(def_id) = symbol {
+                    let name = tcx.symbol_name(ty::Instance::mono(tcx, def_id)).name;
+                    names.insert(rustc_span::Symbol::intern(name));
+                }
+            }
+        }
+    }
+
+    names
+}
+
+fn report_unknown_local_foreign_symbol_uses(tcx: TyCtxt<'_>) {
+    struct UseVisitor<'tcx, 'a> {
+        tcx: TyCtxt<'tcx>,
+        exported: &'a FxHashSet<rustc_span::Symbol>,
+    }
+
+    impl<'tcx> Visitor<'tcx> for UseVisitor<'tcx, '_> {
+        fn visit_expr(&mut self, expr: &'tcx hir::Expr<'tcx>) {
+            if let hir::ExprKind::Path(hir::QPath::Resolved(_, path)) = expr.kind {
+                let res = path.res;
+                if let Res::Def(_, def_id) = res
+                    && def_id.is_local()
+                    && self.tcx.is_foreign_item(def_id)
+                {
+                    let is_callee_of_call = matches!(
+                        self.tcx.parent_hir_node(expr.hir_id),
+                        Node::Expr(parent_expr)
+                            if matches!(parent_expr.kind, hir::ExprKind::Call(callee, _) if callee.hir_id == expr.hir_id)
+                    );
+                    if !is_callee_of_call {
+                        let link_name = rustc_span::Symbol::intern(
+                            self.tcx.symbol_name(ty::Instance::mono(self.tcx, def_id)).name,
+                        );
+                        if !self.exported.contains(&link_name) {
+                            self.tcx.dcx().span_err(
+                                expr.span,
+                                format!(
+                                    "unsupported operation: can't use unknown foreign function symbol `{link_name}`"
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+            intravisit::walk_expr(self, expr);
+        }
+    }
+
+    let exported = collect_exported_symbol_names(tcx);
+    for body_owner in tcx.hir_body_owners() {
+        let body = tcx.hir_body_owned_by(body_owner);
+        let mut visitor = UseVisitor { tcx, exported: &exported };
+        visitor.visit_body(body);
+    }
 }
 
 fn run_many_seeds(
@@ -222,6 +310,9 @@ impl rustc_driver::Callbacks for MiriCompilerCalls {
                     cfg(miri) to shrink your workload instead. The performance benefit of enabling MIR \
                     optimizations is usually marginal at best.");
         }
+
+        report_unknown_local_foreign_symbol_uses(tcx);
+        tcx.dcx().abort_if_errors();
 
         // Invoke the interpreter.
         let res = if config.genmc_config.is_some() {
