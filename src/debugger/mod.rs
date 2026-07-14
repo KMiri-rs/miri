@@ -132,7 +132,8 @@ impl<'tcx> MiriDebuggerHandle<'tcx> {
                     // outer caller or resumed in a different frame. Re-anchor so the command keeps
                     // tracking the current visible frame and still stops on the next terminator.
                     if current_depth < state.anchor_depth
-                        || (current_depth == state.anchor_depth && current_frame != state.anchor_frame)
+                        || (current_depth == state.anchor_depth
+                            && current_frame != state.anchor_frame)
                     {
                         state.anchor_depth = current_depth;
                         state.anchor_frame = current_frame;
