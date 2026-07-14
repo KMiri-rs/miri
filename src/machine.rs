@@ -687,6 +687,12 @@ pub struct MiriMachine<'tcx> {
 
     /// A record of the time spent in each test (A workaround for evaluation).
     pub(crate) record: Vec<std::time::Duration>,
+
+    /// Optional interactive debugger handle.
+    pub debugger: Option<crate::debugger::MiriDebuggerHandle>,
+
+    /// Captured stdout/stderr chunks from the interpreted program for debugger UI.
+    pub debugger_output: RefCell<Vec<(bool, String)>>,
 }
 
 impl<'tcx> MiriMachine<'tcx> {
@@ -863,9 +869,24 @@ impl<'tcx> MiriMachine<'tcx> {
             float_rounding_error: config.float_rounding_error,
             short_fd_operations: config.short_fd_operations,
             cpu_local_alloc_set: RefCell::new(FxHashSet::default()),
-thread_map: FxHashMap::default(),
+            thread_map: FxHashMap::default(),
             pt_checker: None,
             record: Vec::new(),
+            debugger: None,
+            debugger_output: RefCell::new(Vec::new()),
+        }
+    }
+
+    pub(crate) fn push_debugger_output(&self, is_stderr: bool, bytes: &[u8]) {
+        if self.debugger.is_none() || bytes.is_empty() {
+            return;
+        }
+        let text = String::from_utf8_lossy(bytes).to_string();
+        let mut out = self.debugger_output.borrow_mut();
+        out.push((is_stderr, text));
+        if out.len() > 500 {
+            let drain = out.len().saturating_sub(500);
+            out.drain(0..drain);
         }
     }
 
@@ -1096,6 +1117,8 @@ impl VisitProvenance for MiriMachine<'_> {
             float_nondet: _,
             float_rounding_error: _,
             short_fd_operations: _,
+            debugger: _,
+            debugger_output: _,
             ..
         } = self;
 
@@ -1950,13 +1973,13 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         let thread = ecx.machine.threads.active_thread_mut();
         let next_stack_addr = *thread.next_stack_addr.borrow();
         thread.stack_addr_records.push(next_stack_addr);
-        let stack = thread
-            .stack_addr_records
-            .iter()
-            .map(|addr| format!("  {addr:#x}"))
-            .collect::<Vec<String>>()
-            .join(",\n");
-        println!("stack (push):\n{stack}");
+        // let stack = thread
+        //     .stack_addr_records
+        //     .iter()
+        //     .map(|addr| format!("  {addr:#x}"))
+        //     .collect::<Vec<String>>()
+        //     .join(",\n");
+        // println!("stack (push):\n{stack}");
 
         interp_ok(())
     }
@@ -2014,13 +2037,13 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         if let Some(next_stack_addr) = thread.stack_addr_records.pop() {
             *thread.next_stack_addr.borrow_mut() = next_stack_addr;
         }
-        let stack = thread
-            .stack_addr_records
-            .iter()
-            .map(|addr| format!("  {addr:#x}"))
-            .collect::<Vec<String>>()
-            .join(",\n");
-        println!("stack (pop):\n{stack}");
+        // let stack = thread
+        //     .stack_addr_records
+        //     .iter()
+        //     .map(|addr| format!("  {addr:#x}"))
+        //     .collect::<Vec<String>>()
+        //     .join(",\n");
+        // println!("stack (pop):\n{stack}");
         res
     }
 
