@@ -8,6 +8,7 @@ use crate::DebuggerState;
 use crate::debugger::tui::pane::FocusPane;
 use crate::debugger::tui::pane::allocs::PaneAllocs;
 use crate::debugger::tui::pane::borrow_stacks::PaneBorrowStacks;
+use crate::debugger::tui::pane::instances::PaneInstances;
 use crate::debugger::tui::pane::locals::PaneLocals;
 use crate::debugger::tui::pane::mir::PaneMir;
 use crate::debugger::tui::pane::output::PaneOutput;
@@ -26,6 +27,7 @@ pub struct Panes {
     pub prev_focus: FocusPane,
     pub mir: PaneMir,
     pub stack: PaneStack,
+    pub instances: PaneInstances,
     pub src: PaneSrc,
     pub locals: PaneLocals,
     pub allocs: PaneAllocs,
@@ -63,13 +65,14 @@ impl Panes {
             unreachable!()
         };
 
-        let [src, locals, memory, output] = *Layout::default()
+        let [src, locals, instances, memory, output] = *Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Percentage(34),
-                Constraint::Percentage(24),
+                Constraint::Percentage(28),
+                Constraint::Percentage(18),
+                Constraint::Percentage(18),
+                Constraint::Percentage(16),
                 Constraint::Percentage(20),
-                Constraint::Percentage(22),
             ])
             .split(right)
         else {
@@ -82,6 +85,7 @@ impl Panes {
             prev_focus: FocusPane::Mir,
             mir: PaneMir::new(mir),
             stack: PaneStack::new(stack),
+            instances: PaneInstances::new(instances),
             src: PaneSrc::new(src),
             locals: PaneLocals::new(locals),
             allocs: PaneAllocs::new(memory),
@@ -97,6 +101,7 @@ impl Panes {
         self.area = area;
         self.mir.rect = new_layout.mir.rect;
         self.stack.rect = new_layout.stack.rect;
+        self.instances.rect = new_layout.instances.rect;
         self.src.rect = new_layout.src.rect;
         self.locals.rect = new_layout.locals.rect;
         self.allocs.rect = new_layout.allocs.rect;
@@ -116,6 +121,8 @@ impl Panes {
             FocusPane::Mir
         } else if is_in(self.stack.rect) {
             FocusPane::Stack
+        } else if is_in(self.instances.rect) {
+            FocusPane::Instances
         } else if is_in(self.src.rect) {
             FocusPane::Src
         } else if is_in(self.locals.rect) {
@@ -182,8 +189,25 @@ impl Panes {
         frame.render_widget(list, self.output.rect);
     }
 
+    pub fn render_instances(
+        &self,
+        frame: &mut Frame<'_>,
+        state: &DebuggerState,
+        blink_epoch: Instant,
+    ) {
+        let (list, mut list_state) =
+            self.instances.widget(state, self.is_focused(FocusPane::Instances), blink_epoch);
+        frame.render_stateful_widget(list, self.instances.rect, &mut list_state);
+    }
+
     pub fn render_status_bar(&self, frame: &mut Frame<'_>, state: &DebuggerState, ctx: &Context) {
-        let paragraph = self.status_bar.widget(state, self.focus.as_str(), &self.stack.search, ctx);
+        let paragraph = self.status_bar.widget(
+            state,
+            self.focus.as_str(),
+            &self.stack.search,
+            &self.instances.search,
+            ctx,
+        );
         frame.render_widget(paragraph, self.status_bar.rect);
     }
 
@@ -226,12 +250,14 @@ impl Panes {
 
     fn up(
         &mut self,
+        state: &DebuggerState,
         on_stack: impl FnOnce(&mut PaneStack),
         on_borrow_stacks: impl FnOnce(&mut PaneBorrowStacks),
     ) {
         match self.focus {
             FocusPane::Mir => self.mir.scroll = self.mir.scroll.saturating_sub(1),
             FocusPane::Stack => on_stack(&mut self.stack),
+            FocusPane::Instances => self.instances.step_selection(state, false),
             FocusPane::Src => {
                 self.src.scroll = self.src.scroll.saturating_sub(1);
             }
@@ -255,13 +281,15 @@ impl Panes {
     /// instead of scroll the view of list.
     pub fn navigate_up(&mut self, state: &DebuggerState) {
         self.up(
+            state,
             |stack| stack.step_stack_selection(state, false),
             |borrow_statcks| borrow_statcks.navigate_up(),
         );
     }
 
-    pub fn scroll_up(&mut self) {
+    pub fn scroll_up(&mut self, state: &DebuggerState) {
         self.up(
+            state,
             |stack| stack.index = stack.index.saturating_sub(1),
             |borrow_stacks| borrow_stacks.scroll_up(),
         );
@@ -276,6 +304,7 @@ impl Panes {
         match self.focus {
             FocusPane::Mir => self.mir.scroll = self.mir.scroll.saturating_add(1),
             FocusPane::Stack => on_stack(&mut self.stack),
+            FocusPane::Instances => self.instances.step_selection(state, true),
             FocusPane::Src => {
                 self.src.scroll = self.src.scroll.saturating_add(1);
             }
@@ -336,6 +365,9 @@ impl Panes {
             FocusPane::Stack => {
                 self.stack.hscroll = self.stack.hscroll.saturating_add(1);
             }
+            FocusPane::Instances => {
+                self.instances.hscroll = self.instances.hscroll.saturating_add(1);
+            }
             FocusPane::Src => {
                 self.src.hscroll = self.src.hscroll.saturating_add(1);
             }
@@ -362,6 +394,9 @@ impl Panes {
             }
             FocusPane::Stack => {
                 self.stack.hscroll = self.stack.hscroll.saturating_sub(1);
+            }
+            FocusPane::Instances => {
+                self.instances.hscroll = self.instances.hscroll.saturating_sub(1);
             }
             FocusPane::Src => {
                 self.src.hscroll = self.src.hscroll.saturating_sub(1);
@@ -390,17 +425,36 @@ impl Panes {
             KeyCode::Char(']') => {
                 self.status_bar.hscroll = self.status_bar.hscroll.saturating_add(1);
             }
-            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('/') => {
-                self.stack.search.editing = false;
-            }
-            KeyCode::Backspace => {
-                self.stack.search.query.pop();
-                self.stack.refresh(state);
-            }
-            KeyCode::Char(c) => {
-                self.stack.search.query.push(c);
-                self.stack.refresh(state);
-            }
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('/') =>
+                match self.focus {
+                    FocusPane::Stack => self.stack.search.editing = false,
+                    FocusPane::Instances => self.instances.search.editing = false,
+                    _ => {}
+                },
+            KeyCode::Backspace =>
+                match self.focus {
+                    FocusPane::Stack => {
+                        self.stack.search.query.pop();
+                        self.stack.refresh(state);
+                    }
+                    FocusPane::Instances => {
+                        self.instances.search.query.pop();
+                        self.instances.refresh(state);
+                    }
+                    _ => {}
+                },
+            KeyCode::Char(c) =>
+                match self.focus {
+                    FocusPane::Stack => {
+                        self.stack.search.query.push(c);
+                        self.stack.refresh(state);
+                    }
+                    FocusPane::Instances => {
+                        self.instances.search.query.push(c);
+                        self.instances.refresh(state);
+                    }
+                    _ => {}
+                },
             _ => {}
         }
     }

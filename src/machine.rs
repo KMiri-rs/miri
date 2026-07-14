@@ -583,6 +583,9 @@ pub struct MiriMachine<'tcx> {
     /// `None` means no `Instance` exported under the given name is found.
     pub(crate) exported_symbols_cache: FxHashMap<Symbol, Option<Instance<'tcx>>>,
 
+    /// The set of function instances discovered from the entry point.
+    pub(crate) reachable_function_instances: Vec<crate::debugger::state::FunctionInstanceInfo>,
+
     /// Equivalent setting as RUST_BACKTRACE on encountering an error.
     pub(crate) backtrace_style: BacktraceStyle,
 
@@ -804,6 +807,7 @@ impl<'tcx> MiriMachine<'tcx> {
             profiler,
             string_cache: Default::default(),
             exported_symbols_cache: FxHashMap::default(),
+            reachable_function_instances: Vec::new(),
             backtrace_style: config.backtrace_style,
             user_relevant_crates,
             extern_statics: FxHashMap::default(),
@@ -1083,6 +1087,7 @@ impl VisitProvenance for MiriMachine<'_> {
             profiler: _,
             string_cache: _,
             exported_symbols_cache: _,
+            reachable_function_instances: _,
             backtrace_style: _,
             user_relevant_crates: _,
             rng: _,

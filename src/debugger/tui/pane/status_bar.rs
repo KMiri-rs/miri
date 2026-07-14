@@ -1,8 +1,7 @@
 use super::*;
 use crate::debugger::get_record_all_states;
-use crate::debugger::state::LocalKind;
+use crate::debugger::tui::Context;
 use crate::debugger::tui::pane::stack::StackSearchState;
-use crate::debugger::tui::{Context, RunMode, RunTargetState};
 
 const HISTORY_CAPACITY: usize = 1000;
 
@@ -21,24 +20,30 @@ impl PaneStatusBar {
         &self,
         state: &DebuggerState,
         focus_name: &str,
-        search: &StackSearchState,
+        stack_search: &StackSearchState,
+        instance_search: &StackSearchState,
         ctx: &Context,
     ) -> Paragraph<'static> {
-        let search_text = if search.editing && search.query.is_empty() {
-            "search=editing".to_string()
-        } else if search.editing {
-            format!("search=/{}, matches={} (editing)", search.query, search.matches.len())
-        } else if search.query.is_empty() {
-            "search=off".to_string()
-        } else {
-            format!("search=/{}, matches={}", search.query, search.matches.len())
+        let search_text = match focus_name {
+            "stack" => search_text("stack", stack_search),
+            "instances" => search_text("instances", instance_search),
+            _ =>
+                format!(
+                    "{}  {}",
+                    search_text("stack", stack_search),
+                    search_text("instances", instance_search)
+                ),
         };
         let keys_text = if ctx.run_target.editing {
             "keys: type function name  enter run-to-frame  esc cancel  backspace delete"
-        } else if search.editing {
+        } else if stack_search.editing {
             "keys: type to filter stack  enter/esc// exit search  backspace delete  [ ] scroll-cmds  F toggle-freeze  q quit"
+        } else if instance_search.editing {
+            "keys: type to filter instances  enter/esc// exit search  backspace delete  [ ] scroll-cmds  F toggle-freeze  q quit"
         } else if ctx.program_finished {
             "keys: q quit  / search  . next  , prev  b step-back  [ ] scroll-cmds  F toggle-freeze  esc clear  tab switch  arrows scroll"
+        } else if focus_name == "instances" {
+            "keys: enter run-to-instance  / search  . next  , prev  b step-back  [ ] scroll-cmds  F toggle-freeze  q quit  tab switch  arrows scroll"
         } else {
             "keys: n/space step  b step-back  p run-to-selected  P run-to-name  c continue  m run-to-main  e run-to-end  / search  . next  , prev  [ ] scroll-cmds F toggle-freeze  q quit  tab switch  arrows scroll"
         };
@@ -50,10 +55,17 @@ impl PaneStatusBar {
         } else {
             String::new()
         };
+        let run_target_text = if let Some(target) = ctx.run_to_instance_target.as_ref() {
+            format!("  instance={target}")
+        } else if let Some(target) = ctx.run_to_frame_target.as_ref() {
+            format!("  frame={target}")
+        } else {
+            String::new()
+        };
         let record_all_state =
             if get_record_all_states() { " S record_always " } else { " S record_on_demand " };
         let text = format!(
-            "mode={}  steps={}  thread={}  focus={}  history={}/{} {record_all_state} {}{}{}  {}",
+            "mode={}  steps={}  thread={}  focus={}  history={}/{} {record_all_state} {}{}{}{}  {}",
             mode_text,
             state.step_count,
             state.current_thread.to_u32(),
@@ -63,11 +75,24 @@ impl PaneStatusBar {
             search_text,
             finished_text,
             target_text,
+            run_target_text,
             keys_text,
         );
 
         Paragraph::new(text)
             .style(Style::default().fg(THEME_BG).bg(THEME_ACCENT).add_modifier(Modifier::BOLD))
             .scroll((0, self.hscroll))
+    }
+}
+
+fn search_text(label: &str, search: &StackSearchState) -> String {
+    if search.editing && search.query.is_empty() {
+        format!("{label}=editing")
+    } else if search.editing {
+        format!("{label}=/{}, matches={} (editing)", search.query, search.matches.len())
+    } else if search.query.is_empty() {
+        format!("{label}=off")
+    } else {
+        format!("{label}=/{}, matches={}", search.query, search.matches.len())
     }
 }
