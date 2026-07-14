@@ -1,3 +1,4 @@
+#![allow(rustc::internal)]
 use std::collections::VecDeque;
 
 use ratatui::text::{Line, Span as RatatuiSpan};
@@ -7,7 +8,9 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::mir::interpret::GlobalAlloc;
 use rustc_middle::mir::visit::Visitor as _;
 use rustc_middle::mir::{self, BasicBlockData, HasLocalDecls};
-use rustc_middle::ty::{self, TypeVisitableExt};
+use rustc_middle::ty::{
+    self, Instance, InstanceKind, Ty, TyCtxt, TyKind, TypeVisitableExt, TypingEnv,
+};
 use rustc_span::source_map::SourceMap;
 
 use crate::debugger::utils::{pos_to_line_nr, source_file};
@@ -21,7 +24,7 @@ pub struct FunctionInstanceInfo {
 }
 
 pub fn collect_reachable_function_instances<'tcx>(
-    tcx: ty::TyCtxt<'tcx>,
+    tcx: TyCtxt<'tcx>,
     entry_id: DefId,
     sm: &SourceMap,
 ) -> Vec<FunctionInstanceInfo> {
@@ -29,7 +32,7 @@ pub fn collect_reachable_function_instances<'tcx>(
     let mut seen = FxHashSet::default();
     let mut reachable = Vec::new();
 
-    push_instance(ty::Instance::mono(tcx, entry_id), &mut pending, &mut seen);
+    push_instance(Instance::mono(tcx, entry_id), &mut pending, &mut seen);
 
     while let Some(instance) = pending.pop_front() {
         let span = tcx.def_span(instance.def_id());
@@ -54,14 +57,14 @@ pub fn collect_reachable_function_instances<'tcx>(
 }
 
 fn push_instance<'tcx>(
-    instance: ty::Instance<'tcx>,
-    pending: &mut VecDeque<ty::Instance<'tcx>>,
-    seen: &mut FxHashSet<ty::Instance<'tcx>>,
+    instance: Instance<'tcx>,
+    pending: &mut VecDeque<Instance<'tcx>>,
+    seen: &mut FxHashSet<Instance<'tcx>>,
 ) {
     if instance.args.has_non_region_param() {
         return;
     }
-    if matches!(instance.def, ty::InstanceKind::Intrinsic(_) | ty::InstanceKind::Virtual(..)) {
+    if matches!(instance.def, InstanceKind::Intrinsic(_) | InstanceKind::Virtual(..)) {
         return;
     }
     if seen.insert(instance) {
@@ -70,10 +73,10 @@ fn push_instance<'tcx>(
 }
 
 fn collect_from_ty<'tcx>(
-    tcx: ty::TyCtxt<'tcx>,
-    ty: ty::Ty<'tcx>,
-    pending: &mut VecDeque<ty::Instance<'tcx>>,
-    seen: &mut FxHashSet<ty::Instance<'tcx>>,
+    tcx: TyCtxt<'tcx>,
+    ty: Ty<'tcx>,
+    pending: &mut VecDeque<Instance<'tcx>>,
+    seen: &mut FxHashSet<Instance<'tcx>>,
 ) {
     if ty.has_non_region_param() {
         return;
@@ -91,10 +94,10 @@ fn collect_from_ty<'tcx>(
 }
 
 fn collect_from_alloc<'tcx>(
-    tcx: ty::TyCtxt<'tcx>,
+    tcx: TyCtxt<'tcx>,
     alloc_id: rustc_middle::mir::interpret::AllocId,
-    pending: &mut VecDeque<ty::Instance<'tcx>>,
-    seen: &mut FxHashSet<ty::Instance<'tcx>>,
+    pending: &mut VecDeque<Instance<'tcx>>,
+    seen: &mut FxHashSet<Instance<'tcx>>,
 ) {
     let Some(GlobalAlloc::Memory(alloc)) = tcx.try_get_global_alloc(alloc_id) else {
         return;
@@ -108,10 +111,10 @@ fn collect_from_alloc<'tcx>(
 }
 
 struct ReachabilityVisitor<'a, 'tcx> {
-    tcx: ty::TyCtxt<'tcx>,
+    tcx: TyCtxt<'tcx>,
     body: &'a mir::Body<'tcx>,
-    pending: &'a mut VecDeque<ty::Instance<'tcx>>,
-    seen: &'a mut FxHashSet<ty::Instance<'tcx>>,
+    pending: &'a mut VecDeque<Instance<'tcx>>,
+    seen: &'a mut FxHashSet<Instance<'tcx>>,
 }
 
 impl<'tcx> mir::visit::Visitor<'tcx> for ReachabilityVisitor<'_, 'tcx> {
