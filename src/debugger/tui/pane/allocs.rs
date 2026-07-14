@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use super::*;
 use crate::debugger::state::LocalKind;
-use crate::{MemoryKind, MiriMemoryKind};
+use crate::{MemoryKind, MiriMemoryKind, hsize};
 
 #[derive(Default, Debug)]
 pub struct PaneAllocs {
@@ -51,12 +51,12 @@ impl PaneAllocs {
         let header = [
             "AllocID",
             // "Pointer",
-            "BasePAddr",
+            "BasePaddr",
             "Dealloc",
             "Kind",
             "Size",
             "Align",
-            "ProvExposed",
+            "Exposed",
             "Global",
             "Locals",
         ];
@@ -91,10 +91,6 @@ fn right_cell_with_alive(s: impl Into<Cow<'static, str>>, alive: bool) -> Cell<'
 
 fn right_cell(s: impl Into<Cow<'static, str>>) -> Cell<'static> {
     Cell::from(Text::from(s.into()).right_aligned())
-}
-
-fn hsize(n: impl humansize::ToF64 + humansize::Unsigned) -> String {
-    humansize::format_size(n, humansize::BINARY)
 }
 
 fn kind_str(kind: MemoryKind) -> &'static str {

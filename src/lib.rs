@@ -209,3 +209,7 @@ pub const MIRI_DEFAULT_ARGS: &[&str] = &[
     // execution. Let's not do that.
     "-Zdeduplicate-diagnostics=no",
 ];
+
+fn hsize(n: impl humansize::ToF64 + humansize::Unsigned) -> String {
+    humansize::format_size(n, humansize::BINARY)
+}

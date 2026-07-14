@@ -1,4 +1,4 @@
-use ratatui::style::{Color, Modifier, Style, Styled};
+#![warn(dead_code, unused)]
 use ratatui::text::{Line, Span as RatatuiSpan};
 use rustc_data_structures::either::Either;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
@@ -7,6 +7,7 @@ use rustc_middle::mir::{self, BasicBlockData};
 use rustc_span::source_map::SourceMap;
 use rustc_span::{FileName, RealFileName};
 
+use crate::borrow_tracker::stacked_borrows::debugger::DebuggerBorrowStacks;
 use crate::debugger::tui::theme::STYLE_HIGHTLIGHTED;
 use crate::*;
 
@@ -80,6 +81,7 @@ pub struct AllocInfo {
     pub provenance_exposed: bool,
     pub global: Option<String>,
     pub locals: Vec<String>,
+    pub borrow_stacks: DebuggerBorrowStacks,
 }
 
 #[derive(Clone, Debug)]
@@ -101,6 +103,8 @@ pub struct DebuggerState {
     pub output: Vec<OutputLine>,
     /// The lowest allocated stack vaddr.
     pub min_stack_ptr: Option<u64>,
+    // Although this is a global state that won't change after initialization.
+    pub borrow_tracker_method: Option<BorrowTrackerMethod>,
 }
 
 impl DebuggerState {
@@ -156,6 +160,11 @@ impl DebuggerState {
             allocs,
             output,
             min_stack_ptr,
+            borrow_tracker_method: ecx
+                .machine
+                .borrow_tracker
+                .as_ref()
+                .map(|bt| bt.borrow().borrow_tracker_method()),
         }
     }
 }
@@ -322,7 +331,6 @@ fn capture_allocs(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<AllocInfo
     }
 
     let alloc_map = ecx.memory.alloc_map();
-    let alloc_state = &*ecx.machine.alloc_addresses.borrow();
     let alloc_spans = ecx.machine.allocation_spans.borrow();
 
     let item_name = |did: DefId| ecx.tcx.item_name(did).as_str().to_owned();
@@ -334,9 +342,26 @@ fn capture_allocs(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<AllocInfo
         }
     };
 
+    // states of stack or tree borrow checker
+    let borrow_stacks = |alloc_id: AllocId| {
+        if let Some(alloc_extra) = ecx.get_alloc_extra(alloc_id).discard_err()
+            && let Some(state) = &alloc_extra.borrow_tracker
+        {
+            match state {
+                borrow_tracker::AllocState::StackedBorrows(val) => val.borrow().debugger(ecx),
+                borrow_tracker::AllocState::TreeBorrows(_) => DebuggerBorrowStacks::new(),
+            }
+        } else {
+            DebuggerBorrowStacks::new()
+        }
+    };
+
     for (&alloc_id, (_alloc, dealloc)) in alloc_spans.iter().take(32) {
+        let alloc_state = ecx.machine.alloc_addresses.borrow();
         let provenance_exposed = alloc_state.exposed.contains(&alloc_id);
         let base_addr = alloc_state.base_paddr.get(&alloc_id).copied();
+        // get_alloc_extra also requires alloc_state, so end the Ref borrow here
+        drop(alloc_state);
         let global = ecx.tcx.try_get_global_alloc(alloc_id).and_then(|ga| {
             Some(match ga {
                 GlobalAlloc::Function { instance } => item_name(instance.def_id()),
@@ -358,24 +383,28 @@ fn capture_allocs(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<AllocInfo
             provenance_exposed,
             global,
             locals: names,
+            borrow_stacks: borrow_stacks(alloc_id),
         });
     }
 
     // Remaining locals' allocation.
-    let mut set_id: FxHashSet<_> = entries.iter().map(|e| e.alloc_id).collect();
+    let set_id: FxHashSet<_> = entries.iter().map(|e| e.alloc_id).collect();
     for (alloc_id, v_locals) in map_locals.into_iter().filter(|(id, _)| !set_id.contains(id)) {
         let info = ecx.get_alloc_info(alloc_id);
         let (names, ptr) = split_locals(&v_locals);
+        let alloc_state = ecx.machine.alloc_addresses.borrow();
         let provenance_exposed = alloc_state.exposed.contains(&alloc_id);
         let base_addr = alloc_state.base_paddr.get(&alloc_id).copied();
+        // get_alloc_extra also requires alloc_state, so end the Ref borrow here
+        drop(alloc_state);
+        let borrow_stacks = borrow_stacks(alloc_id);
         if let Some(ga) = ecx.tcx.try_get_global_alloc(alloc_id) {
             let global = match ga {
                 GlobalAlloc::Function { instance } => item_name(instance.def_id()),
                 GlobalAlloc::Static(did) => item_name(did),
                 GlobalAlloc::VTable(..) => "Vtable".to_owned(),
-                GlobalAlloc::Memory(alloc) => {
-                    let allocation = alloc.inner();
-                    let (kind, size, align) = ptr_meta(alloc_id);
+                GlobalAlloc::Memory(_) => {
+                    let (_, size, align) = ptr_meta(alloc_id);
                     entries.push(AllocInfo {
                         alloc_id,
                         ptr,
@@ -387,10 +416,11 @@ fn capture_allocs(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<AllocInfo
                         provenance_exposed: false,
                         global: Some("Const".to_owned()),
                         locals: names,
+                        borrow_stacks,
                     });
                     continue;
                 }
-                GlobalAlloc::TypeId { ty } => "TypeId".to_owned(),
+                GlobalAlloc::TypeId { .. } => "TypeId".to_owned(),
             };
             entries.push(AllocInfo {
                 alloc_id,
@@ -403,8 +433,9 @@ fn capture_allocs(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<AllocInfo
                 provenance_exposed,
                 global: Some(global),
                 locals: names,
+                borrow_stacks,
             });
-        } else if let Some(allocation) = ecx.get_alloc_raw(alloc_id).discard_err() {
+        } else if ecx.get_alloc_raw(alloc_id).discard_err().is_some() {
             let (kind, ..) = ptr_meta(alloc_id);
             entries.push(AllocInfo {
                 alloc_id,
@@ -417,6 +448,7 @@ fn capture_allocs(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<AllocInfo
                 provenance_exposed,
                 global: None,
                 locals: names,
+                borrow_stacks,
             });
         }
     }
@@ -493,7 +525,7 @@ fn capture_location(
     let body = frame.body();
     let current_loc = match frame.current_loc() {
         Either::Left(loc) => loc,
-        Either::Right(span) => todo!(),
+        Either::Right(_) => todo!(),
     };
 
     // 1. Get the source range of the entire MIR Body

@@ -171,6 +171,8 @@ pub fn handle(
             KeyCode::Char('S') => toggle_record_all_states(),
             KeyCode::Char('F') => panes.freeze ^= true,
             KeyCode::Char('D') => ctx.filter_out_dead_allocs ^= true,
+            // toggle modal of borrow_stacks
+            KeyCode::Char('s') => panes.borrow_stacks.focus ^= true,
             KeyCode::BackTab => panes.focus = panes.focus.previous(),
             KeyCode::Tab => {
                 panes.focus = if key.modifiers == KeyModifiers::SHIFT {
