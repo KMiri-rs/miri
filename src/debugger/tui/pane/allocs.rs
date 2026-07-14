@@ -115,6 +115,7 @@ fn kind_str(kind: MemoryKind) -> &'static str {
                 MiriMemoryKind::ExternStatic => "ExternStatic",
                 MiriMemoryKind::Tls => "Tls",
                 MiriMemoryKind::Mmap => "Mmap",
+                MiriMemoryKind::SocketAddress => "SocketAddress",
             },
     }
 }
