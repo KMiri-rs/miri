@@ -1,6 +1,7 @@
 pub mod channel;
-mod state;
+pub mod state;
 pub mod tui;
+pub mod utils;
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};

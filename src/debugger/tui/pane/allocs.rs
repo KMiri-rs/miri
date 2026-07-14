@@ -2,7 +2,8 @@ use std::borrow::Cow;
 
 use super::*;
 use crate::debugger::state::LocalKind;
-use crate::{MemoryKind, MiriMemoryKind, hsize};
+use crate::debugger::utils::{hsize, kind_str};
+use crate::{MemoryKind, MiriMemoryKind};
 
 #[derive(Default, Debug)]
 pub struct PaneAllocs {
@@ -91,27 +92,4 @@ fn right_cell_with_alive(s: impl Into<Cow<'static, str>>, alive: bool) -> Cell<'
 
 fn right_cell(s: impl Into<Cow<'static, str>>) -> Cell<'static> {
     Cell::from(Text::from(s.into()).right_aligned())
-}
-
-fn kind_str(kind: MemoryKind) -> &'static str {
-    match kind {
-        MemoryKind::Stack => "Stack",
-        MemoryKind::CallerLocation => "CallerLoc",
-        MemoryKind::Machine(kind) =>
-            match kind {
-                MiriMemoryKind::Kernel => "Kernel",
-                MiriMemoryKind::Rust => "Rust",
-                MiriMemoryKind::Miri => "Miri",
-                MiriMemoryKind::C => "C",
-                MiriMemoryKind::WinHeap => "WinHeap",
-                MiriMemoryKind::WinLocal => "WinLocal",
-                MiriMemoryKind::Machine => "Machine",
-                MiriMemoryKind::Runtime => "Runtime",
-                MiriMemoryKind::Global => "Global",
-                MiriMemoryKind::ExternStatic => "ExternStatic",
-                MiriMemoryKind::Tls => "Tls",
-                MiriMemoryKind::Mmap => "Mmap",
-                MiriMemoryKind::SocketAddress => "SocketAddress",
-            },
-    }
 }
