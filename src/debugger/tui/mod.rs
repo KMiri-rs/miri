@@ -59,7 +59,7 @@ pub struct Context {
     reverse_index: Option<usize>,
     program_finished: bool,
     count: String,
-    filter_out_dead_allocs: bool,
+    display_dead_allocs: bool,
 }
 
 impl Context {
@@ -74,7 +74,7 @@ impl Context {
             program_finished: false,
             count: String::new(),
             // Hide dead allocations by default.
-            filter_out_dead_allocs: true,
+            display_dead_allocs: false,
         }
     }
 
@@ -245,19 +245,21 @@ fn finished_without_snapshot(terminal: &mut Terminal) -> io::Result<()> {
 }
 
 fn render(panes: &mut Panes, frame: &mut Frame<'_>, state: &DebuggerState, ctx: &Context) {
-    let no_dead = ctx.filter_out_dead_allocs;
+    let display_dead = ctx.display_dead_allocs;
+    let query = panes.instances.search.query_as_u64();
+
     panes.update_area(frame.area());
 
     panes.render_mir(frame, state);
     panes.render_stack(frame, state);
     panes.render_instances(frame, state, ctx.blink_epoch);
     panes.render_src(frame, state);
-    panes.render_locals(frame, state, no_dead);
-    panes.render_memory(frame, state, no_dead);
+    panes.render_locals(frame, state, display_dead, query);
+    panes.render_allocations(frame, state, display_dead, query);
     panes.render_output(frame, state);
     panes.render_status_bar(frame, state, ctx);
 
     if panes.is_focused(FocusPane::BorrowStacks) {
-        panes.render_borrow_stack(frame, state, no_dead);
+        panes.render_borrow_stack(frame, state, display_dead, query);
     }
 }

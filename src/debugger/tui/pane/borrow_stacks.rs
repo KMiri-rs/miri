@@ -46,7 +46,12 @@ impl PaneBorrowStacks {
         self.state.select(Some(row));
     }
 
-    pub fn widget(&mut self, state: &DebuggerState, no_dead: bool) -> Table<'static> {
+    pub fn widget(
+        &mut self,
+        state: &DebuggerState,
+        display_dead: bool,
+        query: Option<u64>,
+    ) -> Table<'static> {
         let len_alive = state.allocs.iter().filter(|alloc| !alloc.dealloc).count();
         self.inverse_idx.clear();
         let mut rows_idx = 0;
@@ -54,10 +59,9 @@ impl PaneBorrowStacks {
             .allocs
             .iter()
             .enumerate()
-            // no_dead=true: don't display allocations
-            // !no_dead=true: display dead allocations
             .filter_map(|(idx_alloc, alloc)| {
-                (!(no_dead & alloc.dealloc)).then_some((idx_alloc, alloc))
+                (alloc.queried(query) & (!alloc.dealloc | display_dead))
+                    .then_some((idx_alloc, alloc))
             })
             .flat_map(|(idx_alloc, alloc)| {
                 let mut idx = InverseIdx::default();

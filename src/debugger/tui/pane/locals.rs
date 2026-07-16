@@ -18,7 +18,8 @@ impl PaneLocals {
         state: &DebuggerState,
         focus: bool,
         stack_index: usize,
-        no_dead: bool,
+        display_dead: bool,
+        query: Option<u64>,
     ) -> Table<'static> {
         let selected_locals = state
             .stack_frames
@@ -28,7 +29,10 @@ impl PaneLocals {
 
         let rows = selected_locals
             .iter()
-            .filter(|local| if no_dead { local.value != "-" } else { true }) // filter out dead locals
+            .filter(|local| {
+                // filter in queried or locals alive
+                local.queried(query) || (if display_dead { local.value != "-" } else { true })
+            })
             .skip(self.scroll.into())
             .map(|local| {
                 let value_style = match local.state {

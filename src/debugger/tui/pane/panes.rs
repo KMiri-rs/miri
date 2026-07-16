@@ -172,18 +172,32 @@ impl Panes {
         frame.render_widget(paragraph, self.src.rect);
     }
 
-    pub fn render_locals(&self, frame: &mut Frame<'_>, state: &DebuggerState, no_dead: bool) {
+    pub fn render_locals(
+        &self,
+        frame: &mut Frame<'_>,
+        state: &DebuggerState,
+        display_dead: bool,
+        query: Option<u64>,
+    ) {
         let table = self.locals.widget(
             state,
             self.is_focused(FocusPane::Locals),
             self.stack.index,
-            no_dead,
+            display_dead,
+            query,
         );
         frame.render_widget(table, self.locals.rect);
     }
 
-    pub fn render_memory(&self, frame: &mut Frame<'_>, state: &DebuggerState, no_dead: bool) {
-        let list = self.allocs.widget(state, self.is_focused(FocusPane::Allocs), no_dead);
+    pub fn render_allocations(
+        &self,
+        frame: &mut Frame<'_>,
+        state: &DebuggerState,
+        display_dead: bool,
+        query: Option<u64>,
+    ) {
+        let list =
+            self.allocs.widget(state, self.is_focused(FocusPane::Allocs), display_dead, query);
         frame.render_widget(list, self.allocs.rect);
     }
 
@@ -214,7 +228,8 @@ impl Panes {
         &mut self,
         frame: &mut Frame<'_>,
         state: &DebuggerState,
-        no_dead: bool,
+        display_dead: bool,
+        query: Option<u64>,
     ) {
         let modal = self.borrow_stacks.modal();
         modal.state.open();
@@ -229,7 +244,7 @@ impl Panes {
             };
 
             self.borrow_stacks.set_rect(area_borrow_stacks);
-            let table = self.borrow_stacks.widget(state, no_dead);
+            let table = self.borrow_stacks.widget(state, display_dead, query);
             frame.render_stateful_widget(table, area_borrow_stacks, &mut self.borrow_stacks.state);
 
             if let Some(para) = self.borrow_stacks.find_selected_span(state, area_src.height) {

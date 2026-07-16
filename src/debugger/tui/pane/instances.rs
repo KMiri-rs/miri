@@ -91,6 +91,22 @@ impl StackSearchState {
         self.clear_history_navigation();
         self.query.pop();
     }
+
+    /// Parse query as u64. Mainly used for AllocId or address search.
+    pub fn query_as_u64(&self) -> Option<u64> {
+        let query = self.query.as_str();
+        if query.len() < 3 {
+            return query.parse::<u64>().ok();
+        }
+        let (head, tail) = query.split_at(2);
+        match head {
+            "0x" => u64::from_str_radix(tail, 16),
+            "0b" => u64::from_str_radix(tail, 2),
+            "0o" => u64::from_str_radix(tail, 8),
+            _ => query.parse::<u64>(),
+        }
+        .ok()
+    }
 }
 
 #[derive(Default, Debug)]

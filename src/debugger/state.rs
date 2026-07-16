@@ -53,6 +53,14 @@ pub struct LocalInfo {
     pub ptr: Option<Ptr>,
 }
 
+impl LocalInfo {
+    pub fn queried(&self, query: Option<u64>) -> bool {
+        query.is_none()
+            || query == self.alloc_id.map(|id| id.0.get())
+            || self.ptr.map(|ptr| ptr.into_raw_parts().1.bytes()) == query
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LocalKind {
     Initialized,
@@ -83,6 +91,16 @@ pub struct AllocInfo {
     pub global: Option<String>,
     pub locals: Vec<String>,
     pub borrow_stacks: DebuggerBorrowStacks,
+}
+
+impl AllocInfo {
+    /// Returns true if the query matches one of these fields: alloc_id, ptr and base_addr.
+    pub fn queried(&self, query: Option<u64>) -> bool {
+        query.is_none()
+            || query == Some(self.alloc_id.0.get())
+            || query == self.ptr.map(|ptr| ptr as u64)
+            || query == self.base_addr
+    }
 }
 
 #[derive(Clone, Debug)]
