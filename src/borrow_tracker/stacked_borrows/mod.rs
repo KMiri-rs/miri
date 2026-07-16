@@ -587,7 +587,7 @@ impl Stacks {
         range: AllocRange,
         machine: &MiriMachine<'tcx>,
     ) -> InterpResult<'tcx> {
-        let print = alloc_id.0.get() == 2331287;
+        let print = alloc_id.0.get() == 2346873;
         let mut buf = String::with_capacity(1024);
         if print {
             writeln!(

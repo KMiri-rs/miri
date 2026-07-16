@@ -15,7 +15,13 @@ impl PaneAllocs {
         PaneAllocs { rect, ..Default::default() }
     }
 
-    pub fn widget(&self, state: &DebuggerState, focus: bool, no_dead: bool) -> Table<'static> {
+    pub fn widget(
+        &self,
+        state: &DebuggerState,
+        focus: bool,
+        display_dead: bool,
+        query: Option<u64>,
+    ) -> Table<'static> {
         let len_alive = state.allocs.iter().filter(|alloc| !alloc.dealloc).count();
         let rows: Vec<_> = state
             .allocs
@@ -23,7 +29,7 @@ impl PaneAllocs {
             .skip(self.scroll.into())
             .filter_map(|alloc| {
                 let alive = !alloc.dealloc;
-                if !alive & no_dead {
+                if !(alloc.queried(query) & (alive | display_dead)) {
                     return None;
                 }
                 Some(Row::new([
