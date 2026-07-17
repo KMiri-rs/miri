@@ -440,10 +440,6 @@ impl Panes {
                 if self.focus == FocusPane::Instances {
                     self.instances.search.finish_history_search();
                 },
-            KeyCode::Char('/') =>
-                if self.focus == FocusPane::Instances {
-                    self.instances.search.editing = false;
-                },
             KeyCode::Char('[') =>
                 if self.focus == FocusPane::Instances && self.instances.search.editing {
                     self.instances.search.previous_history_entry();

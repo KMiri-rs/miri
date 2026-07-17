@@ -7,6 +7,7 @@ use rustc_middle::ty::TyCtxt;
 use rustc_span::source_map::SourceMap;
 use rustc_span::{FileName, RealFileName, Span};
 
+use crate::concurrency::thread::EvalContextExt;
 use crate::debugger::state::RenderSrc;
 use crate::debugger::tui::theme::STYLE_HIGHTLIGHTED;
 use crate::helpers::ToUsize;
@@ -203,4 +204,26 @@ pub fn instance_name(ecx: &MiriInterpCx<'_>, def_id: DefId) -> String {
             with_no_trimmed_paths!(with_resolve_crate_name!(ecx.tcx.def_path_str(def_id)))
         })
         .clone()
+}
+
+/// Checks if the current frame matches `src_line` (e.g., "path/to/file.rs:10" or "path/to/file.rs").
+///
+/// Matches the name part against `frame.fn_name` and the optional line number against `frame.line_start`.
+pub fn is_src_line_reached(ecx: &MiriInterpCx<'_>, src_line: &str) -> bool {
+    let Some(frame) = ecx.active_thread_stack().last() else {
+        return true;
+    };
+
+    let sm = ecx.tcx.sess.source_map();
+    let span = frame.current_span();
+    let file_name = source_file(sm, span);
+    let line_start = pos_to_line_nr(sm, span.lo());
+
+    let Some((file, line)) = src_line.rsplit_once(':') else {
+        return src_line == file_name;
+    };
+    if file != file_name {
+        return false;
+    }
+    line.parse::<u16>().map(|line| line == line_start).unwrap_or(false)
 }
