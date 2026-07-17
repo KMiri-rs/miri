@@ -21,6 +21,15 @@ pub struct FrameInfo {
     pub locals: Vec<LocalInfo>,
 }
 
+impl FrameInfo {
+    pub fn display_src_line(&self) -> String {
+        let file = &self.source_file;
+        let start = self.line_start;
+        let end = self.line_end;
+        if start == end { format!("{file}:{start}") } else { format!("{file}:{start}:{end}") }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CurrentLocation {
     /// Full source code with current location highlighted.
@@ -113,6 +122,7 @@ pub struct OutputSpan {
 pub struct DebuggerState {
     pub current_thread: ThreadId,
     pub step_count: u64,
+    /// The first frame is the current stack.
     pub stack_frames: Vec<FrameInfo>,
     pub function_instances: reachability::Reachability,
     pub current_location: CurrentLocation,
@@ -129,6 +139,7 @@ pub struct DebuggerState {
 
 impl DebuggerState {
     pub fn capture<'tcx>(ecx: &MiriInterpCx<'tcx>) -> Self {
+        // The last is the current stack.
         let stack = ecx.active_thread_stack();
 
         let min_stack_ptr = ecx
@@ -147,6 +158,7 @@ impl DebuggerState {
                 mirch::page_walk_or(vaddr, paddr_fallback).unwrap_or_else(paddr_fallback) as u64
             });
 
+        // Reverse the stack frames: the first is the current.
         let stack_frames: Vec<_> =
             stack.iter().rev().map(|frame| capture_frame(ecx, frame)).collect();
 
@@ -194,6 +206,10 @@ impl DebuggerState {
                 .as_ref()
                 .map(|bt| bt.borrow().borrow_tracker_method()),
         }
+    }
+
+    pub fn current_stack_frame(&self) -> Option<&FrameInfo> {
+        self.stack_frames.first()
     }
 }
 
