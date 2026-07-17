@@ -34,22 +34,20 @@ pub fn handle(
             return Ok(Action::Continue);
         }
         if panes.instances.search.editing {
-            if panes.instances.search.editing && key.code == KeyCode::Enter {
+            if key.code != KeyCode::Enter {
                 panes.edit(state, key.code);
-                if let Some(target) = panes.instances.selected_instance_target(state) {
-                    if state.stack_frames.last().is_some_and(|frame| frame.fn_name == target) {
-                        return Ok(Action::Continue);
-                    }
-                    *reverse_index = None;
-                    *run_to_instance_target = Some(target.clone());
-                    *mode = RunMode::RunToInstance;
-                    let _ = command_tx.send(DebuggerCommand::RunToInstance(target));
-                    return Ok(Action::Break);
-                }
                 return Ok(Action::Continue);
             }
-            panes.edit(state, key.code);
-            return Ok(Action::Continue);
+            if let Some(target) = panes.instances.selected_instance_target(state) {
+                if state.current_stack_frame().is_some_and(|frame| frame.fn_name == target) {
+                    return Ok(Action::Continue);
+                }
+                *reverse_index = None;
+                *run_to_instance_target = Some(target.clone());
+                *mode = RunMode::RunToInstance;
+                let _ = command_tx.send(DebuggerCommand::RunToInstance(target));
+                return Ok(Action::Break);
+            }
         }
         match key.code {
             KeyCode::Char('q') => {
@@ -68,10 +66,16 @@ pub fn handle(
             }
             KeyCode::Enter =>
                 if panes.is_focused(FocusPane::Instances) {
+                    if panes.instances.search.query.contains(".rs") {
+                        *reverse_index = None;
+                        *run_to_instance_target = None;
+                        *mode = RunMode::RunToSrcLine;
+                        let src_line = mem::take(&mut panes.instances.search.query);
+                        let _ = command_tx.send(DebuggerCommand::RunToSrcLine(src_line));
+                        panes.instances.search.finish_history_search();
+                        return Ok(Action::Break);
+                    }
                     if let Some(target) = panes.instances.selected_instance_target(state) {
-                        if state.stack_frames.last().is_some_and(|frame| frame.fn_name == target) {
-                            return Ok(Action::Continue);
-                        }
                         *reverse_index = None;
                         *run_to_instance_target = Some(target.clone());
                         *mode = RunMode::RunToInstance;
