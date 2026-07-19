@@ -34,6 +34,7 @@ enum RunMode {
     RunToTerminator,
     StepFrameTerminator,
     RunToInstance,
+    RunToSrcLine,
     RunToEnd,
 }
 
@@ -45,6 +46,7 @@ impl RunMode {
             RunMode::RunToTerminator => "run-to-terminator",
             RunMode::StepFrameTerminator => "step-frame-terminator",
             RunMode::RunToInstance => "run-to-instance",
+            RunMode::RunToSrcLine => "run-to-src-line",
             RunMode::RunToEnd => "run-to-end",
         }
     }
@@ -85,13 +87,6 @@ impl Context {
         }
         self.last_state = Some(Box::new(state.clone()));
         self.reverse_index = None;
-    }
-
-    fn reached_target_instance(&self, state: &DebuggerState) -> bool {
-        self.mode == RunMode::RunToInstance
-            && self.run_to_instance_target.as_ref().is_some_and(|target| {
-                state.stack_frames.last().is_some_and(|frame| frame.fn_name == *target)
-            })
     }
 }
 
@@ -184,10 +179,6 @@ fn refresh_state(panes: &mut Panes, ctx: &mut Context, state: &DebuggerState) {
         panes.instances.index = panes.instances.index.min(state.function_instances.len() - 1);
     } else {
         panes.instances.index = 0;
-    }
-    if ctx.reached_target_instance(state) {
-        ctx.mode = RunMode::Step;
-        ctx.run_to_instance_target = None;
     }
 }
 

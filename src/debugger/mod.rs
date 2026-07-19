@@ -14,7 +14,7 @@ use self::channel::{CommandReceiver, StateSender};
 pub use self::state::DebuggerState;
 use crate::MiriInterpCx;
 use crate::concurrency::thread::EvalContextExt;
-use crate::debugger::utils::instance_name;
+use crate::debugger::utils::{instance_name, is_src_line_reached};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DebuggerCommand {
@@ -24,6 +24,7 @@ pub enum DebuggerCommand {
     StepBack,
     RunToTerminator(u32),
     RunToInstance(String),
+    RunToSrcLine(String),
     RunToEnd,
     Quit,
     QuitWithErr(String),
@@ -35,6 +36,7 @@ enum DebuggerMode<'tcx> {
     Continue,
     RunToTerminator(u32),
     RunToInstance(String),
+    RunToSrcLine(String),
     #[expect(unused)]
     RunToEnd,
     StepFrameTerminator(StepFrameTerminatorState<'tcx>),
@@ -104,6 +106,15 @@ impl<'tcx> MiriDebuggerHandle<'tcx> {
                         }
                         None => true,
                     },
+                DebuggerMode::RunToSrcLine(src_line) => {
+                    return if is_src_line_reached(ecx, &src_line) {
+                        self.set_current_mode(DebuggerMode::Step(1));
+                        // Send the DebuggerState.
+                        false
+                    } else {
+                        true
+                    };
+                }
                 DebuggerMode::StepFrameTerminator(mut state) => {
                     let Some(top_frame) = ecx.active_thread_stack().last() else {
                         return true;
@@ -160,6 +171,7 @@ impl<'tcx> MiriDebuggerHandle<'tcx> {
             | DebuggerMode::RunToTerminator(_)
             | DebuggerMode::RunToEnd
             | DebuggerMode::RunToInstance(_)
+            | DebuggerMode::RunToSrcLine(_)
             | DebuggerMode::StepFrameTerminator(_) => (),
             DebuggerMode::Continue => return,
         }
@@ -211,6 +223,7 @@ impl<'tcx> MiriDebuggerHandle<'tcx> {
                 DebuggerCommand::StepBack => DebuggerMode::Continue,
                 DebuggerCommand::RunToTerminator(n) => DebuggerMode::RunToTerminator(n + 1),
                 DebuggerCommand::RunToInstance(target) => DebuggerMode::RunToInstance(target),
+                DebuggerCommand::RunToSrcLine(line) => DebuggerMode::RunToSrcLine(line),
                 DebuggerCommand::RunToEnd => DebuggerMode::Continue,
                 DebuggerCommand::Quit => break 'm,
                 DebuggerCommand::QuitWithErr(_) => break 'm,

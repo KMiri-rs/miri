@@ -28,17 +28,8 @@ impl PaneStack {
             .enumerate()
             .map(|(idx, info)| {
                 let first = hscroll_text(&format!("#{idx} {}", info.fn_name), self.hscroll);
-                let src_file = {
-                    let file = &info.source_file;
-                    let start = info.line_start;
-                    let end = info.line_end;
-                    if start == end {
-                        format!("{file}:{start}")
-                    } else {
-                        format!("{file}:{start}:{end}")
-                    }
-                };
-                let second = hscroll_text(&src_file, self.hscroll);
+                let src_line = info.display_src_line();
+                let second = hscroll_text(&src_line, self.hscroll);
                 ListItem::new(vec![
                     Line::from(first).style(Style::default().fg(THEME_ACCENT_SOFT)),
                     Line::from(second).style(Style::default().fg(THEME_DIM)),
