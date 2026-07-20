@@ -186,10 +186,10 @@ pub fn type_pages_at<'tcx>(
         let page_paddr = paddr + page_size * page_index;
         physical_mem.set_page_state(page_paddr, page_state);
     }
-    // println!(
-    //     "[kern_miri_retype_pages] paddr=0x{paddr:x}..0x{:x} => {page_state:?}",
-    //     paddr + count * page_size
-    // );
+    log!(
+        "[kern_miri_retype_pages] paddr=0x{paddr:x}..0x{:x} => {page_state:?}",
+        paddr + count * page_size
+    );
 
     interp_ok(())
 }

@@ -587,17 +587,26 @@ impl Stacks {
         range: AllocRange,
         machine: &MiriMachine<'tcx>,
     ) -> InterpResult<'tcx> {
-        let print = alloc_id.0.get() == 2346873;
+        let print = alloc_id.0.get() == 2346980;
         let mut buf = String::with_capacity(1024);
         if print {
+            let alloc_addresses = machine.alloc_addresses.borrow();
+            let paddr = alloc_addresses.base_paddr.get(&alloc_id).copied();
+            let vaddr = paddr.and_then(|paddr| alloc_addresses.paddr_to_vaddr.get(&paddr)).copied();
+            drop(alloc_addresses);
+            let display_ptr = |addr: Option<u64>| {
+                addr.map(|paddr| format!("{paddr:#x}")).unwrap_or_else(|| "none".to_owned())
+            };
             writeln!(
                 &mut buf,
-                "[{alloc_id:?}] write access with tag {:?}: {:?}, size {}; range={:#x}..{:#x}",
+                "[{alloc_id:?}, paddr={paddr}, vaddr={vaddr}] write access with tag {:?}: {:?}, size {}; range={:#x}..{:#x}",
                 tag,
                 interpret::Pointer::new(alloc_id, range.start),
                 range.size.bytes(),
                 range.start.bytes(),
                 range.end().bytes(),
+                paddr = display_ptr(paddr),
+                vaddr = display_ptr(vaddr),
             )
             .unwrap();
         }

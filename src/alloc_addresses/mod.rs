@@ -17,7 +17,6 @@ use self::reuse_pool::ReusePool;
 use crate::alloc::MiriAllocParams;
 use crate::alloc_addresses::address_generator::align_addr;
 use crate::concurrency::VClock;
-use crate::debugger::debugger_log;
 use crate::diagnostics::SpanDedupDiagnostic;
 use crate::helpers::adjust_stack_addr;
 use crate::mirch::{CodeSection, PageState, kernel_code_paddr_to_vaddr};
@@ -55,7 +54,7 @@ pub struct GlobalStateInner {
 
     /// kmimri: the key is paddr, the value is vaddr.
     /// This is a workaround for now to hot fix the non-linear mapping.
-    paddr_to_vaddr: FxHashMap<u64, u64>,
+    pub paddr_to_vaddr: FxHashMap<u64, u64>,
 
     /// The set of exposed allocations. This cannot be put
     /// into `AllocExtra` for the same reason as `base_addr`.
@@ -339,7 +338,6 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 }
                 base_vaddr
             };
-            // println!("memory_kind={memory_kind:?} base_addr={base_addr:#x}");
 
             interp_ok(base_vaddr)
         }
@@ -364,6 +362,13 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let ecx = self.eval_context_ref();
         let page_index = paddr / mirch::page_size();
         let page_info = mirch::physical_mem().page_states[page_index];
+
+        if paddr == 0x210ff80 {
+            log!(
+                "paddr={paddr:#x} CodeSection={:?} page_info={page_info:?}",
+                CodeSection::paddr(paddr as u64)
+            );
+        }
 
         if let PageState::Typed { page_type: _, slot_size } = page_info {
             let alloc_id = ecx.tcx.reserve_alloc_id();
@@ -425,9 +430,9 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         };
         let paddr =
             mirch::page_walk_or(vaddr, || unreachable!()).unwrap_or_else(paddr_fallback) as u64;
-        if boot_pt {
-            log!("[alloc_id_from_addr] boot_pt paddr={paddr:#x} size={size}");
-        }
+        // if boot_pt {
+        //     log!("[alloc_id_from_addr] boot_pt paddr={paddr:#x} size={size}");
+        // }
 
         // We always search the allocation to the right of this address. So if the size is strictly
         // negative, we have to search for `addr-1` instead.
@@ -474,6 +479,13 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 }
             }
         }?;
+
+        if vaddr == 0xffff80000210ff80 {
+            let memory_kind = this.memory.alloc_map().get(alloc_id).unwrap().0;
+            log!(
+                "memory_kind={memory_kind:?} alloc_id={alloc_id:?} vaddr={vaddr:#x} paddr={paddr:#x}"
+            );
+        }
 
         // We only use this provenance if it has been exposed.
         if global_state.exposed.contains(&alloc_id) {
@@ -524,9 +536,9 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
                 {
                     if this.machine.threads.active_thread().to_u32() == 1 {
-                        log!(
-                            "[addr_from_alloc_id] paddr={base_paddr:#x} vaddr={base_vaddr:#x} ({alloc_id:?})"
-                        );
+                        // log!(
+                        //     "[addr_from_alloc_id] paddr={base_paddr:#x} vaddr={base_vaddr:#x} ({alloc_id:?})"
+                        // );
                         global_state.paddr_to_vaddr.insert(base_paddr, base_vaddr);
                     }
                 }
@@ -553,9 +565,9 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                             Ok(found) => {
                                 let found_alloc_id = global_state.int_to_ptr_map[found].1;
                                 if found_alloc_id != alloc_id {
-                                    debugger_log(format!(
+                                    panic!(
                                         "{base_paddr} has two AllocId {alloc_id:?} and {found_alloc_id:?}"
-                                    ))
+                                    )
                                 }
                                 return interp_ok(base_paddr);
                             }
@@ -568,6 +580,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 base_vaddr
             }
         };
+
         interp_ok(vaddr)
     }
 
@@ -791,9 +804,9 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         };
         let actual_paddr =
             mirch::page_walk_or(vaddr, &mut paddr_fallback).unwrap_or_else(paddr_fallback) as u64;
-        if boot_pt {
-            log!("[ptr_get_alloc] boot_pt paddr={actual_paddr:#x} size={size}");
-        }
+        // if boot_pt {
+        //     log!("[ptr_get_alloc] boot_pt paddr={actual_paddr:#x} size={size}");
+        // }
 
         let offset = actual_paddr.wrapping_sub(base_paddr);
 
