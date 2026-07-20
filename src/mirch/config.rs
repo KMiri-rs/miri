@@ -114,6 +114,7 @@ pub enum CodeSection {
     Static,
     CpuLocal,
     Stack,
+    FreePage,
 }
 
 impl CodeSection {
@@ -127,6 +128,8 @@ impl CodeSection {
             Self::CpuLocal
         } else if paddr <= kernel_stack_end_addr() {
             Self::Stack
+        } else if paddr < total_mem_size() {
+            Self::FreePage
         } else {
             return None;
         })

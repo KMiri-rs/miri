@@ -6,9 +6,9 @@ use rustc_middle::mir::interpret::GlobalAlloc;
 use rustc_middle::mir::{self, BasicBlockData};
 
 use crate::borrow_tracker::stacked_borrows::debugger::DebuggerBorrowStacks;
+use crate::debugger::reachability;
 use crate::debugger::tui::theme::STYLE_HIGHTLIGHTED;
 use crate::debugger::utils::{instance_name, pos_to_line_nr, source_file};
-use crate::debugger::{debugger_log, reachability};
 // use crate::mirch::kernel_code_vaddr_to_paddr;
 use crate::*;
 
@@ -344,7 +344,9 @@ fn capture_allocs(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<AllocInfo
         let set: FxHashSet<_> =
             v.iter().map(|local| local.ptr.map(|p| p.into_raw_parts().1.bytes_usize())).collect();
         if set.len() > 2 {
-            debugger_log(format!("{v:?} has multiple pointer addrs: {set:?}"));
+            let mut addrs: Vec<_> = set.iter().map(|a| a.map(|a| format!("{a:#x}"))).collect();
+            addrs.sort_unstable();
+            log!("{v:?} has multiple pointer addrs: {addrs:?}");
         }
         (names, set.iter().find_map(|p| *p))
     }
