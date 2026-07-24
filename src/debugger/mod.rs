@@ -16,6 +16,7 @@ pub enum DebuggerCommand {
     RunToMain,
     RunToEnd,
     Quit,
+    QuitWithErr(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -99,6 +100,7 @@ impl MiriDebuggerHandle {
                 DebuggerCommand::Continue
             }
             DebuggerCommand::Quit => DebuggerCommand::Quit,
+            DebuggerCommand::QuitWithErr(err) => DebuggerCommand::QuitWithErr(err),
         }
     }
 }

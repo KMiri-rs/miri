@@ -218,6 +218,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                         }
                         this.machine.pt_checker = None;
                     }
+
                     this.step_current_thread()?;
 
                     if let Some(handle) = &this.machine.debugger {
