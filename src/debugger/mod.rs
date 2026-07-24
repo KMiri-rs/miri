@@ -5,6 +5,7 @@ pub mod tui;
 pub mod utils;
 
 use std::cell::RefCell;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use rustc_middle::ty;
@@ -253,23 +254,27 @@ fn frame_terminator_reached<'tcx>(
     reached_terminator(ecx)
 }
 
-pub fn debugger_log(s: String) {
-    use std::fs::OpenOptions;
+pub fn debugger_log(s: impl std::fmt::Display) {
+    use std::fs::{File, OpenOptions};
     use std::io::Write;
 
     static OPENED: AtomicBool = AtomicBool::new(false);
-    let opened = OPENED.swap(true, Ordering::Relaxed);
-    let mut opts = OpenOptions::new();
 
-    if opened {
-        opts.append(true);
-    } else {
-        opts.create(true).write(true).truncate(true);
-    };
+    static FILE: LazyLock<File> = LazyLock::new(|| {
+        let mut opts = OpenOptions::new();
+        let opened = OPENED.swap(true, Ordering::Relaxed);
 
-    let mut file = opts.open("miri_debugger.log").unwrap();
-    writeln!(&file, "{s}").unwrap();
-    file.flush();
+        if opened {
+            opts.append(true);
+        } else {
+            opts.create(true).write(true).truncate(true);
+        };
+        opts.open("miri_debugger.log").unwrap()
+    });
+
+    let mut file = &*FILE;
+    writeln!(file, "{s}").unwrap();
+    // file.flush();
 }
 
 static RECORD_ALL_STATES: AtomicBool = AtomicBool::new(false);
