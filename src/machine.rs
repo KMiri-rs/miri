@@ -651,7 +651,7 @@ pub struct MiriMachine<'tcx> {
     pub(crate) stack_addr: u64,
     pub(crate) stack_size: u64,
 
-    /// This field have not been used yet.
+    /// Page table checker. The value is a paddr.
     pub(crate) pt_checker: Option<usize>,
 
     /// Whether to collect a backtrace when each allocation is created, just in case it leaks.
@@ -1779,12 +1779,12 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             borrow_tracker.before_memory_write(alloc_id, prov_extra, range, machine)?;
         }
 
-        let address = machine.alloc_addresses.borrow().get_base_addr(alloc_id) as usize;
+        let paddr = machine.alloc_addresses.borrow().get_base_addr(alloc_id) as usize;
         if let PageState::Typed { page_type, slot_size: _ } =
-            mirch::physical_mem().page_states[address / mirch::page_size()]
+            mirch::physical_mem().page_states[paddr / mirch::page_size()]
         {
             if page_type == TypedKind::PageTable {
-                machine.pt_checker = Some(address - address % mirch::PTE_SIZE);
+                machine.pt_checker = Some(paddr - paddr % mirch::PTE_SIZE);
             }
         }
 
