@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use crate::mirch::{CodeSection, paddr_to_mem, page_size};
+use crate::mirch::{paddr_to_mem, page_size};
 use crate::*;
 
 pub const NR_LEVELS: usize = 4;
