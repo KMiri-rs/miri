@@ -76,7 +76,7 @@ pub struct GlobalStateInner {
     /// FIXME: this field seems unused as real stack allocations, because thread next_stack_addr is
     /// used instead.
     next_stack_paddr: u64,
-    /// This is a temporary set used to record the stack allocations before a function returns.
+    /// Temporary snapshot of live stack allocations before a frame is popped.
     ///
     /// The process during stack popping is roughly as follows:
     /// ```text
@@ -87,10 +87,10 @@ pub struct GlobalStateInner {
     /// after_stack_pop
     /// ```
     ///
-    /// This set is added new AllocIds in before_stack_pop, and computes the diff with
-    /// base_paddr to know what new allocations happen.
-    /// Then in after_stack_pop, rewrite the address (u64) for these new allocations based on the next_stack_addr recored,
-    /// and adjust the next_stack_addr when resuming the stack pointer.
+    /// `return_from_current_stack_frame` can materialize caller return places after the callee
+    /// frame is popped but before callee locals are cleaned up. `after_stack_pop` compares the
+    /// current live stack allocations against this snapshot, then replays the new allocations below
+    /// the caller's saved stack pointer.
     pub stack_allocations_before_stack_pop: FxHashSet<AllocId>,
 }
 
