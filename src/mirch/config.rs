@@ -2,7 +2,7 @@ use std::{fs, io};
 
 use serde::Deserialize;
 
-use crate::mirch::{kernel_code_vaddr_to_paddr, try_kernel_code_vaddr_to_paddr};
+use crate::mirch::try_kernel_code_vaddr_to_paddr;
 
 /// Parses a JSON configuration file into a `PhysConfig` structure.
 pub fn parse_json_file(file_path: &str) -> Result<PhysConfig, io::Error> {
@@ -134,6 +134,7 @@ impl CodeSection {
 
     /// NOTE: this can't be called for boot_pt addr, because its base vaddr differs
     /// from other section base addr.
+    #[expect(unused)]
     pub fn vaddr(vaddr: u64) -> Result<Self, String> {
         let paddr = try_kernel_code_vaddr_to_paddr(vaddr as usize)
             .ok_or_else(|| format!("0x{vaddr:x} is not in kernel code"))?;
@@ -172,6 +173,7 @@ pub fn total_page_num() -> usize {
 
 // Kernel code section accessors
 /// Returns starting physical address of kernel code (always 0x0)
+#[expect(unused)]
 pub const fn kernel_code_start() -> usize {
     0
 }

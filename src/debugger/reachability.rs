@@ -1,9 +1,7 @@
 #![allow(rustc::internal)]
 use std::collections::VecDeque;
 
-use ratatui::text::{Line, Span as RatatuiSpan};
-use rustc_data_structures::either::Either;
-use rustc_data_structures::fx::{FxHashMap, FxHashSet};
+use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::interpret::GlobalAlloc;
 use rustc_middle::mir::visit::Visitor as _;

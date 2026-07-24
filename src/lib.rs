@@ -47,7 +47,6 @@
     clippy::len_zero,
     clippy::as_conversions,
     unsafe_op_in_unsafe_fn,
-    unused,
     // We are not implementing queries here so it's fine
     rustc::potential_query_instability,
 )]

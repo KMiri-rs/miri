@@ -1,8 +1,4 @@
-use std::mem;
-
 use super::*;
-use crate::debugger::debugger_log;
-use crate::debugger::state::LocalKind;
 
 #[derive(Default, Debug)]
 pub struct PaneOutput {
@@ -17,9 +13,6 @@ impl PaneOutput {
     }
 
     pub fn widget(&self, state: &DebuggerState, focus: bool) -> List<'static> {
-        let mut output_len = 0;
-        let mut line_len = 0;
-
         let mut lines = Vec::<Line<'static>>::new();
         let mut still_last = true;
         for output in &state.output {
