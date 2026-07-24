@@ -70,8 +70,10 @@ impl MiriDebuggerHandle {
     }
 
     pub fn send(&self, ecx: &MiriInterpCx<'_>) {
+        // Return value of the closure means that send early returns.
         let update_mode = || {
-            match self.current_mode() {
+            let mode = self.current_mode();
+            match mode {
                 DebuggerMode::Step(2 | 0) => self.set_current_mode(DebuggerMode::Step(1)),
                 DebuggerMode::Step(n) if n > 1 => {
                     self.set_current_mode(DebuggerMode::Step(n - 1));
@@ -86,18 +88,39 @@ impl MiriDebuggerHandle {
                         return true;
                     },
                 DebuggerMode::Continue => return true,
+                DebuggerMode::RunToInstance(target) =>
+                    return match ecx
+                        .active_thread_stack()
+                        .last()
+                        .map(|frame| frame.instance().to_string())
+                    {
+                        Some(current_fn) => {
+                            if target == current_fn {
+                                self.set_current_mode(DebuggerMode::Step(1));
+                                // Send the DebuggerState.
+                                false
+                            } else {
+                                true
+                            }
+                        }
+                        None => true,
+                    },
                 _ => (),
             }
             false
         };
-        let ret = update_mode();
-        if ret && !get_record_all_states() {
+        let early_return = update_mode();
+        if early_return && !get_record_all_states() {
+            // Early return if we don't record all intermediate states.
             return;
         }
 
         let state = DebuggerState::capture(ecx);
         match self.current_mode() {
-            DebuggerMode::Step(_) | DebuggerMode::RunToTerminator(_) | DebuggerMode::RunToEnd => (),
+            DebuggerMode::Step(_)
+            | DebuggerMode::RunToTerminator(_)
+            | DebuggerMode::RunToEnd
+            | DebuggerMode::RunToInstance(_) => (),
             DebuggerMode::RunToFrame(ref target) => {
                 let target_lc = target.to_ascii_lowercase();
                 if state
@@ -106,14 +129,9 @@ impl MiriDebuggerHandle {
                     .any(|frame| frame.fn_name.to_ascii_lowercase().contains(&target_lc))
                 {
                     self.set_current_mode(DebuggerMode::Step(1));
+                } else {
+                    return;
                 }
-                return;
-            }
-            DebuggerMode::RunToInstance(ref target) => {
-                if state.stack_frames.last().is_some_and(|frame| frame.fn_name == *target) {
-                    self.set_current_mode(DebuggerMode::Step(1));
-                }
-                return;
             }
             DebuggerMode::RunToMain => {
                 if state.in_user_code {
@@ -135,12 +153,17 @@ impl MiriDebuggerHandle {
         }
     }
 
-    pub fn wait_for_continue(&self, ecx: &MiriInterpCx<'_>) -> DebuggerCommand {
+    pub fn wait_for_command(&self, ecx: &MiriInterpCx<'_>) -> Quit {
         if !self.reached_terminator_or_step(ecx) {
-            return DebuggerCommand::Continue;
+            return Quit::No;
         }
 
         let cmd = self.cmd_rx.recv().unwrap_or(DebuggerCommand::Continue);
+        let quit = match &cmd {
+            DebuggerCommand::Quit => Quit::Yes,
+            DebuggerCommand::QuitWithErr(err) => Quit::YesWithErr(err.clone()),
+            _ => Quit::No,
+        };
         'm: {
             // The step or run count is intentionally added with 1, because the count decrements
             // before send happens.
@@ -151,15 +174,21 @@ impl MiriDebuggerHandle {
                 DebuggerCommand::StepBack => DebuggerMode::Continue,
                 DebuggerCommand::RunToTerminator(n) => DebuggerMode::RunToTerminator(n + 1),
                 DebuggerCommand::RunToFrame(_) => DebuggerMode::Continue,
-                DebuggerCommand::RunToInstance(_) => DebuggerMode::Continue,
+                DebuggerCommand::RunToInstance(target) => DebuggerMode::RunToInstance(target),
                 DebuggerCommand::RunToMain => DebuggerMode::Continue,
                 DebuggerCommand::RunToEnd => DebuggerMode::Continue,
                 DebuggerCommand::Quit => break 'm,
                 DebuggerCommand::QuitWithErr(_) => break 'm,
             }
         };
-        cmd
+        quit
     }
+}
+
+pub enum Quit {
+    No,
+    Yes,
+    YesWithErr(String),
 }
 
 fn reached_terminator(ecx: &MiriInterpCx<'_>) -> bool {
@@ -191,7 +220,7 @@ pub fn debugger_log(s: String) {
     file.flush();
 }
 
-static RECORD_ALL_STATES: AtomicBool = AtomicBool::new(true);
+static RECORD_ALL_STATES: AtomicBool = AtomicBool::new(false);
 pub fn toggle_record_all_states() {
     RECORD_ALL_STATES.fetch_xor(true, Ordering::Relaxed);
 }
