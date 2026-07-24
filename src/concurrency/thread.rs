@@ -19,6 +19,7 @@ use rustc_target::spec::Os;
 
 use crate::concurrency::GlobalDataRaceHandler;
 use crate::concurrency::scheduler::SchedulingAction;
+use crate::debugger::{DebuggerCommand, DebuggerState};
 use crate::machine::CPU_NUM;
 use crate::mirch::{self, kernel_code_paddr_to_vaddr};
 use crate::shims::tls;

@@ -612,7 +612,10 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             throw_unsup_format!("`NtWriteFile` `Key` parameter is non-null, which is unsupported");
         }
 
-        let Handle::File(fd) = handle else { this.invalid_handle("NtWriteFile")? };
+        let fd = match handle {
+            Handle::File(fd) => fd,
+            _ => this.invalid_handle("NtWriteFile")?,
+        };
 
         let Some(desc) = this.machine.fds.get(fd) else { this.invalid_handle("NtWriteFile")? };
 
@@ -625,6 +628,22 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             this.project_field_named(&anon, "Status")?
         };
         let io_status_info = this.project_field_named(&io_status_block, "Information")?;
+
+        let Handle::File(fd) = handle else { this.invalid_handle("NtWriteFile")? };
+
+        if this.machine.debugger.is_some() && (fd == 1 || fd == 2) {
+            let bytes =
+                this.read_bytes_ptr_strip_provenance(buf, Size::from_bytes(u64::from(count)))?;
+            this.machine.push_debugger_output(fd == 2, bytes);
+
+            // Report a successful write to both the IO status block and return value.
+            this.write_int(u64::from(count), &io_status_info)?;
+            this.write_int(0, &io_status)?;
+            this.write_int(0, dest)?;
+            return interp_ok(());
+        }
+
+        let Some(desc) = this.machine.fds.get(fd) else { this.invalid_handle("NtWriteFile")? };
 
         // It seems like short writes are not a thing on Windows, so we don't truncate `count` here.
         // FIXME: if we are on a Unix host, short host writes are still visible to the program!

@@ -536,6 +536,8 @@ fn main() -> ExitCode {
         } else if arg == "-Zmiri-ignore-leaks" {
             miri_config.ignore_leaks = true;
             miri_config.collect_leak_backtraces = false;
+        } else if arg == "--debugger" {
+            miri_config.debugger = true;
         } else if arg == "-Zmiri-deterministic-floats" {
             miri_config.float_nondet = false;
         } else if arg == "-Zmiri-no-extra-rounding-error" {

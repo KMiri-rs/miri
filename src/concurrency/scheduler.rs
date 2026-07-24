@@ -219,6 +219,18 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                         this.machine.pt_checker = None;
                     }
                     this.step_current_thread()?;
+
+                    if let Some(handle) = &this.machine.debugger {
+                        let stack = this.active_thread_stack();
+                        if !stack.is_empty() {
+                            let state = DebuggerState::capture(this);
+                            handle.send(state);
+                            if handle.wait_for_continue() == DebuggerCommand::Quit {
+                                this.machine.handle_abnormal_termination();
+                                throw_machine_stop!(TerminationInfo::Interrupted);
+                            }
+                        }
+                    }
                 }
                 SchedulingAction::SleepAndWaitForIo(duration) => {
                     if this.machine.communicate() {
