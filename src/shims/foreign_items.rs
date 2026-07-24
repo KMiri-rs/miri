@@ -1,3 +1,4 @@
+#![allow(clippy::arithmetic_side_effects)]
 use std::collections::hash_map::Entry;
 use std::io::Write;
 use std::path::Path;

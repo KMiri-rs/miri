@@ -209,8 +209,8 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                         unsafe {
                             let value = *(mirch::paddr_to_mem(pt_address) as *mut usize);
                             let written_addr = value & !(mirch::page_size() - 1);
-                            if let PageState::Typed { .. } = mirch::physical_mem().page_states
-                                [written_addr as usize / mirch::page_size()]
+                            if let PageState::Typed { .. } =
+                                mirch::physical_mem().page_states[written_addr / mirch::page_size()]
                             {
                                 let _global_states = this.machine.alloc_addresses.borrow();
                                 //..todo!()
@@ -218,6 +218,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                         }
                         this.machine.pt_checker = None;
                     }
+
 
                     this.step_current_thread()?;
 

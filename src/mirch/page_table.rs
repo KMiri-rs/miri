@@ -40,7 +40,7 @@ pub unsafe fn init_boot_pt() -> PageTable {
     *(paddr_to_mem(BOOT_PT_PADDR) as *mut usize).add(pt_linear_offset_level_4) =
         BOOT_PT_LINEAR_PDPT_PADDR;
     *(paddr_to_mem(BOOT_PT_LINEAR_PDPT_PADDR) as *mut usize).add(pt_linear_offset_level_3) =
-        0x0 | PageTable::HUGE_BIT_MASK;
+        PageTable::HUGE_BIT_MASK;
 
     // kernel code mapping
     let pt_kernel_offset_level_4 = PageTable::pte_index(mirch::kernel_code_base_vaddr(), 4);
@@ -49,7 +49,7 @@ pub unsafe fn init_boot_pt() -> PageTable {
     *(paddr_to_mem(BOOT_PT_PADDR) as *mut usize).add(pt_kernel_offset_level_4) =
         BOOT_PT_KERNEL_PDPT_PADDR;
     *(paddr_to_mem(BOOT_PT_KERNEL_PDPT_PADDR) as *mut usize).add(pt_kernel_offset_level_3) =
-        0x0 | PageTable::HUGE_BIT_MASK;
+        PageTable::HUGE_BIT_MASK;
 
     super::type_pages_at(BOOT_PT_PADDR, 3, PTE_SIZE, mirch::TypedKind::PageTable).unwrap();
 
@@ -124,6 +124,6 @@ impl PageTable {
     /// It needs to work with a mechanism that adds a reverse mapping.
     pub fn paddr_to_vaddr(&self, paddr: usize) -> Option<usize> {
         let map = self.typed_page_paddr_to_vaddr.borrow();
-        map.get(&paddr).map(|vaddr| *vaddr)
+        map.get(&paddr).copied()
     }
 }
