@@ -19,7 +19,6 @@ use rustc_target::spec::Os;
 
 use crate::concurrency::GlobalDataRaceHandler;
 use crate::concurrency::scheduler::SchedulingAction;
-use crate::debugger::{DebuggerCommand, DebuggerState};
 use crate::machine::CPU_NUM;
 use crate::mirch::{self, kernel_code_paddr_to_vaddr};
 use crate::shims::tls;
@@ -814,7 +813,8 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let this = self.eval_context_mut();
 
         // Create the new thread
-        let current_span = this.machine.current_user_relevant_span();
+        // let current_span = this.machine.current_user_relevant_span();
+        let current_span = this.machine.debugger_current_span();
         let new_thread_id = this.machine.threads.create_thread(
             {
                 let mut state = tls::TlsDtorsState::default();
@@ -857,6 +857,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
         // Perform the function pointer load in the new thread frame.
         let instance = this.get_ptr_fn(start_routine)?.as_instance()?;
+        println!("instance={instance} span={current_span:?}");
 
         // Note: the returned value is currently ignored (see the FIXME in
         // pthread_join in shims/unix/thread.rs) because the Rust standard library does not use
