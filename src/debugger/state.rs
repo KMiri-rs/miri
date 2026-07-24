@@ -5,6 +5,7 @@ use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{self, BasicBlockData};
 use rustc_span::source_map::SourceMap;
+use rustc_span::{FileName, RealFileName};
 
 use crate::debugger::tui::theme::STYLE_HIGHTLIGHTED;
 use crate::*;
@@ -236,10 +237,15 @@ fn capture_frame(sm: &SourceMap, frame: &Frame<'_, Provenance, FrameExtra<'_>>) 
             // Force path remapping, because `prefer_remapped_unconditionally` doesn't always work.
             // Use `--remap-path-prefix` to shorten the long sysroot path, e.g.
             // ./miri run tests/pass/debugger_test.rs --debugger --remap-path-prefix=$(rustc --print=sysroot)/lib/rustlib/src/rust/library/=
-            let file_name =
-                sm.span_to_filename(span).into_local_path().unwrap_or_else(|| "Unknown".into());
-            let (path, _) = sm.path_mapping().map_prefix(file_name);
-            path.display().to_string()
+            match sm.span_to_filename(span) {
+                FileName::Real(path) if let Some(local_path) = path.clone().into_local_path() =>
+                    FileName::Real(
+                        sm.path_mapping().to_real_filename(&RealFileName::empty(), local_path),
+                    ),
+                file_name => file_name,
+            }
+            .prefer_remapped_unconditionally()
+            .to_string()
         },
         line_start: pos_to_line_nr(sm, span.lo()),
         line_end: pos_to_line_nr(sm, span.hi()),
