@@ -19,6 +19,7 @@ use crate::alloc_addresses::address_generator::align_addr;
 use crate::concurrency::VClock;
 use crate::debugger::debugger_log;
 use crate::diagnostics::SpanDedupDiagnostic;
+use crate::helpers::adjust_stack_addr;
 use crate::mirch::{
     CodeSection, PageState, kernel_code_paddr_to_vaddr, kernel_code_vaddr_to_paddr,
 };
@@ -271,8 +272,8 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 let thread = this.machine.threads.active_thread_ref();
                 let mut next_stack_addr = thread.next_stack_addr.borrow_mut();
 
-                let base_addr = *next_stack_addr - info.size.bytes().max(1);
-                let base_addr = base_addr - base_addr % info.align.bytes();
+                let base_addr =
+                    adjust_stack_addr(info.size.bytes(), info.align.bytes(), *next_stack_addr);
 
                 if base_addr < thread.stack_bottom {
                     throw_exhaust!(AddressSpaceFull);
