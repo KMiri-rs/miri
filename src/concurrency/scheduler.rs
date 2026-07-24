@@ -205,12 +205,11 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             }
             match this.schedule()? {
                 SchedulingAction::ExecuteStep => {
-                    if let Some(pt_address) = this.machine.pt_checker {
+                    if let Some(paddr) = this.machine.pt_checker {
                         unsafe {
-                            let value = *(mirch::paddr_to_mem(pt_address) as *mut usize);
-                            let written_addr = value & !(mirch::page_size() - 1);
-                            if let PageState::Typed { .. } =
-                                mirch::physical_mem().page_states[written_addr / mirch::page_size()]
+                            let page_start_paddr = paddr & !(mirch::page_size() - 1);
+                            if let PageState::Typed { .. } = mirch::physical_mem().page_states
+                                [page_start_paddr / mirch::page_size()]
                             {
                                 let _global_states = this.machine.alloc_addresses.borrow();
                                 //..todo!()
@@ -219,9 +218,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                         this.machine.pt_checker = None;
                     }
 
-
                     this.step_current_thread()?;
-
                     if let Some(handle) = &this.machine.debugger {
                         let stack = this.active_thread_stack();
                         if !stack.is_empty() {
