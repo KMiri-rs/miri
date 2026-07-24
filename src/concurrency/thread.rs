@@ -709,7 +709,7 @@ impl<'tcx> ThreadManager<'tcx> {
             self.cpu_to_threads[self.active_cpu] = Some(id);
             self.next_thread[self.active_cpu] = None;
             if self.threads[self.active_thread].state.is_enabled() {
-                println!(
+                info!(
                     "---------- Now executing on thread `{}` (previous: `{}`) cpu: {:?}----------------------------------------",
                     self.get_thread_display_name(id),
                     self.get_thread_display_name(old_id),
@@ -855,7 +855,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
         // Perform the function pointer load in the new thread frame.
         let instance = this.get_ptr_fn(start_routine)?.as_instance()?;
-        println!("instance={instance} span={current_span:?}");
 
         // Note: the returned value is currently ignored (see the FIXME in
         // pthread_join in shims/unix/thread.rs) because the Rust standard library does not use
