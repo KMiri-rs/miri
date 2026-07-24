@@ -11,11 +11,12 @@ use rustc_const_eval::CTRL_C_RECEIVED;
 use rustc_index::Idx;
 use rustc_span::DUMMY_SP;
 
+use crate::mirch::PageState;
 use crate::shims::readiness::DelayedReadinessUpdates;
 use crate::*;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum SchedulingAction {
+pub enum SchedulingAction {
     /// Execute step on the active thread.
     ExecuteStep,
     /// Wait for a bit, but at most as long as the duration specified.
@@ -79,7 +80,13 @@ trait EvalContextPrivExt<'tcx>: MiriInterpCxExt<'tcx> {
         }
 
         // We are not in GenMC mode, so we control the scheduling.
-        let thread_manager = &this.machine.threads;
+        let thread_manager = &mut this.machine.threads;
+
+        // kmiri: thread and cpu switch
+        if let Some(res) = thread_manager.schedule_switch_thread_and_cpu() {
+            return res;
+        }
+
         // Check if we can just keep running the current thread.
         if thread_manager.active_thread_ref().is_enabled() && !thread_manager.yield_active_thread {
             // The currently active thread is still enabled, just continue with it.
@@ -198,6 +205,19 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             }
             match this.schedule()? {
                 SchedulingAction::ExecuteStep => {
+                    if let Some(pt_address) = this.machine.pt_checker {
+                        unsafe {
+                            let value = *(mirch::paddr_to_mem(pt_address) as *mut usize);
+                            let written_addr = value & !(mirch::page_size() - 1);
+                            if let PageState::Typed { .. } = mirch::physical_mem().page_states
+                                [written_addr as usize / mirch::page_size()]
+                            {
+                                let _global_states = this.machine.alloc_addresses.borrow();
+                                //..todo!()
+                            }
+                        }
+                        this.machine.pt_checker = None;
+                    }
                     this.step_current_thread()?;
                 }
                 SchedulingAction::SleepAndWaitForIo(duration) => {

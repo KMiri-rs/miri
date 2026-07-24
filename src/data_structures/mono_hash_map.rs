@@ -29,6 +29,14 @@ impl<K: Hash + Eq, V> MonoHashMap<K, V> {
     pub fn iter<T>(&self, f: impl FnOnce(&mut dyn Iterator<Item = (&K, &V)>) -> T) -> T {
         f(&mut self.0.borrow().iter().map(|(k, v)| (k, &**v)))
     }
+
+    pub fn remove(&self, key: &K) {
+        self.0.borrow_mut().remove(key);
+    }
+
+    pub fn insert(&self, key: K, value: V) {
+        self.0.borrow_mut().insert(key, Box::new(value));
+    }
 }
 
 impl<K: Hash + Eq, V> Default for MonoHashMap<K, V> {

@@ -33,6 +33,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             ExternAbi::C { unwind: false },
             func_arg,
             this.machine.layouts.mut_raw_ptr,
+            None,
         )?;
 
         interp_ok(())
