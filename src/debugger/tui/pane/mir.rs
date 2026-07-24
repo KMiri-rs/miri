@@ -1,6 +1,4 @@
 use super::*;
-use crate::debugger::state::LocalKind;
-use crate::helpers::ToUsize;
 
 #[derive(Default, Debug)]
 pub struct PaneMir {
@@ -17,7 +15,6 @@ impl PaneMir {
     /// Center highlighted mir in view scope. Should be called prior to widget being rendered.
     pub fn view_centering(&mut self, state: &DebuggerState) {
         let height: usize = self.rect.height.into();
-        let scroll: usize = self.scroll.into();
         let mir_idx: usize = state.current_location.render_mir_highlighted_idx.into();
         let rendered_lines_before_mir = Self::rendered_lines_before_mir(state);
 

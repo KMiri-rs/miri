@@ -206,14 +206,12 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             match this.schedule()? {
                 SchedulingAction::ExecuteStep => {
                     if let Some(paddr) = this.machine.pt_checker {
-                        unsafe {
-                            let page_start_paddr = paddr & !(mirch::page_size() - 1);
-                            if let PageState::Typed { .. } = mirch::physical_mem().page_states
-                                [page_start_paddr / mirch::page_size()]
-                            {
-                                let _global_states = this.machine.alloc_addresses.borrow();
-                                //..todo!()
-                            }
+                        let page_start_paddr = paddr & !(mirch::page_size() - 1);
+                        if let PageState::Typed { .. } =
+                            mirch::physical_mem().page_states[page_start_paddr / mirch::page_size()]
+                        {
+                            let _global_states = this.machine.alloc_addresses.borrow();
+                            //..todo!()
                         }
                         this.machine.pt_checker = None;
                     }

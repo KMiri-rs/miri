@@ -1,5 +1,3 @@
-#![warn(dead_code, unused)]
-
 use ratatui::text::{Line, Span as RatatuiSpan};
 use rustc_data_structures::either::Either;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};

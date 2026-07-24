@@ -617,7 +617,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             _ => this.invalid_handle("NtWriteFile")?,
         };
 
-        let Some(desc) = this.machine.fds.get(fd) else { this.invalid_handle("NtWriteFile")? };
+        let Some(_desc) = this.machine.fds.get(fd) else { this.invalid_handle("NtWriteFile")? };
 
         // Windows writes the output code to IO_STATUS_BLOCK.Status, and number of bytes written
         // to IO_STATUS_BLOCK.Information.

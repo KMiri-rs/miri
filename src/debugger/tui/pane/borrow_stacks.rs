@@ -1,11 +1,11 @@
 use std::borrow::Cow;
 
 use rustc_data_structures::fx::FxHashMap;
-use tui_overlay::{Backdrop, Easing, Overlay, OverlayState};
+use tui_overlay::{Backdrop, Overlay, OverlayState};
 
 use super::*;
 use crate::BorrowTrackerMethod;
-use crate::borrow_tracker::stacked_borrows::debugger::{DebuggerBorrowStacks, DebuggerSpan};
+use crate::borrow_tracker::stacked_borrows::debugger::DebuggerBorrowStacks;
 use crate::debugger::utils::{InverseIdx, src_view_centering};
 
 #[derive(Default, Debug)]
