@@ -449,7 +449,8 @@ impl Stacks {
         for (_stack_range, stack) in self.stacks.iter_mut_all() {
             stack.retain(live_tags);
         }
-        self.history.retain(live_tags);
+        // Don't clean the history span.
+        // self.history.retain(live_tags);
     }
 }
 

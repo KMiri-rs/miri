@@ -272,6 +272,7 @@ impl AllocHistory {
         }
     }
 
+    #[expect(dead_code)]
     pub fn retain(&mut self, live_tags: &FxHashSet<BorTag>) {
         self.invalidations.retain(|event| live_tags.contains(&event.tag));
         self.creations.retain(|event| live_tags.contains(&event.retag.new_tag));
