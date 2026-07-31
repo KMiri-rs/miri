@@ -29,7 +29,7 @@ use crate::*;
 pub type AllocState = Stacks;
 
 /// Extra per-allocation state.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Stacks {
     // Even reading memory can have effects on the stack, so we need a `RefCell` here.
     stacks: DedupRangeMap<Stack>,
@@ -37,6 +37,16 @@ pub struct Stacks {
     history: AllocHistory,
     /// The set of tags that have been exposed inside this allocation.
     exposed_tags: FxHashSet<BorTag>,
+}
+
+impl fmt::Debug for Stacks {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Stacks")
+            .field("stacks", &self.stacks)
+            // .field("history", &self.history)
+            .field("exposed_tags", &self.exposed_tags)
+            .finish()
+    }
 }
 
 /// Indicates which permissions to grant to the retagged pointer.
@@ -588,7 +598,7 @@ impl Stacks {
         range: AllocRange,
         machine: &MiriMachine<'tcx>,
     ) -> InterpResult<'tcx> {
-        let print = alloc_id.0.get() == 2346873;
+        let print = alloc_id.0.get() == crate::TARGET_ALLOC_ID;
         let mut buf = String::with_capacity(1024);
         if print {
             writeln!(

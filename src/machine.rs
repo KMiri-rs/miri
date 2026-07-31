@@ -913,6 +913,7 @@ impl<'tcx> MiriMachine<'tcx> {
             return Default::default();
         };
         let methods = allocator_shim_contents(tcx, kind);
+        // println!("allocator_kind={kind:?}");
         let mut symbols = FxHashMap::default();
         for method in methods {
             let from_name = Symbol::intern(&mangle_internal_symbol(
@@ -929,6 +930,7 @@ impl<'tcx> MiriMachine<'tcx> {
             };
             symbols.try_insert(from_name, to).unwrap();
         }
+        // println!("allocator symbols: {symbols:#?}");
         symbols
     }
 
@@ -1903,6 +1905,12 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             }
         }
         if let Some(borrow_tracker) = &mut alloc_extra.borrow_tracker {
+            if alloc_id.0.get() == crate::TARGET_ALLOC_ID {
+                log!(
+                    "[before_memory_deallocation] {alloc_id} borrow_tracker={:#?}",
+                    borrow_tracker
+                );
+            }
             borrow_tracker.before_memory_deallocation(alloc_id, prove_extra, size, machine)?;
         }
         // Check if there are any sync objects that would like to prevent freeing this memory.

@@ -507,6 +507,7 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                         .push_debugger_output(link_name.as_str() == "miri_write_to_stderr", msg);
                     return interp_ok(EmulateItemResult::NeedsReturn);
                 }
+                log!("[stdout/stderr] {}", std::str::from_utf8(msg).unwrap());
                 // Note: we're ignoring errors writing to host stdout/stderr.
                 let _ignore = match link_name.as_str() {
                     "miri_write_to_stdout" => std::io::stdout().write_all(msg),

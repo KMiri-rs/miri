@@ -104,9 +104,10 @@ impl PageTable {
         let mut current_level = NR_LEVELS;
 
         // only log after kernel is initialized
-        let samples =
-            [0xffffffff80ffff4busize, 0xffffffff80014858, 0xffff800002116f10, 0xffffffff821ffff0];
-        let should_log = current_paddr == 0x1208000 && samples.contains(&vaddr);
+        // let samples =
+        //     [0xffffffff80ffff4busize, 0xffffffff80014858, 0xffff800002116f10, 0xffffffff821ffff0];
+        // let should_log = current_paddr == 0x1208000 && samples.contains(&vaddr);
+        let should_log = false;
 
         if should_log {
             log!("[page_walk] vaddr=0x{vaddr:x}");

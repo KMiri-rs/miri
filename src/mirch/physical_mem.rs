@@ -207,9 +207,11 @@ pub fn physical_copy(dst: usize, src: usize, len: usize) {
 }
 
 /// Removes the initialization mask for the page at `paddr`.
-#[expect(unused)]
+/// `paddr` is the start of a page.
+#[expect(dead_code)]
 pub fn remove_init_mask(paddr: usize) {
-    physical_mem_mut().init_masks.remove(&paddr);
+    let removed = physical_mem_mut().init_masks.remove(&paddr).is_some();
+    assert!(removed, "{paddr:#x} has been deallcated, but it's being double freed");
 }
 
 /// Checks the page state of the page at `paddr`.
