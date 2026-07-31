@@ -350,7 +350,7 @@ pub fn create_ecx<'tcx>(
     );
 
     if config.debugger {
-        ecx.machine.reachable_function_instances = reachability::collect();
+        ecx.machine.reachable_function_instances = reachability::collect().unwrap_or_default();
     }
 
     // Make sure we have MIR. We check MIR for some stable monomorphic function in libcore. However,
