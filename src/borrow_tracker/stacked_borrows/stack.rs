@@ -18,7 +18,7 @@ use crate::{InterpResult, ProvenanceExtra, interp_ok};
 const CACHE_LEN: usize = 32;
 
 /// Extra per-location state.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Stack {
     /// Used *mostly* as a stack; never empty.
     /// Invariants:
@@ -40,6 +40,15 @@ pub struct Stack {
     /// this scan by keeping track of the region of the borrow stack that may contain `Unique`s.
     #[cfg(feature = "stack-cache")]
     unique_range: Range<usize>,
+}
+
+impl std::fmt::Debug for Stack {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Stack")
+            .field("borrows", &self.borrows)
+            .field("unknown_bottom", &self.unknown_bottom)
+            .finish()
+    }
 }
 
 impl Stack {

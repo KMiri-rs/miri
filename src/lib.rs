@@ -208,3 +208,5 @@ pub const MIRI_DEFAULT_ARGS: &[&str] = &[
     // execution. Let's not do that.
     "-Zdeduplicate-diagnostics=no",
 ];
+
+const TARGET_ALLOC_ID: u64 = 2347098; // 2347092; // 2347094; // 2347098;

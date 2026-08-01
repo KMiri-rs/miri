@@ -284,7 +284,7 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     adjust_stack_addr(info.size.bytes(), info.align.bytes(), *next_stack_vaddr);
 
                 if base_vaddr < thread.stack_bottom {
-                    println!(
+                    log!(
                         "[addr_from_alloc_id_uncached - error - stack] `base_vaddr={base_vaddr:#x} < stack_bottom={:#x}` makes AddressSpaceFull",
                         thread.stack_bottom
                     );
@@ -316,7 +316,7 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     next_vaddr.checked_add(slack).ok_or_else(|| err_exhaust!(AddressSpaceFull))?;
                 let base_vaddr = align_addr(base_vaddr, info.align.bytes());
                 if base_vaddr >= limit {
-                    println!(
+                    log!(
                         "[addr_from_alloc_id_uncached - error] `base_addr={base_vaddr:#x} >= limit={limit:#x}` makes AddressSpaceFull",
                     );
                     throw_exhaust!(AddressSpaceFull);
@@ -331,7 +331,7 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     .ok_or_else(|| err_exhaust!(AddressSpaceFull))?;
                 // Even if `Size` didn't overflow, we might still have filled up the address space.
                 if *next_vaddr > this.target_usize_max() {
-                    println!(
+                    log!(
                         "[addr_from_alloc_id_uncached - error] `next_vaddr={next_vaddr:#x} > target_usize_max={:#x}` makes AddressSpaceFull",
                         this.target_usize_max()
                     );
@@ -339,7 +339,11 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 }
                 base_vaddr
             };
-            // println!("memory_kind={memory_kind:?} base_addr={base_addr:#x}");
+            if base_vaddr == TEST_VADDR as u64 {
+                log!(
+                    "[addr_from_alloc_id_uncached] alloc_id={alloc_id:?} memory_kind={memory_kind:?} base_vaddr={base_vaddr:#x}"
+                );
+            }
 
             interp_ok(base_vaddr)
         }
@@ -383,9 +387,19 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     allocation.align,
                 )
                 .unwrap();
+                if alloc_id.0.get() == crate::TARGET_ALLOC_ID {
+                    log!(
+                        "{:?}: borrow_tracker={:?}",
+                        crate::TARGET_ALLOC_ID,
+                        extra.borrow_tracker.as_ref().unwrap()
+                    );
+                }
                 allocation.with_extra(extra)
             };
 
+            // log!(
+            //     "[lazy_alloc_typed_slot_allocation] alloc_id={alloc_id:?} kind={kind:?} actual_paddr={actual_paddr:#x} slot={slot_size}"
+            // );
             ecx.memory.alloc_map().insert(alloc_id, (kind, allocation));
             {
                 let mut global_state = ecx.machine.alloc_addresses.borrow_mut();
@@ -419,7 +433,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let paddr_fallback = || {
             // log!("[alloc_id_from_addr - page_walk_or] vaddr={vaddr:#x}");
             mirch::try_kernel_code_vaddr_to_paddr(vaddr).unwrap_or_else(|| {
-                boot_pt = true;
+                // boot_pt = true;
                 mirch::try_boot_pt_vaddr_to_paddr(vaddr).unwrap()
             })
         };
@@ -441,6 +455,9 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 // If cannot found, first check whether the allocation is a lazy allocated one (typed slot).
                 let paddr = paddr as usize;
                 drop(global_state);
+                // log!(
+                //     "[alloc_id_from_addr - lazy_alloc_typed_slot_allocation] no alloc_id pos=Err(0) paddr={paddr:#x}"
+                // );
                 let typed_slot = self.lazy_alloc_typed_slot_allocation(paddr);
                 if typed_slot.is_some() {
                     return typed_slot;
@@ -465,6 +482,10 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     // FIXME: explain the kmiri logic in this branch
                     let paddr = paddr as usize;
                     drop(global_state);
+                    // log!(
+                    //     "[alloc_id_from_addr - lazy_alloc_typed_slot_allocation] alloc_id={alloc_id:?} paddr={paddr:#x} offset={offset} size={}",
+                    //     size.bytes()
+                    // );
                     let typed_slot = self.lazy_alloc_typed_slot_allocation(paddr);
                     if typed_slot.is_some() {
                         return typed_slot;
@@ -474,6 +495,13 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 }
             }
         }?;
+
+        if vaddr == TEST_VADDR {
+            let memory_kind = this.memory.alloc_map().get(alloc_id).unwrap().0;
+            log!(
+                "[alloc_id_from_addr] alloc_id={alloc_id:?} memory_kind={memory_kind:?} vaddr={vaddr:#x} paddr={paddr:#x}"
+            );
+        }
 
         // We only use this provenance if it has been exposed.
         if global_state.exposed.contains(&alloc_id) {
@@ -524,9 +552,9 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
                 {
                     if this.machine.threads.active_thread().to_u32() == 1 {
-                        log!(
-                            "[addr_from_alloc_id] paddr={base_paddr:#x} vaddr={base_vaddr:#x} ({alloc_id:?})"
-                        );
+                        // log!(
+                        //     "[addr_from_alloc_id] paddr={base_paddr:#x} vaddr={base_vaddr:#x} ({alloc_id:?})"
+                        // );
                         global_state.paddr_to_vaddr.insert(base_paddr, base_vaddr);
                     }
                 }
@@ -568,6 +596,11 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 base_vaddr
             }
         };
+        if vaddr == TEST_VADDR as u64 {
+            log!(
+                "[addr_from_alloc_id] alloc_id={alloc_id:?} vaddr={vaddr:#x} memory_kind={memory_kind:?}"
+            );
+        }
         interp_ok(vaddr)
     }
 
@@ -785,7 +818,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
             // kernel_code_vaddr_to_paddr(addr.bytes_usize())
             mirch::try_kernel_code_vaddr_to_paddr(vaddr).unwrap_or_else(|| {
-                boot_pt = true;
+                // boot_pt = true;
                 mirch::try_boot_pt_vaddr_to_paddr(vaddr).unwrap()
             })
         };
@@ -799,6 +832,12 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
         // Wrapping "addr - base_addr"
         let rel_offset = this.truncate_to_target_usize(offset);
+        // if vaddr == TEST_VADDR {
+        //     let memory_kind = this.memory.alloc_map().get(alloc_id).unwrap().0;
+        //     log!(
+        //         "[ptr_get_alloc] alloc_id={alloc_id:?} memory_kind={memory_kind:?} vaddr={vaddr:#x} actual_paddr={actual_paddr:#x} base_paddr={base_paddr:#x} offset={offset:#x}"
+        //     );
+        // }
         Some((alloc_id, Size::from_bytes(rel_offset)))
     }
 
@@ -808,6 +847,8 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         this.machine.alloc_addresses.borrow().exposed.iter().copied().collect()
     }
 }
+
+const TEST_VADDR: usize = 0xffff80000210ff80;
 
 impl<'tcx> MiriMachine<'tcx> {
     pub fn free_alloc_id(&mut self, dead_id: AllocId, size: Size, align: Align, kind: MemoryKind) {
@@ -827,6 +868,10 @@ impl<'tcx> MiriMachine<'tcx> {
         // To avoid a linear scan we first look up the address in `base_addr`, and then find it in
         // `int_to_ptr_map`.
         let addr = *global_state.base_paddr.get(&dead_id).unwrap();
+        // if kernel_code_paddr_to_vaddr(addr as usize) == TEST_VADDR {
+        if (0x210ff80..0x210ff80 + 128).contains(&addr) {
+            log!("[free_alloc_id] dead_id={dead_id:?} paddr={addr:#x}"); // ?? alloc2347099
+        }
         let pos =
             global_state.int_to_ptr_map.binary_search_by_key(&addr, |(addr, _)| *addr).unwrap();
         let removed = global_state.int_to_ptr_map.remove(pos);

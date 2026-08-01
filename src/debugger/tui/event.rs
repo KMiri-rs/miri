@@ -50,10 +50,6 @@ pub fn handle(
             }
         }
         match key.code {
-            KeyCode::Char('q') => {
-                let _ = command_tx.send(DebuggerCommand::Quit);
-                return Ok(Action::Return);
-            }
             KeyCode::Char('/') => {
                 panes.focus = FocusPane::Instances;
                 panes.instances.search.editing = true;
@@ -142,6 +138,10 @@ pub fn handle(
                     *last_state = Some(Box::new(snapshot.clone()));
                     panes.stack.refresh(snapshot);
                 }
+            }
+            KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
+                let _ = command_tx.send(DebuggerCommand::Quit);
+                return Ok(Action::Return);
             }
             KeyCode::Char('c') => {
                 *reverse_index = None;
