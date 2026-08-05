@@ -267,14 +267,17 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
         // We are not in native lib or genmc mode, so we control the addresses ourselves.
         let (_addr_gen, reuse) = global_state.address_generation.as_mut().unwrap();
         let mut rng = this.machine.rng.borrow_mut();
-        if let Some((reuse_addr, clock)) =
-            reuse.take_addr(&mut *rng, info.size, info.align, memory_kind, this.active_thread())
+        // FIXME: need to decide if reusing pointer makes sense in kernel code. At least,
+        // it's not meaningful to reuse stack pointer, because it messes up the stack across calls or threads.
+        if (memory_kind != MemoryKind::Stack)
+            && let Some((reuse_paddr, clock)) =
+                reuse.take_addr(&mut *rng, info.size, info.align, memory_kind, this.active_thread())
         {
             // If we use some other thread's address, that implies a happens-before.
             if let Some(clock) = clock {
                 this.acquire_clock(&clock)?;
             }
-            interp_ok(reuse_addr)
+            interp_ok(kernel_code_paddr_to_vaddr(reuse_paddr as usize) as u64)
         } else {
             let base_vaddr = if memory_kind == MemoryKind::Stack {
                 let thread = this.machine.threads.active_thread_ref();
