@@ -74,12 +74,12 @@ pub struct GlobalStateInner {
     /// This is used as a memory address when a new pointer is casted to an integer. It
     /// is always larger than any address that was previously made part of a block.
     /// This is used for allocating addresses for non stack and non cpu-local allocations.
-    next_base_paddr: u64,
+    next_base_vaddr: u64,
     /// This is used for allocating addresses for cpu-local allocations.
     next_cpu_local_paddr: u64,
     /// This is used for allocating addresses for stack allocations.
     #[expect(unused)]
-    next_stack_paddr: u64,
+    next_stack_vaddr: u64,
 }
 
 impl VisitProvenance for GlobalStateInner {
@@ -92,9 +92,9 @@ impl VisitProvenance for GlobalStateInner {
             exposed: _,
             address_generation: _,
             provenance_mode: _,
-            next_base_paddr: _,
+            next_base_vaddr: _,
             next_cpu_local_paddr: _,
-            next_stack_paddr: _,
+            next_stack_vaddr: _,
         } = self;
         // Though base_addr, int_to_ptr_map, and exposed contain AllocIds, we do not want to visit them.
         // int_to_ptr_map and exposed must contain only live allocations, and those
@@ -121,8 +121,8 @@ impl GlobalStateInner {
                     )
                 }),
             prepared_alloc_bytes: (!config.native_lib.is_empty()).then(FxHashMap::default),
-            next_base_paddr: kernel_code_paddr_to_vaddr(mirch::kernel_static_start_addr()) as u64,
-            next_stack_paddr: kernel_code_paddr_to_vaddr(mirch::kernel_stack_end_addr()) as u64,
+            next_base_vaddr: kernel_code_paddr_to_vaddr(mirch::kernel_static_start_addr()) as u64,
+            next_stack_vaddr: kernel_code_paddr_to_vaddr(mirch::kernel_stack_end_addr()) as u64,
             next_cpu_local_paddr: kernel_code_paddr_to_vaddr(mirch::cpu_local_start_addr()) as u64,
         }
     }
@@ -302,7 +302,7 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                         )
                     } else {
                         (
-                            &mut global_state.next_base_paddr,
+                            &mut global_state.next_base_vaddr,
                             kernel_code_paddr_to_vaddr(mirch::kernel_static_end_addr()) as u64,
                         )
                     };
@@ -867,23 +867,23 @@ impl<'tcx> MiriMachine<'tcx> {
         // returns a dead allocation.
         // To avoid a linear scan we first look up the address in `base_addr`, and then find it in
         // `int_to_ptr_map`.
-        let addr = *global_state.base_paddr.get(&dead_id).unwrap();
+        let paddr = *global_state.base_paddr.get(&dead_id).unwrap();
         // if kernel_code_paddr_to_vaddr(addr as usize) == TEST_VADDR {
-        if (0x210ff80..0x210ff80 + 128).contains(&addr) {
-            log!("[free_alloc_id] dead_id={dead_id:?} paddr={addr:#x}"); // ?? alloc2347099
+        if (0x210ff80..0x210ff80 + 128).contains(&paddr) {
+            log!("[free_alloc_id] dead_id={dead_id:?} paddr={paddr:#x}"); // ?? alloc2347099
         }
         let pos =
-            global_state.int_to_ptr_map.binary_search_by_key(&addr, |(addr, _)| *addr).unwrap();
+            global_state.int_to_ptr_map.binary_search_by_key(&paddr, |(addr, _)| *addr).unwrap();
         let removed = global_state.int_to_ptr_map.remove(pos);
         // log!("[free_alloc_id] addr={addr:#x} alloc_id={dead_id:?} kind={kind:?}");
-        assert_eq!(removed, (addr, dead_id)); // double-check that we removed the right thing
+        assert_eq!(removed, (paddr, dead_id)); // double-check that we removed the right thing
         // We can also remove it from `exposed`, since this allocation can anyway not be returned by
         // `alloc_id_from_addr` any more.
         global_state.exposed.remove(&dead_id);
         // Also remember this address for future reuse.
         if let Some((_addr_gen, reuse)) = global_state.address_generation.as_mut() {
             let thread = self.threads.active_thread();
-            reuse.add_addr(rng, addr, size, align, kind, thread, || {
+            reuse.add_addr(rng, paddr, size, align, kind, thread, || {
                 // We cannot be in GenMC mode as then `address_generation` is `None`. We cannot use
                 // `self.release_clock` as `self.alloc_addresses` is borrowed.
                 if let Some(data_race) = self.data_race.as_vclocks_ref() {
