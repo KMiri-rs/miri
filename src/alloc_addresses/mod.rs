@@ -17,7 +17,6 @@ use self::reuse_pool::ReusePool;
 use crate::alloc::MiriAllocParams;
 use crate::alloc_addresses::address_generator::align_addr;
 use crate::concurrency::VClock;
-use crate::debugger::debugger_log;
 use crate::diagnostics::SpanDedupDiagnostic;
 use crate::helpers::adjust_stack_addr;
 use crate::mirch::{CodeSection, PageState, kernel_code_paddr_to_vaddr};
@@ -342,7 +341,7 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 }
                 base_vaddr
             };
-            if base_vaddr == TEST_VADDR as u64 {
+            if alloc_id.0.get() == TARGET_ALLOC_ID {
                 log!(
                     "[addr_from_alloc_id_uncached] alloc_id={alloc_id:?} memory_kind={memory_kind:?} base_vaddr={base_vaddr:#x}"
                 );
@@ -548,7 +547,10 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     // log!(
                     //     "[addr_from_alloc_id - page_walk_or] vaddr={base_vaddr:#x} ({alloc_id:?})"
                     // );
-                    mirch::try_kernel_code_vaddr_to_paddr(base_vaddr as usize).unwrap()
+                    let base_vaddr = base_vaddr as usize;
+                    mirch::try_kernel_code_vaddr_to_paddr(base_vaddr).unwrap_or_else(|| {
+                        panic!("{base_vaddr:#x} ({alloc_id:?}) is not in kernel memory region")
+                    })
                 };
                 let base_paddr = mirch::page_walk_or(base_vaddr as usize, paddr_fallback)
                     .unwrap_or_else(paddr_fallback) as u64;
@@ -820,6 +822,13 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
             // kernel_code_vaddr_to_paddr(addr.bytes_usize())
             mirch::try_kernel_code_vaddr_to_paddr(vaddr).unwrap_or_else(|| {
+                let kind = this
+                    .memory
+                    .alloc_map()
+                    .get(alloc_id)
+                    .unwrap_or_else(|| panic!("{alloc_id:?} vaddr={vaddr:#x} is not in alloc_map"))
+                    .0;
+                log!("vaddr={vaddr:#x} alloc_id={alloc_id:?} kind={kind:?}");
                 // boot_pt = true;
                 mirch::try_boot_pt_vaddr_to_paddr(vaddr).unwrap()
             })
