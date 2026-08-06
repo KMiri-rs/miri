@@ -268,7 +268,8 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let mut rng = this.machine.rng.borrow_mut();
         // FIXME: need to decide if reusing pointer makes sense in kernel code. At least,
         // it's not meaningful to reuse stack pointer, because it messes up the stack across calls or threads.
-        if (memory_kind != MemoryKind::Stack)
+        // Disable pointer reuse for now.
+        if false
             && let Some((reuse_paddr, clock)) =
                 reuse.take_addr(&mut *rng, info.size, info.align, memory_kind, this.active_thread())
         {
@@ -542,6 +543,13 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 let base_vaddr =
                     this.addr_from_alloc_id_uncached(global_state, alloc_id, memory_kind)?;
 
+                // The addr is 0 for TypeId AllocKind.
+                if base_vaddr == 0 {
+                    // Store address in cache.
+                    global_state.base_paddr.try_insert(alloc_id, 0).unwrap();
+                    return interp_ok(0);
+                }
+
                 // kmiri: vaddr to paddr; or just base address if not appropriate
                 let paddr_fallback = || {
                     // log!(
@@ -810,6 +818,11 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             // A wildcard pointer.
             this.alloc_id_from_addr(vaddr.bytes(), size)?
         };
+
+        let info = this.get_alloc_info(alloc_id);
+        if info.kind == AllocKind::TypeId {
+            return Some((alloc_id, vaddr));
+        }
 
         // This cannot fail: since we already have a pointer with that provenance, adjust_alloc_root_pointer
         // must have been called in the past, so we can just look up the address in the map.
