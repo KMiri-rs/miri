@@ -545,8 +545,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
                 // The addr is 0 for TypeId AllocKind.
                 if base_vaddr == 0 {
-                    // Store address in cache.
-                    global_state.base_paddr.try_insert(alloc_id, 0).unwrap();
                     return interp_ok(0);
                 }
 
@@ -695,14 +693,14 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let base_addr = this.addr_from_alloc_id(alloc_id, Some(kind))?;
 
         // kmiri: vaddr to paddr
-        let ecx = this;
-        let base_paddr = {
-            let global_state = ecx.machine.alloc_addresses.borrow();
-            *global_state.base_paddr.get(&alloc_id).unwrap()
-        };
-        let alloc_map = &ecx.memory.alloc_map();
         // kmiri: replace the stack allocation by pointing to the kernel stack region
         if kind == MemoryKind::Stack {
+            let ecx = this;
+            let base_paddr = {
+                let global_state = ecx.machine.alloc_addresses.borrow();
+                *global_state.base_paddr.get(&alloc_id).unwrap()
+            };
+            let alloc_map = &ecx.memory.alloc_map();
             let (kind, old_allocation) = &alloc_map.get(alloc_id).unwrap();
             let alloc_size_usize = old_allocation.size().bytes_usize();
             if alloc_size_usize > 0 {
