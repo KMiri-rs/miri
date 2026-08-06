@@ -2068,16 +2068,15 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
 
         // Pushes the stack pointer.
         let ret_ty_layout = ecx.frame().return_place().layout.layout;
+        let (size, align) = (ret_ty_layout.size().bytes(), ret_ty_layout.align().bytes());
         let thread = ecx.machine.threads.active_thread_mut();
         let next_stack_addr = &mut *thread.next_stack_vaddr.borrow_mut();
         thread.stack_addr_records.push(*next_stack_addr);
         // The address of return value is reserved before all locals in the frame,
         // and base stack address starts after the return value allocation.
-        *next_stack_addr = adjust_stack_addr(
-            ret_ty_layout.size().bytes(),
-            ret_ty_layout.align().bytes(),
-            *next_stack_addr,
-        );
+        if !(size == 0 && next_stack_addr.is_multiple_of(align)) {
+            *next_stack_addr = adjust_stack_addr(size, align, *next_stack_addr);
+        }
 
         interp_ok(())
     }
@@ -2122,7 +2121,7 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         frame: Frame<'tcx, Provenance, FrameExtra<'tcx>>,
         unwinding: bool,
     ) -> InterpResult<'tcx, ReturnAction> {
-        let ret_ty_layout = frame.return_place().layout.layout;
+        let ret_ty = frame.return_place().layout;
         let res = {
             // Move `frame` into a sub-scope so we control when it will be dropped.
             let mut frame = frame;
@@ -2143,17 +2142,16 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         let thread = ecx.machine.threads.active_thread_mut();
         if let Some(stack_addr_for_ret_value) = thread.stack_addr_records.pop() {
             let current_sp = *thread.next_stack_vaddr.borrow();
-            let stack_addr_after_ret_ty = adjust_stack_addr(
-                ret_ty_layout.size().bytes(),
-                ret_ty_layout.align().bytes(),
-                stack_addr_for_ret_value,
-            );
+            let (size, align) = (ret_ty.layout.size().bytes(), ret_ty.layout.align().bytes());
+            let stack_addr_after_ret_ty = adjust_stack_addr(size, align, stack_addr_for_ret_value);
             // Return value is allowed not to be allocated at all, meaning current address equals stack_addr_for_ret_value.
             // Or the return value is allocated, meaning current address equals stack_addr_after_ret_ty.
             assert!(
                 current_sp == stack_addr_for_ret_value || current_sp == stack_addr_after_ret_ty,
                 "the current stack address 0x{current_sp:x} must equal \
-                 0x{stack_addr_for_ret_value:x} or 0x{stack_addr_after_ret_ty:x}"
+                 0x{stack_addr_for_ret_value:x} or 0x{stack_addr_after_ret_ty:x}\n\
+                 ret_ty: {ret_ty:#?} size={size} align={align}",
+                ret_ty = ret_ty.ty
             );
         }
 
