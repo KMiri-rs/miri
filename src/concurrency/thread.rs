@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::mem;
 use std::ops::Range;
+use std::sync::atomic::AtomicUsize;
 use std::task::Poll;
 use std::time::{Duration, SystemTime};
 
@@ -20,7 +21,7 @@ use rustc_target::spec::Os;
 use crate::concurrency::GlobalDataRaceHandler;
 use crate::concurrency::scheduler::SchedulingAction;
 use crate::machine::CPU_NUM;
-use crate::mirch::{self, kernel_code_paddr_to_vaddr};
+use crate::mirch::{self, kernel_code_paddr_to_vaddr, kernel_stack_end_addr, total_mem_size};
 use crate::shims::tls;
 use crate::*;
 
@@ -808,6 +809,22 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         ret_layout: TyAndLayout<'tcx>,
         stack_range: Option<Range<u64>>,
     ) -> InterpResult<'tcx, ThreadId> {
+        let this = self.eval_context_ref();
+        this.get_total_thread_count();
+
+        static STACK_ID: AtomicUsize = AtomicUsize::new(0);
+        let stack_range = stack_range.unwrap_or_else(|| {
+            let id = STACK_ID.fetch_add(1, std::sync::atomic::Ordering::Acquire);
+            let step = 0x4000;
+            // FIXME(tockos): we need a new layout for tockos, but here free pages
+            // are used to stack allocation for each thread.
+            let base = kernel_stack_end_addr();
+            let start = base + id * step;
+            let end = base + (id + 1) * step;
+            assert!(end < total_mem_size());
+            kernel_code_paddr_to_vaddr(start) as u64..kernel_code_paddr_to_vaddr(end) as u64
+        });
+
         let this = self.eval_context_mut();
 
         // Create the new thread
@@ -818,7 +835,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 let mut state = tls::TlsDtorsState::default();
                 Box::new(move |m| state.on_stack_empty(m))
             },
-            stack_range.unwrap_or(0..0),
+            stack_range,
         );
         match &mut this.machine.data_race {
             GlobalDataRaceHandler::None => {}

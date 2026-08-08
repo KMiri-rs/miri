@@ -2066,18 +2066,17 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             ecx.active_thread_mut().set_top_user_relevant_frame(stack_len - 1);
         }
 
+        // Type of return value.
+        let ret_ty = ecx.frame().return_place().layout;
+        let (size, align) = (ret_ty.layout.size().bytes(), ret_ty.layout.align().bytes());
+
         // Pushes the stack pointer.
-        let ret_ty_layout = ecx.frame().return_place().layout.layout;
         let thread = ecx.machine.threads.active_thread_mut();
         let next_stack_addr = &mut *thread.next_stack_vaddr.borrow_mut();
         thread.stack_addr_records.push(*next_stack_addr);
         // The address of return value is reserved before all locals in the frame,
         // and base stack address starts after the return value allocation.
-        *next_stack_addr = adjust_stack_addr(
-            ret_ty_layout.size().bytes(),
-            ret_ty_layout.align().bytes(),
-            *next_stack_addr,
-        );
+        *next_stack_addr = adjust_stack_addr(size, align, *next_stack_addr);
 
         interp_ok(())
     }
@@ -2122,17 +2121,8 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         frame: Frame<'tcx, Provenance, FrameExtra<'tcx>>,
         unwinding: bool,
     ) -> InterpResult<'tcx, ReturnAction> {
-        let ret_ty_layout = frame.return_place().layout.layout;
-        let res = {
-            // Move `frame` into a sub-scope so we control when it will be dropped.
-            let mut frame = frame;
-            let timing = frame.extra.timing.take();
-            let res = ecx.handle_stack_pop_unwind(frame.extra, unwinding);
-            if let Some(profiler) = ecx.machine.profiler.as_ref() {
-                profiler.finish_recording_interval_event(timing.unwrap());
-            }
-            res
-        };
+        let ret_ty = frame.return_place().layout;
+
         // Needs to be done after dropping frame to show up on the right nesting level.
         // (Cc https://github.com/rust-lang/miri/issues/2266)
         if !ecx.active_thread_stack().is_empty() {
@@ -2143,20 +2133,27 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         let thread = ecx.machine.threads.active_thread_mut();
         if let Some(stack_addr_for_ret_value) = thread.stack_addr_records.pop() {
             let current_sp = *thread.next_stack_vaddr.borrow();
-            let stack_addr_after_ret_ty = adjust_stack_addr(
-                ret_ty_layout.size().bytes(),
-                ret_ty_layout.align().bytes(),
-                stack_addr_for_ret_value,
-            );
+            let (size, align) = (ret_ty.layout.size().bytes(), ret_ty.layout.align().bytes());
+            let stack_addr_after_ret_ty = adjust_stack_addr(size, align, stack_addr_for_ret_value);
+
             // Return value is allowed not to be allocated at all, meaning current address equals stack_addr_for_ret_value.
             // Or the return value is allocated, meaning current address equals stack_addr_after_ret_ty.
             assert!(
                 current_sp == stack_addr_for_ret_value || current_sp == stack_addr_after_ret_ty,
                 "the current stack address 0x{current_sp:x} must equal \
-                 0x{stack_addr_for_ret_value:x} or 0x{stack_addr_after_ret_ty:x}"
+                 0x{stack_addr_for_ret_value:x} or 0x{stack_addr_after_ret_ty:x}\n\
+                 ret_ty: {ret_ty:#?} size={size} align={align}",
+                ret_ty = ret_ty.ty
             );
         }
 
+        // Move `frame` into a sub-scope so we control when it will be dropped.
+        let mut frame = frame;
+        let timing = frame.extra.timing.take();
+        let res = ecx.handle_stack_pop_unwind(frame.extra, unwinding);
+        if let Some(profiler) = ecx.machine.profiler.as_ref() {
+            profiler.finish_recording_interval_event(timing.unwrap());
+        }
         res
     }
 

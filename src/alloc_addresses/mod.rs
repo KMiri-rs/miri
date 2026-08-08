@@ -17,7 +17,6 @@ use self::reuse_pool::ReusePool;
 use crate::alloc::MiriAllocParams;
 use crate::alloc_addresses::address_generator::align_addr;
 use crate::concurrency::VClock;
-use crate::debugger::debugger_log;
 use crate::diagnostics::SpanDedupDiagnostic;
 use crate::helpers::adjust_stack_addr;
 use crate::mirch::{CodeSection, PageState, kernel_code_paddr_to_vaddr};
@@ -74,12 +73,12 @@ pub struct GlobalStateInner {
     /// This is used as a memory address when a new pointer is casted to an integer. It
     /// is always larger than any address that was previously made part of a block.
     /// This is used for allocating addresses for non stack and non cpu-local allocations.
-    next_base_paddr: u64,
+    next_base_vaddr: u64,
     /// This is used for allocating addresses for cpu-local allocations.
     next_cpu_local_paddr: u64,
     /// This is used for allocating addresses for stack allocations.
     #[expect(unused)]
-    next_stack_paddr: u64,
+    next_stack_vaddr: u64,
 }
 
 impl VisitProvenance for GlobalStateInner {
@@ -92,9 +91,9 @@ impl VisitProvenance for GlobalStateInner {
             exposed: _,
             address_generation: _,
             provenance_mode: _,
-            next_base_paddr: _,
+            next_base_vaddr: _,
             next_cpu_local_paddr: _,
-            next_stack_paddr: _,
+            next_stack_vaddr: _,
         } = self;
         // Though base_addr, int_to_ptr_map, and exposed contain AllocIds, we do not want to visit them.
         // int_to_ptr_map and exposed must contain only live allocations, and those
@@ -121,8 +120,8 @@ impl GlobalStateInner {
                     )
                 }),
             prepared_alloc_bytes: (!config.native_lib.is_empty()).then(FxHashMap::default),
-            next_base_paddr: kernel_code_paddr_to_vaddr(mirch::kernel_static_start_addr()) as u64,
-            next_stack_paddr: kernel_code_paddr_to_vaddr(mirch::kernel_stack_end_addr()) as u64,
+            next_base_vaddr: kernel_code_paddr_to_vaddr(mirch::kernel_static_start_addr()) as u64,
+            next_stack_vaddr: kernel_code_paddr_to_vaddr(mirch::kernel_stack_end_addr()) as u64,
             next_cpu_local_paddr: kernel_code_paddr_to_vaddr(mirch::cpu_local_start_addr()) as u64,
         }
     }
@@ -267,14 +266,18 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
         // We are not in native lib or genmc mode, so we control the addresses ourselves.
         let (_addr_gen, reuse) = global_state.address_generation.as_mut().unwrap();
         let mut rng = this.machine.rng.borrow_mut();
-        if let Some((reuse_addr, clock)) =
-            reuse.take_addr(&mut *rng, info.size, info.align, memory_kind, this.active_thread())
+        // FIXME: need to decide if reusing pointer makes sense in kernel code. At least,
+        // it's not meaningful to reuse stack pointer, because it messes up the stack across calls or threads.
+        // Disable pointer reuse for now.
+        if false
+            && let Some((reuse_paddr, clock)) =
+                reuse.take_addr(&mut *rng, info.size, info.align, memory_kind, this.active_thread())
         {
             // If we use some other thread's address, that implies a happens-before.
             if let Some(clock) = clock {
                 this.acquire_clock(&clock)?;
             }
-            interp_ok(reuse_addr)
+            interp_ok(kernel_code_paddr_to_vaddr(reuse_paddr as usize) as u64)
         } else {
             let base_vaddr = if memory_kind == MemoryKind::Stack {
                 let thread = this.machine.threads.active_thread_ref();
@@ -302,7 +305,7 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                         )
                     } else {
                         (
-                            &mut global_state.next_base_paddr,
+                            &mut global_state.next_base_vaddr,
                             kernel_code_paddr_to_vaddr(mirch::kernel_static_end_addr()) as u64,
                         )
                     };
@@ -339,11 +342,6 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 }
                 base_vaddr
             };
-            if base_vaddr == TEST_VADDR as u64 {
-                log!(
-                    "[addr_from_alloc_id_uncached] alloc_id={alloc_id:?} memory_kind={memory_kind:?} base_vaddr={base_vaddr:#x}"
-                );
-            }
 
             interp_ok(base_vaddr)
         }
@@ -540,12 +538,20 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 let base_vaddr =
                     this.addr_from_alloc_id_uncached(global_state, alloc_id, memory_kind)?;
 
+                // The addr is 0 for TypeId AllocKind.
+                if base_vaddr == 0 {
+                    return interp_ok(0);
+                }
+
                 // kmiri: vaddr to paddr; or just base address if not appropriate
                 let paddr_fallback = || {
                     // log!(
                     //     "[addr_from_alloc_id - page_walk_or] vaddr={base_vaddr:#x} ({alloc_id:?})"
                     // );
-                    mirch::try_kernel_code_vaddr_to_paddr(base_vaddr as usize).unwrap()
+                    let base_vaddr = base_vaddr as usize;
+                    mirch::try_kernel_code_vaddr_to_paddr(base_vaddr).unwrap_or_else(|| {
+                        panic!("{base_vaddr:#x} ({alloc_id:?}) is not in kernel memory region")
+                    })
                 };
                 let base_paddr = mirch::page_walk_or(base_vaddr as usize, paddr_fallback)
                     .unwrap_or_else(paddr_fallback) as u64;
@@ -580,11 +586,10 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                         {
                             Ok(found) => {
                                 let found_alloc_id = global_state.int_to_ptr_map[found].1;
-                                if found_alloc_id != alloc_id {
-                                    debugger_log(format!(
-                                        "{base_paddr} has two AllocId {alloc_id:?} and {found_alloc_id:?}"
-                                    ))
-                                }
+                                assert_ne!(
+                                    found_alloc_id, alloc_id,
+                                    "{base_paddr} has two AllocId {alloc_id:?} and {found_alloc_id:?}"
+                                );
                                 return interp_ok(base_paddr);
                             }
                             Err(pos) => pos,
@@ -596,11 +601,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 base_vaddr
             }
         };
-        if vaddr == TEST_VADDR as u64 {
-            log!(
-                "[addr_from_alloc_id] alloc_id={alloc_id:?} vaddr={vaddr:#x} memory_kind={memory_kind:?}"
-            );
-        }
         interp_ok(vaddr)
     }
 
@@ -683,14 +683,14 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let base_addr = this.addr_from_alloc_id(alloc_id, Some(kind))?;
 
         // kmiri: vaddr to paddr
-        let ecx = this;
-        let base_paddr = {
-            let global_state = ecx.machine.alloc_addresses.borrow();
-            *global_state.base_paddr.get(&alloc_id).unwrap()
-        };
-        let alloc_map = &ecx.memory.alloc_map();
         // kmiri: replace the stack allocation by pointing to the kernel stack region
         if kind == MemoryKind::Stack {
+            let ecx = this;
+            let base_paddr = {
+                let global_state = ecx.machine.alloc_addresses.borrow();
+                *global_state.base_paddr.get(&alloc_id).unwrap()
+            };
+            let alloc_map = &ecx.memory.alloc_map();
             let (kind, old_allocation) = &alloc_map.get(alloc_id).unwrap();
             let alloc_size_usize = old_allocation.size().bytes_usize();
             if alloc_size_usize > 0 {
@@ -807,6 +807,11 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             this.alloc_id_from_addr(vaddr.bytes(), size)?
         };
 
+        let info = this.get_alloc_info(alloc_id);
+        if info.kind == AllocKind::TypeId {
+            return Some((alloc_id, vaddr));
+        }
+
         // This cannot fail: since we already have a pointer with that provenance, adjust_alloc_root_pointer
         // must have been called in the past, so we can just look up the address in the map.
         let base_paddr = *this.machine.alloc_addresses.borrow().base_paddr.get(&alloc_id).unwrap();
@@ -818,8 +823,15 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
             // kernel_code_vaddr_to_paddr(addr.bytes_usize())
             mirch::try_kernel_code_vaddr_to_paddr(vaddr).unwrap_or_else(|| {
+                let kind = this
+                    .memory
+                    .alloc_map()
+                    .get(alloc_id)
+                    .unwrap_or_else(|| panic!("{alloc_id:?} vaddr={vaddr:#x} is not in alloc_map"))
+                    .0;
+                log!("vaddr={vaddr:#x} alloc_id={alloc_id:?} kind={kind:?}");
                 // boot_pt = true;
-                mirch::try_boot_pt_vaddr_to_paddr(vaddr).unwrap()
+                mirch::try_boot_pt_vaddr_to_paddr(vaddr).unwrap_or(vaddr)
             })
         };
         let actual_paddr =
@@ -832,12 +844,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
         // Wrapping "addr - base_addr"
         let rel_offset = this.truncate_to_target_usize(offset);
-        // if vaddr == TEST_VADDR {
-        //     let memory_kind = this.memory.alloc_map().get(alloc_id).unwrap().0;
-        //     log!(
-        //         "[ptr_get_alloc] alloc_id={alloc_id:?} memory_kind={memory_kind:?} vaddr={vaddr:#x} actual_paddr={actual_paddr:#x} base_paddr={base_paddr:#x} offset={offset:#x}"
-        //     );
-        // }
         Some((alloc_id, Size::from_bytes(rel_offset)))
     }
 
@@ -867,23 +873,20 @@ impl<'tcx> MiriMachine<'tcx> {
         // returns a dead allocation.
         // To avoid a linear scan we first look up the address in `base_addr`, and then find it in
         // `int_to_ptr_map`.
-        let addr = *global_state.base_paddr.get(&dead_id).unwrap();
-        // if kernel_code_paddr_to_vaddr(addr as usize) == TEST_VADDR {
-        if (0x210ff80..0x210ff80 + 128).contains(&addr) {
-            log!("[free_alloc_id] dead_id={dead_id:?} paddr={addr:#x}"); // ?? alloc2347099
-        }
-        let pos =
-            global_state.int_to_ptr_map.binary_search_by_key(&addr, |(addr, _)| *addr).unwrap();
+        let paddr = *global_state.base_paddr.get(&dead_id).unwrap();
+        let Ok(pos) = global_state.int_to_ptr_map.binary_search_by_key(&paddr, |(addr, _)| *addr)
+        else {
+            panic!("paddr={paddr:#x} is not in int_to_ptr_map");
+        };
         let removed = global_state.int_to_ptr_map.remove(pos);
-        // log!("[free_alloc_id] addr={addr:#x} alloc_id={dead_id:?} kind={kind:?}");
-        assert_eq!(removed, (addr, dead_id)); // double-check that we removed the right thing
+        assert_eq!(removed, (paddr, dead_id)); // double-check that we removed the right thing
         // We can also remove it from `exposed`, since this allocation can anyway not be returned by
         // `alloc_id_from_addr` any more.
         global_state.exposed.remove(&dead_id);
         // Also remember this address for future reuse.
         if let Some((_addr_gen, reuse)) = global_state.address_generation.as_mut() {
             let thread = self.threads.active_thread();
-            reuse.add_addr(rng, addr, size, align, kind, thread, || {
+            reuse.add_addr(rng, paddr, size, align, kind, thread, || {
                 // We cannot be in GenMC mode as then `address_generation` is `None`. We cannot use
                 // `self.release_clock` as `self.alloc_addresses` is borrowed.
                 if let Some(data_race) = self.data_race.as_vclocks_ref() {
