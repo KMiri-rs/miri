@@ -2142,16 +2142,7 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
     ) -> InterpResult<'tcx, ReturnAction> {
         let ret_ty = frame.return_place().layout;
         let fn_name = instance_name(ecx, frame.instance().def_id());
-        let res = {
-            // Move `frame` into a sub-scope so we control when it will be dropped.
-            let mut frame = frame;
-            let timing = frame.extra.timing.take();
-            let res = ecx.handle_stack_pop_unwind(frame.extra, unwinding);
-            if let Some(profiler) = ecx.machine.profiler.as_ref() {
-                profiler.finish_recording_interval_event(timing.unwrap());
-            }
-            res
-        };
+
         // Needs to be done after dropping frame to show up on the right nesting level.
         // (Cc https://github.com/rust-lang/miri/issues/2266)
         if !ecx.active_thread_stack().is_empty() {
@@ -2181,15 +2172,22 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
 
             // Return value is allowed not to be allocated at all, meaning current address equals stack_addr_for_ret_value.
             // Or the return value is allocated, meaning current address equals stack_addr_after_ret_ty.
-            // assert!(
-            //     current_sp == stack_addr_for_ret_value || current_sp == stack_addr_after_ret_ty,
-            //     "the current stack address 0x{current_sp:x} must equal \
-            //      0x{stack_addr_for_ret_value:x} or 0x{stack_addr_after_ret_ty:x}\n\
-            //      ret_ty: {ret_ty:#?} size={size} align={align}",
-            //     ret_ty = ret_ty.ty
-            // );
+            assert!(
+                current_sp == stack_addr_for_ret_value || current_sp == stack_addr_after_ret_ty,
+                "the current stack address 0x{current_sp:x} must equal \
+                 0x{stack_addr_for_ret_value:x} or 0x{stack_addr_after_ret_ty:x}\n\
+                 ret_ty: {ret_ty:#?} size={size} align={align}",
+                ret_ty = ret_ty.ty
+            );
         }
 
+        // Move `frame` into a sub-scope so we control when it will be dropped.
+        let mut frame = frame;
+        let timing = frame.extra.timing.take();
+        let res = ecx.handle_stack_pop_unwind(frame.extra, unwinding);
+        if let Some(profiler) = ecx.machine.profiler.as_ref() {
+            profiler.finish_recording_interval_event(timing.unwrap());
+        }
         res
     }
 
