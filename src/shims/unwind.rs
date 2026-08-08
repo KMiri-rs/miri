@@ -85,7 +85,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
         // Now we make a function call, and pass `data` as first and only argument.
         let f_instance = this.get_ptr_fn(try_fn)?.as_instance()?;
-        log!("[handle_catch_unwind] try_fn={f_instance:#?} ret={ret:?}");
+        trace!("[handle_catch_unwind] try_fn={f_instance:#?} ret={ret:?}");
         #[allow(clippy::cloned_ref_to_slice_refs)] // the code is clearer as-is
         this.call_function(
             f_instance,
@@ -123,7 +123,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         if let (true, Some(catch_unwind)) = (unwinding, extra.catch_unwind.take()) {
             // We've just popped a frame that was pushed by `catch_unwind`,
             // and we are unwinding, so we should catch that.
-            log!(
+            trace!(
                 "unwinding: found catch_panic frame during unwinding: {:?}",
                 this.frame().instance()
             );
@@ -137,7 +137,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
             // Push the `catch_fn` stackframe.
             let f_instance = this.get_ptr_fn(catch_unwind.catch_fn)?.as_instance()?;
-            log!("catch_fn: {:#?}", f_instance);
+            trace!("catch_fn: {:#?}", f_instance);
             this.call_function(
                 f_instance,
                 ExternAbi::Rust,

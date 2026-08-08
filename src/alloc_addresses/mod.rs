@@ -295,9 +295,6 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 }
                 *next_stack_vaddr = base_vaddr;
 
-                if (0xffffffff810035f0u64..=0xffffffff810035f8).contains(&base_vaddr) {
-                    log!("[uncached] {:?} {base_vaddr:#x}", this.frame().instance().def_id());
-                }
                 base_vaddr
             } else {
                 let (next_vaddr, limit) =
@@ -345,11 +342,6 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 }
                 base_vaddr
             };
-            if base_vaddr == kernel_code_paddr_to_vaddr(TEST_VADDR) as u64 {
-                log!(
-                    "[addr_from_alloc_id_uncached] alloc_id={alloc_id:?} memory_kind={memory_kind:?} base_vaddr={base_vaddr:#x}"
-                );
-            }
 
             interp_ok(base_vaddr)
         }
@@ -609,13 +601,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 base_vaddr
             }
         };
-        let paddr = global_state.base_paddr.get(&alloc_id).unwrap();
-        if vaddr == TEST_VADDR as u64 || *paddr == TEST_VADDR as u64 {
-            let pos = global_state.int_to_ptr_map.binary_search_by_key(paddr, |(paddr, _)| *paddr);
-            log!(
-                "[addr_from_alloc_id] !!! alloc_id={alloc_id:?} vaddr={vaddr:#x} paddr={paddr:#x} pos={pos:?} memory_kind={memory_kind:?}"
-            );
-        }
         interp_ok(vaddr)
     }
 
@@ -859,12 +844,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
         // Wrapping "addr - base_addr"
         let rel_offset = this.truncate_to_target_usize(offset);
-        // if vaddr == TEST_VADDR {
-        //     let memory_kind = this.memory.alloc_map().get(alloc_id).unwrap().0;
-        //     log!(
-        //         "[ptr_get_alloc] alloc_id={alloc_id:?} memory_kind={memory_kind:?} vaddr={vaddr:#x} actual_paddr={actual_paddr:#x} base_paddr={base_paddr:#x} offset={offset:#x}"
-        //     );
-        // }
         Some((alloc_id, Size::from_bytes(rel_offset)))
     }
 
@@ -875,7 +854,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
     }
 }
 
-const TEST_VADDR: usize = 0xfffe16;
+const TEST_VADDR: usize = 0xffff80000210ff80;
 
 impl<'tcx> MiriMachine<'tcx> {
     pub fn free_alloc_id(&mut self, dead_id: AllocId, size: Size, align: Align, kind: MemoryKind) {
@@ -895,17 +874,11 @@ impl<'tcx> MiriMachine<'tcx> {
         // To avoid a linear scan we first look up the address in `base_addr`, and then find it in
         // `int_to_ptr_map`.
         let paddr = *global_state.base_paddr.get(&dead_id).unwrap();
-        // if kernel_code_paddr_to_vaddr(addr as usize) == TEST_VADDR {
-        if paddr == TEST_VADDR as u64 {
-            log!("[free_alloc_id] dead_id={dead_id:?} paddr={paddr:#x}");
-        }
         let Ok(pos) = global_state.int_to_ptr_map.binary_search_by_key(&paddr, |(addr, _)| *addr)
         else {
             panic!("paddr={paddr:#x} is not in int_to_ptr_map");
-            // return;
         };
         let removed = global_state.int_to_ptr_map.remove(pos);
-        // log!("[free_alloc_id] addr={addr:#x} alloc_id={dead_id:?} kind={kind:?}");
         assert_eq!(removed, (paddr, dead_id)); // double-check that we removed the right thing
         // We can also remove it from `exposed`, since this allocation can anyway not be returned by
         // `alloc_id_from_addr` any more.

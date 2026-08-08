@@ -42,7 +42,6 @@ use crate::concurrency::{
     AllocDataRaceHandler, GenmcCtx, GenmcEvalContextExt as _, GlobalDataRaceHandler, weak_memory,
 };
 use crate::debugger::reachability;
-use crate::debugger::utils::instance_name;
 use crate::helpers::{adjust_stack_addr, is_no_core};
 use crate::mirch::{self, PageState, TypedKind};
 use crate::shims::readiness::DelayedReadinessUpdates;
@@ -2067,35 +2066,17 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             ecx.active_thread_mut().set_top_user_relevant_frame(stack_len - 1);
         }
 
-        // Pushes the stack pointer.
+        // Type of return value.
         let ret_ty = ecx.frame().return_place().layout;
         let (size, align) = (ret_ty.layout.size().bytes(), ret_ty.layout.align().bytes());
-        let fn_name = instance_name(ecx, ecx.frame().instance().def_id());
+
+        // Pushes the stack pointer.
         let thread = ecx.machine.threads.active_thread_mut();
         let next_stack_addr = &mut *thread.next_stack_vaddr.borrow_mut();
-        // if let Some(&last_record) = thread.stack_addr_records.last()
-        //     && last_record == *next_stack_addr
-        // {
-        //     // don't duplicate the stack sp
-        //     *next_stack_addr -= 1;
-        // }
         thread.stack_addr_records.push(*next_stack_addr);
         // The address of return value is reserved before all locals in the frame,
         // and base stack address starts after the return value allocation.
-        // if !(size == 0 && next_stack_addr.is_multiple_of(align)) {
-        let before_adjust_next_sp = *next_stack_addr;
         *next_stack_addr = adjust_stack_addr(size, align, *next_stack_addr);
-        // }
-        log!("[stack_push] fn={fn_name}");
-        if *next_stack_addr == 0xffffffff810035f0
-            || *next_stack_addr == 0xffffffff810035ff
-            || *next_stack_addr == 0xffffffff810035fe
-        {
-            log!(
-                "             next_sp={next_stack_addr:#x} before_adjust_next_sp={before_adjust_next_sp:#x} ret_ty={:?} size={size} align={align} fn={fn_name}",
-                ret_ty.ty
-            );
-        }
 
         interp_ok(())
     }
@@ -2141,7 +2122,6 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         unwinding: bool,
     ) -> InterpResult<'tcx, ReturnAction> {
         let ret_ty = frame.return_place().layout;
-        let fn_name = instance_name(ecx, frame.instance().def_id());
 
         // Needs to be done after dropping frame to show up on the right nesting level.
         // (Cc https://github.com/rust-lang/miri/issues/2266)
@@ -2155,20 +2135,6 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             let current_sp = *thread.next_stack_vaddr.borrow();
             let (size, align) = (ret_ty.layout.size().bytes(), ret_ty.layout.align().bytes());
             let stack_addr_after_ret_ty = adjust_stack_addr(size, align, stack_addr_for_ret_value);
-
-            log!("[stack_pop ] fn={fn_name}");
-            if stack_addr_after_ret_ty == 0xffffffff810035f0
-                || stack_addr_after_ret_ty == 0xffffffff810035ff
-                || stack_addr_after_ret_ty == 0xffffffff810035fe
-                || current_sp == 0xffffffff810035f0
-                || current_sp == 0xffffffff810035ff
-                || current_sp == 0xffffffff810035fe
-            {
-                log!(
-                    "             current_sp={current_sp:#x} stack_addr_after_ret_ty={stack_addr_after_ret_ty:#x} ret_ty={:?} size={size} align={align} fn={fn_name}",
-                    ret_ty.ty
-                );
-            }
 
             // Return value is allowed not to be allocated at all, meaning current address equals stack_addr_for_ret_value.
             // Or the return value is allocated, meaning current address equals stack_addr_after_ret_ty.
