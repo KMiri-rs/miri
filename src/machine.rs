@@ -585,6 +585,8 @@ pub struct MiriMachine<'tcx> {
 
     /// Cache of whether a foreign symbol resolves to an exported non-foreign item.
     pub(crate) foreign_symbol_resolution_cache: RefCell<FxHashMap<Symbol, bool>>,
+    /// Physical addresses for unresolved foreign symbols, configured through `kmiri.toml`.
+    pub(crate) foreign_symbol_addr_map: FxHashMap<Symbol, u64>,
 
     /// The set of function instances discovered from the entry point.
     pub(crate) reachable_function_instances: reachability::Reachability,
@@ -816,6 +818,13 @@ impl<'tcx> MiriMachine<'tcx> {
             string_cache: Default::default(),
             exported_symbols_cache: FxHashMap::default(),
             foreign_symbol_resolution_cache: RefCell::new(FxHashMap::default()),
+            foreign_symbol_addr_map: config.kmiri_toml.as_ref().map(|config|{
+                    config
+                        .layout_symbols()
+                        .map(|(name, addr)| (Symbol::intern(name), addr))
+                        .collect()
+                })
+                .unwrap_or_default(),
             reachable_function_instances: Default::default(),
             backtrace_style: config.backtrace_style,
             user_relevant_crates,
@@ -1594,6 +1603,12 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             }
 
             if let Some(link_name) = MiriMachine::unresolved_foreign_fn_symbol(ecx, alloc_id)? {
+                if let Some(&addr) = ecx.machine.foreign_symbol_addr_map.get(&link_name) {
+                    return interp_ok(interpret::Pointer::new(
+                        Provenance::Wildcard,
+                        Size::from_bytes(addr),
+                    ));
+                }
                 let mut pending = ecx.machine.pending_unsupported_foreign_item.borrow_mut();
                 if pending.is_none() {
                     *pending = Some(format!(

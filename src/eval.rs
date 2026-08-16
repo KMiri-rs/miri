@@ -176,6 +176,8 @@ pub struct MiriConfig {
     pub user_relevant_crates: Vec<String>,
     /// Configurations for pseudo physical memory.
     pub pseudo_physical_mem_config: PhysConfig,
+    /// Parsed `kmiri.toml` for unresolved foreign symbol address mapping.
+    pub kmiri_toml: Option<KMiriConfigToml>,
 }
 
 impl Default for MiriConfig {
@@ -221,6 +223,7 @@ impl Default for MiriConfig {
             debugger: false,
             user_relevant_crates: vec![],
             pseudo_physical_mem_config: PhysConfig::default(),
+            kmiri_toml: None,
         }
     }
 }

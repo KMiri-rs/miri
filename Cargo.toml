@@ -31,6 +31,7 @@ mio = { version = "1.1.1", features = ["os-poll", "net"] }
 owo-colors = "4.3.0"
 # kmiri
 kmiri-helper = { path = "../kmiri-helper/", default-features = false }
+basic-toml = "0.1.10"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

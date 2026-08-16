@@ -45,8 +45,8 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use miri::{
-    BacktraceStyle, BorrowTrackerMethod, GenmcConfig, GenmcCtx, MiriConfig, ProvenanceMode,
-    TreeBorrowsParams, ValidationMode, entry_fn, run_genmc_mode,
+    BacktraceStyle, BorrowTrackerMethod, GenmcConfig, GenmcCtx, KMiriConfigToml, MiriConfig,
+    ProvenanceMode, TreeBorrowsParams, ValidationMode, entry_fn, run_genmc_mode,
 };
 use rustc_codegen_ssa::traits::CodegenBackend;
 use rustc_data_structures::fx::FxHashSet;
@@ -147,7 +147,7 @@ fn collect_exported_symbol_names(tcx: TyCtxt<'_>) -> FxHashSet<rustc_span::Symbo
     names
 }
 
-fn report_unknown_local_foreign_symbol_uses(tcx: TyCtxt<'_>) {
+fn report_unknown_local_foreign_symbol_uses(tcx: TyCtxt<'_>, kmiri_toml: Option<&KMiriConfigToml>) {
     struct UseVisitor<'tcx, 'a> {
         tcx: TyCtxt<'tcx>,
         exported: &'a FxHashSet<rustc_span::Symbol>,
@@ -185,7 +185,12 @@ fn report_unknown_local_foreign_symbol_uses(tcx: TyCtxt<'_>) {
         }
     }
 
-    let exported = collect_exported_symbol_names(tcx);
+    let mut exported = collect_exported_symbol_names(tcx);
+    if let Some(config) = kmiri_toml {
+        for (symbol, _addr) in config.layout_symbols() {
+            exported.insert(rustc_span::Symbol::intern(symbol));
+        }
+    }
     for body_owner in tcx.hir_body_owners() {
         let body = tcx.hir_body_owned_by(body_owner);
         let mut visitor = UseVisitor { tcx, exported: &exported };
@@ -314,7 +319,7 @@ impl rustc_driver::Callbacks for MiriCompilerCalls {
                 optimizations is usually marginal at best.");
             }
 
-            report_unknown_local_foreign_symbol_uses(tcx);
+            report_unknown_local_foreign_symbol_uses(tcx, config.kmiri_toml.as_ref());
             tcx.dcx().abort_if_errors();
 
             // Invoke the interpreter.
@@ -818,6 +823,12 @@ fn main() -> ExitCode {
             miri_config.user_relevant_crates.extend(param.split(',').map(|s| s.to_owned()));
         } else if let Some(param) = arg.strip_prefix("-Zmiri-kern-miri-config-json-path=") {
             miri_config.pseudo_physical_mem_config = miri::parse_json_file(param).unwrap();
+        } else if let Some(param) = arg.strip_prefix("-Zkmiri-toml=") {
+            let path = std::path::Path::new(param);
+            if !path.exists() {
+                fatal_error!("--kmiri-toml `{}` does not exist", path.display());
+            }
+            miri_config.kmiri_toml = KMiriConfigToml::new(path);
         } else {
             // Forward to rustc.
             rustc_args.push(arg);
