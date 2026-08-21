@@ -12,4 +12,4 @@ cd $PROJ/kmiri
 
 TOCK_BOARD=$PROJ/tock/boards/qemu_rv64_virt
 cd $TOCK_BOARD
-MIRIFLAGS="-Zkmiri-toml=$TOCK_BOARD/kmiri.toml" cargo miri run --target riscv64imac-unknown-none-elf
+MIRIFLAGS="-Zkmiri-toml=$TOCK_BOARD/kmiri.toml" MIRI_SYSROOT="$(rustc --print sysroot)" cargo miri run --target riscv64imac-unknown-none-elf
