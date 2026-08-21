@@ -141,7 +141,7 @@ pub fn setup(
     let mut after_build_output = String::new(); // what should be printed when the build is done.
     let notify = || {
         if !quiet {
-            eprint!("Preparing a sysroot for Miri (target: {target})");
+            eprint!("Preparing a sysroot for Miri (target: {target}) at {sysroot_dir:?}");
             if verbose > 0 {
                 eprint!(" in {}", sysroot_dir.display());
             }
