@@ -84,11 +84,18 @@ pub fn render_src(
     highlight_span: rustc_span::Span,
     sm: &SourceMap,
 ) -> RenderSrc {
-    let Ok(source_text) = sm.span_to_snippet(body_span) else {
-        return RenderSrc {
-            lines: vec!["Could not load source snippet.".into()],
-            highlighted_idx: None,
-        };
+    let source_text = match sm.span_to_snippet(body_span) {
+        Ok(source_text) => source_text,
+        Err(err) =>
+            return RenderSrc {
+                lines: vec![
+                    "Could not load source snippet:".into(),
+                    format!("{err:?}").into(),
+                    "body_span".into(),
+                    format!("  ={body_span:?}").into(),
+                ],
+                highlighted_idx: None,
+            },
     };
 
     // Get the absolute byte positions for relative calculations

@@ -562,28 +562,44 @@ fn capture_location(
 
     // Use source_callsite() to resolve the span to the actual physical file
     // instead of inside a macro expansion if possible.
-    let body_span = body_span.source_callsite();
+    let body_span_callsite = body_span.source_callsite();
     let highlight_span = highlight_span.source_callsite();
 
     let line_start = pos_to_line_nr(sm, highlight_span.lo());
     let line_end = pos_to_line_nr(sm, highlight_span.hi());
 
     // 3. Extract the raw source text snippet
-    let Ok(source_text) = sm.span_to_snippet(body_span) else {
-        return CurrentLocation {
-            render_src: RenderSrc {
-                lines: vec!["Could not load source snippet.".into()],
-                highlighted_idx: None,
+    let source_text = match sm.span_to_snippet(body_span_callsite) {
+        Ok(source_text) => source_text,
+        Err(err) =>
+            return CurrentLocation {
+                render_src: RenderSrc {
+                    lines: vec![
+                        "Could not load source snippet:".into(),
+                        format!("{err:?}").into(),
+                        "body_span_callsite".into(),
+                        format!("  ={body_span_callsite:?}").into(),
+                        "body_span".into(),
+                        format!("  ={body_span:?}").into(),
+                    ],
+                    highlighted_idx: None,
+                },
+                line_start,
+                line_end,
+                render_mir: vec![
+                    "Could not load basic block:".into(),
+                    format!("{err:?}"),
+                    "body_span_callsite".into(),
+                    format!("  ={body_span_callsite:?}"),
+                    "body_span".into(),
+                    format!("  ={body_span:?}"),
+                ],
+                render_mir_highlighted_idx: 0,
             },
-            line_start,
-            line_end,
-            render_mir: vec!["Could not load basic block.".into()],
-            render_mir_highlighted_idx: 0,
-        };
     };
 
     // Get the absolute byte positions for relative calculations
-    let body_lo = body_span.lo();
+    let body_lo = body_span_callsite.lo();
     let highlight_lo = highlight_span.lo();
     let highlight_hi = highlight_span.hi();
 
