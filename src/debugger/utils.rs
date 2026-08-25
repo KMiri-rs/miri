@@ -1,11 +1,13 @@
-use std::sync::{LazyLock, Mutex};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use ratatui::text::{Line, Span as RatatuiSpan};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::source_map::SourceMap;
-use rustc_span::{FileName, RealFileName, Span};
+use rustc_span::{FileName, Pos, RealFileName, RemapPathScopeComponents, Span};
 
 use crate::concurrency::thread::EvalContextExt;
 use crate::debugger::state::RenderSrc;
@@ -79,16 +81,82 @@ pub fn source_file(sm: &SourceMap, span: Span) -> String {
     .to_string()
 }
 
+/// `sm.span_to_snippet` fails when the `SourceFile` was imported from another
+/// crate and `--remap-path-prefix` removed the local path (`local: None`).
+/// In that case `ensure_source_file_source_present` cannot reconstruct the
+/// path and freezes `external_src` as `AbsentErr`.  We work around it by
+/// reading the file directly via `embeddable_name`, which always contains the
+/// absolute on-disk path.
+///
+/// Strategy:
+/// 1. Try to inject the file content into `SourceFile::external_src` via
+///    `add_external_src` *before* calling `span_to_snippet`.  If the
+///    content hash matches, the source is cached inside the `SourceFile`
+///    itself and all future calls on the same file succeed without extra I/O.
+/// 2. If that fails (hash mismatch, or `external_src` already frozen as
+///    `AbsentErr` by a prior `span_to_snippet` call), fall back to reading
+///    the file directly with our own `PathBuf`-keyed cache.
+fn span_to_snippet_with_fallback(sm: &SourceMap, span: Span) -> Result<String, String> {
+    let sf = sm.lookup_source_file(span.lo());
+    if let FileName::Real(ref real) = sf.name {
+        let (_, abs_path) = real.embeddable_name(RemapPathScopeComponents::DIAGNOSTICS);
+        sf.add_external_src(|| fs::read_to_string(abs_path).ok());
+    }
+
+    if let Ok(s) = sm.span_to_snippet(span) {
+        return Ok(s);
+    }
+
+    // add_external_src did not help (hash mismatch or already AbsentErr).
+    cache_source_file(span, &sf)
+}
+
+// Fall back to reading directly, with a global path-keyed cache.
+fn cache_source_file(span: Span, sf: &rustc_span::SourceFile) -> Result<String, String> {
+    static CACHE: LazyLock<Mutex<FxHashMap<PathBuf, Arc<str>>>> = LazyLock::new(Default::default);
+
+    let FileName::Real(ref real) = sf.name else {
+        return Err(format!("non-real filename: {:?}", sf.name));
+    };
+    let (_, abs_path) = real.embeddable_name(RemapPathScopeComponents::DIAGNOSTICS);
+    let full_src = {
+        let mut cache = CACHE.lock().unwrap();
+        if let Some(src) = cache.get(abs_path) {
+            Arc::clone(src)
+        } else {
+            let src = fs::read_to_string(abs_path).map_err(|e| format!("{e}: {abs_path:?}"))?;
+            let src = Arc::from(src);
+            cache.insert(abs_path.to_owned(), Arc::clone(&src));
+            src
+        }
+    };
+
+    let start = (span.lo() - sf.start_pos).to_usize();
+    let end = (span.hi() - sf.start_pos).to_usize();
+    full_src.get(start..end).map(str::to_owned).ok_or_else(|| {
+        format!("span [{start}..{end}] out of range for file len {}", full_src.len())
+    })
+}
+
 pub fn render_src(
     body_span: rustc_span::Span,
     highlight_span: rustc_span::Span,
     sm: &SourceMap,
 ) -> RenderSrc {
-    let Ok(source_text) = sm.span_to_snippet(body_span) else {
-        return RenderSrc {
-            lines: vec!["Could not load source snippet.".into()],
-            highlighted_idx: None,
-        };
+    let source_text = match span_to_snippet_with_fallback(sm, body_span) {
+        Ok(source_text) => source_text,
+        Err(err) => {
+            log!("render_src: {err}");
+            return RenderSrc {
+                lines: vec![
+                    "Could not load source snippet:".into(),
+                    format!("{err}").into(),
+                    "body_span".into(),
+                    format!("  ={body_span:?}").into(),
+                ],
+                highlighted_idx: None,
+            };
+        }
     };
 
     // Get the absolute byte positions for relative calculations

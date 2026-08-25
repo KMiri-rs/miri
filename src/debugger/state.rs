@@ -1,4 +1,4 @@
-use ratatui::text::{Line, Span as RatatuiSpan};
+use ratatui::text::Line;
 use rustc_data_structures::either::Either;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
@@ -6,8 +6,7 @@ use rustc_middle::mir::interpret::GlobalAlloc;
 use rustc_middle::mir::{self, BasicBlockData};
 
 use crate::borrow_tracker::stacked_borrows::debugger::DebuggerBorrowStacks;
-use crate::debugger::tui::theme::STYLE_HIGHTLIGHTED;
-use crate::debugger::utils::{instance_name, pos_to_line_nr, source_file};
+use crate::debugger::utils::{instance_name, pos_to_line_nr, render_src, source_file};
 use crate::debugger::{debugger_log, reachability};
 // use crate::mirch::kernel_code_vaddr_to_paddr;
 use crate::*;
@@ -562,95 +561,14 @@ fn capture_location(
 
     // Use source_callsite() to resolve the span to the actual physical file
     // instead of inside a macro expansion if possible.
-    let body_span = body_span.source_callsite();
+    let body_span_callsite = body_span.source_callsite();
     let highlight_span = highlight_span.source_callsite();
 
     let line_start = pos_to_line_nr(sm, highlight_span.lo());
     let line_end = pos_to_line_nr(sm, highlight_span.hi());
 
-    // 3. Extract the raw source text snippet
-    let Ok(source_text) = sm.span_to_snippet(body_span) else {
-        return CurrentLocation {
-            render_src: RenderSrc {
-                lines: vec!["Could not load source snippet.".into()],
-                highlighted_idx: None,
-            },
-            line_start,
-            line_end,
-            render_mir: vec!["Could not load basic block.".into()],
-            render_mir_highlighted_idx: 0,
-        };
-    };
-
-    // Get the absolute byte positions for relative calculations
-    let body_lo = body_span.lo();
-    let highlight_lo = highlight_span.lo();
-    let highlight_hi = highlight_span.hi();
-
-    let mut render_src = RenderSrc::default();
-    let lines = &mut render_src.lines;
-
-    let mut current_pos = body_lo;
-
-    // Split the source by lines and construct Ratatui Line/Span structures
-    for (idx, text_line) in source_text.lines().enumerate() {
-        let line_len = text_line.len().try_into().unwrap();
-        let line_end = current_pos + rustc_span::BytePos(line_len);
-
-        let mut line_spans = Vec::new();
-
-        // Check if the current line intersects with the highlight_span
-        // Case A: The line is entirely before the highlight
-        // Case B: The line is entirely after the highlight
-        if line_end <= highlight_lo || current_pos >= highlight_hi {
-            // No intersection: add as plain text
-            line_spans.push(RatatuiSpan::raw(text_line.to_string()));
-        } else {
-            // Intersection exists: split the line into parts
-            let line_start_pos = current_pos;
-
-            // Calculate relative start and end indices for the highlight within this specific line
-            let h_start_in_line = if highlight_lo > line_start_pos {
-                highlight_lo.0.checked_sub(line_start_pos.0).unwrap().to_usize()
-            } else {
-                0
-            };
-
-            let h_end_in_line = if highlight_hi < line_end {
-                highlight_hi.0.checked_sub(line_start_pos.0).unwrap().to_usize()
-            } else {
-                text_line.len()
-            };
-
-            // Part 1: Text before the highlight
-            if h_start_in_line > 0 {
-                line_spans.push(RatatuiSpan::raw(text_line[..h_start_in_line].to_string()));
-            }
-
-            // Part 2: The highlighted text (Styled with BOLD and UNDERLINE)
-            line_spans.push(RatatuiSpan::styled(
-                text_line[h_start_in_line..h_end_in_line].to_string(),
-                STYLE_HIGHTLIGHTED,
-            ));
-
-            // Part 3: Text after the highlight
-            if h_end_in_line < text_line.len() {
-                line_spans.push(RatatuiSpan::raw(text_line[h_end_in_line..].to_string()));
-            }
-
-            // Update highlighted_idx
-            let idx = u16::try_from(idx).unwrap();
-            render_src.highlighted_idx = Some(match render_src.highlighted_idx {
-                Some([start, end]) => [start.min(idx), end.max(idx)],
-                None => [idx; 2],
-            });
-        }
-
-        lines.push(Line::from(line_spans));
-
-        // Update current position for the next iteration (+1 to account for the '\n' character)
-        current_pos = line_end + rustc_span::BytePos(1);
-    }
+    // 3. Render source with highlight, falling back to reading via embeddable_name.
+    let render_src = render_src(body_span_callsite, highlight_span, sm);
 
     let bb = body.basic_blocks.get(current_loc.block).unwrap();
     let (render_mir, render_mir_highlighted_idx) = current_mir(bb, current_loc.statement_index);

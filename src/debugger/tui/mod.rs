@@ -94,6 +94,13 @@ pub fn spawn_tui(
     state_rx: StateReceiver,
     command_tx: CommandSender,
 ) -> std::thread::JoinHandle<()> {
+    // Install a panic hook that writes main thread panic message to the debugger log file.
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        log!("PANIC: {info}");
+        prev_hook(info);
+    }));
+
     std::thread::Builder::new()
         .name("miri-debugger-tui".to_string())
         .spawn(move || {
