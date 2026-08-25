@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use ratatui::text::{Line, Span as RatatuiSpan};
@@ -169,8 +169,12 @@ pub fn render_src(
 
     let mut current_pos = body_lo;
 
-    // Split the source by lines and construct Ratatui Line/Span structures
-    for (idx, text_line) in source_text.lines().enumerate() {
+    // Split the source by lines and construct Ratatui Line/Span structures.
+    // Use split_inclusive to get the terminator length — lines() strips \r\n
+    // but we need to advance current_pos by the full byte count including \r.
+    for (idx, raw_line) in source_text.split('\n').enumerate() {
+        let (text_line, terminator_len) =
+            raw_line.strip_suffix('\r').map(|text_line| (text_line, 2)).unwrap_or((raw_line, 1));
         let line_len = text_line.len().try_into().unwrap();
         let line_end = current_pos + rustc_span::BytePos(line_len);
 
@@ -199,18 +203,20 @@ pub fn render_src(
                 text_line.len()
             };
 
-            // Part 1: Text before the highlight
+            // Snap to char boundaries: rustc BytePos counts raw bytes (incl. \r),
+            // so drift from CRLF line endings can land offsets mid-character.
+            let h_start_in_line = text_line.floor_char_boundary(h_start_in_line);
+            let h_end_in_line = text_line.ceil_char_boundary(h_end_in_line);
+
             if h_start_in_line > 0 {
                 line_spans.push(RatatuiSpan::raw(text_line[..h_start_in_line].to_string()));
             }
 
-            // Part 2: The highlighted text (Styled with BOLD and UNDERLINE)
             line_spans.push(RatatuiSpan::styled(
                 text_line[h_start_in_line..h_end_in_line].to_string(),
                 STYLE_HIGHTLIGHTED,
             ));
 
-            // Part 3: Text after the highlight
             if h_end_in_line < text_line.len() {
                 line_spans.push(RatatuiSpan::raw(text_line[h_end_in_line..].to_string()));
             }
@@ -225,8 +231,7 @@ pub fn render_src(
 
         lines.push(Line::from(line_spans));
 
-        // Update current position for the next iteration (+1 to account for the '\n' character)
-        current_pos = line_end + rustc_span::BytePos(1);
+        current_pos = line_end + rustc_span::BytePos(terminator_len);
     }
     render_src
 }
