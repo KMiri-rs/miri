@@ -363,88 +363,104 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
     ///
     /// If the `paddr` is not referred to a typed slot, it returns `None`.
     fn lazy_alloc_typed_slot_allocation(&self, paddr: usize) -> Option<AllocId> {
-        let ecx = self.eval_context_ref();
         let page_index = paddr / mirch::page_size();
         let page_info = mirch::physical_mem().page_states[page_index];
 
         if let PageState::Typed { page_type: _, slot_size } = page_info {
-            let alloc_id = ecx.tcx.reserve_alloc_id();
-            let actual_paddr = paddr - paddr % slot_size;
-            let kind = rustc_const_eval::interpret::MemoryKind::Machine(MiriMemoryKind::Kernel);
-            let allocation = {
-                let allocation = mirch::create_allocation_at(
-                    actual_paddr,
-                    Layout::from_size_align(slot_size, slot_size).unwrap(),
-                    ecx.machine.get_default_alloc_params(),
-                );
-                let extra = MiriMachine::init_allocation(
-                    ecx,
-                    alloc_id,
-                    kind,
-                    allocation.size(),
-                    allocation.align,
-                )
-                .unwrap();
-                if alloc_id.0.get() == crate::TARGET_ALLOC_ID {
-                    log!(
-                        "{:?}: borrow_tracker={:?}",
-                        crate::TARGET_ALLOC_ID,
-                        extra.borrow_tracker.as_ref().unwrap()
-                    );
-                }
-                allocation.with_extra(extra)
-            };
-
-            // log!(
-            //     "[lazy_alloc_typed_slot_allocation] alloc_id={alloc_id:?} kind={kind:?} actual_paddr={actual_paddr:#x} slot={slot_size}"
-            // );
-            ecx.memory.alloc_map().insert(alloc_id, (kind, allocation));
-            {
-                let mut global_state = ecx.machine.alloc_addresses.borrow_mut();
-                global_state.set_exposed_kernel_padd(alloc_id, actual_paddr);
-            }
-
-            // Re-expose the root tag so wildcard/raw-pointer accesses can find a
-            // writable provenance after the typed-slot allocation is created.
-            let root_tag = {
-                let mut borrow_tracker = ecx.machine.borrow_tracker.as_ref().unwrap().borrow_mut();
-                borrow_tracker.root_ptr_tag(alloc_id, &ecx.machine)
-            };
-            ecx.expose_tag(alloc_id, root_tag).discard_err();
-            return Some(alloc_id);
+            return Some(self.kernel_allocation_at(paddr, slot_size, slot_size));
         }
 
         None
     }
 
+    /// Construct a new alloc when a fresh paddr is accessed the first time.
+    fn kernel_allocation_at(&self, paddr: usize, size: usize, align: usize) -> AllocId {
+        let ecx = self.eval_context_ref();
+        let alloc_id = ecx.tcx.reserve_alloc_id();
+        let actual_paddr = paddr - paddr % align;
+        let kind = rustc_const_eval::interpret::MemoryKind::Machine(MiriMemoryKind::Kernel);
+        let allocation = {
+            let allocation = mirch::create_allocation_at(
+                actual_paddr,
+                Layout::from_size_align(size, align).unwrap(),
+                ecx.machine.get_default_alloc_params(),
+            );
+            let extra = MiriMachine::init_allocation(
+                ecx,
+                alloc_id,
+                kind,
+                allocation.size(),
+                allocation.align,
+            )
+            .unwrap();
+            if alloc_id.0.get() == crate::TARGET_ALLOC_ID {
+                log!(
+                    "{:?}: borrow_tracker={:?}",
+                    crate::TARGET_ALLOC_ID,
+                    extra.borrow_tracker.as_ref().unwrap()
+                );
+            }
+            allocation.with_extra(extra)
+        };
+        ecx.memory.alloc_map().insert(alloc_id, (kind, allocation));
+        {
+            let mut global_state = ecx.machine.alloc_addresses.borrow_mut();
+            global_state.set_exposed_kernel_padd(alloc_id, actual_paddr);
+        }
+
+        // Re-expose the root tag so wildcard/raw-pointer accesses can find a
+        // writable provenance after the typed-slot allocation is created.
+        let root_tag = {
+            let mut borrow_tracker = ecx.machine.borrow_tracker.as_ref().unwrap().borrow_mut();
+            borrow_tracker.root_ptr_tag(alloc_id, &ecx.machine)
+        };
+        ecx.expose_tag(alloc_id, root_tag).discard_err().unwrap_or_else(|| {
+            panic!("paddr={paddr:#x} ({alloc_id:?}) with {root_tag:?} has been exposed")
+        });
+        alloc_id
+    }
+
     // Returns the `AllocId` that corresponds to the specified addr,
     // or `None` if the addr is out of bounds.
     fn alloc_id_from_addr(&self, vaddr: u64, size: i64) -> Option<AllocId> {
+        log!("[alloc_id_from_addr] vaddr={vaddr:#x} size={size}");
         let this = self.eval_context_ref();
         let global_state = this.machine.alloc_addresses.borrow();
         assert!(global_state.provenance_mode != ProvenanceMode::Strict);
 
         // vaddr to paddr
-        // let paddr = mirch::page_walk_or(vaddr as usize, || vaddr as usize)? as u64;
-        let vaddr = vaddr as usize;
-        let mut boot_pt = false;
-        let paddr_fallback = || {
-            // log!("[alloc_id_from_addr - page_walk_or] vaddr={vaddr:#x}");
-            mirch::try_kernel_code_vaddr_to_paddr(vaddr).unwrap_or_else(|| {
-                // boot_pt = true;
-                mirch::try_boot_pt_vaddr_to_paddr(vaddr).unwrap()
-            })
+
+        // unwrap_or(false) when asterinas migrates to toml config.
+        let page_table_enabled = this.machine.is_page_table_enabled();
+        let paddr = if page_table_enabled {
+            let vaddr = vaddr as usize;
+            let mut boot_pt = false;
+            let paddr_fallback = || {
+                // log!("[alloc_id_from_addr - page_walk_or] vaddr={vaddr:#x}");
+                mirch::try_kernel_code_vaddr_to_paddr(vaddr).unwrap_or_else(|| {
+                    // boot_pt = true;
+                    mirch::try_boot_pt_vaddr_to_paddr(vaddr).unwrap()
+                })
+            };
+            let paddr =
+                mirch::page_walk_or(vaddr, || unreachable!()).unwrap_or_else(paddr_fallback) as u64;
+            if boot_pt {
+                log!("[alloc_id_from_addr] boot_pt paddr={paddr:#x} size={size}");
+            }
+            paddr
+        } else {
+            log!("vaddr <-> paddr = {vaddr:#x}");
+            vaddr
         };
-        let paddr =
-            mirch::page_walk_or(vaddr, || unreachable!()).unwrap_or_else(paddr_fallback) as u64;
-        if boot_pt {
-            log!("[alloc_id_from_addr] boot_pt paddr={paddr:#x} size={size}");
-        }
 
         // We always search the allocation to the right of this address. So if the size is strictly
         // negative, we have to search for `addr-1` instead.
         let addr = if size >= 0 { paddr } else { paddr.saturating_sub(1) };
         let pos = global_state.int_to_ptr_map.binary_search_by_key(&addr, |(addr, _)| *addr);
+
+        if paddr == 0x10000000 {
+            log!("addr={addr:#x} paddr={paddr:#x} pos={pos:?}");
+        }
 
         // Determine the in-bounds provenance for this pointer.
         let alloc_id = match pos {
@@ -452,16 +468,11 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             Err(0) => {
                 // If cannot found, first check whether the allocation is a lazy allocated one (typed slot).
                 let paddr = paddr as usize;
+                log!(
+                    "[alloc_id_from_addr - lazy_alloc_typed_slot_allocation] no alloc_id pos=Err(0) paddr={paddr:#x}"
+                );
                 drop(global_state);
-                // log!(
-                //     "[alloc_id_from_addr - lazy_alloc_typed_slot_allocation] no alloc_id pos=Err(0) paddr={paddr:#x}"
-                // );
-                let typed_slot = self.lazy_alloc_typed_slot_allocation(paddr);
-                if typed_slot.is_some() {
-                    return typed_slot;
-                }
-
-                return None;
+                self.lazy_alloc_typed_slot_allocation(paddr)
             }
             Err(pos) => {
                 // This is the largest of the addresses smaller than `int`,
@@ -480,29 +491,22 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     // FIXME: explain the kmiri logic in this branch
                     let paddr = paddr as usize;
                     drop(global_state);
-                    // log!(
-                    //     "[alloc_id_from_addr - lazy_alloc_typed_slot_allocation] alloc_id={alloc_id:?} paddr={paddr:#x} offset={offset} size={}",
-                    //     size.bytes()
-                    // );
-                    let typed_slot = self.lazy_alloc_typed_slot_allocation(paddr);
-                    if typed_slot.is_some() {
-                        return typed_slot;
+                    if page_table_enabled {
+                        self.lazy_alloc_typed_slot_allocation(paddr)
+                    } else {
+                        let kalloc =
+                            this.machine.kmiri_toml.as_ref().map(|val| val.get_kalloc(paddr))??;
+                        let alloc_id =
+                            self.kernel_allocation_at(kalloc.base_addr, kalloc.size, kalloc.align);
+                        log!("kernel_allocation_at: {paddr:#x} {alloc_id:?}");
+                        Some(alloc_id)
                     }
-
-                    return None;
                 }
             }
         }?;
 
-        if vaddr == TEST_VADDR {
-            let memory_kind = this.memory.alloc_map().get(alloc_id).unwrap().0;
-            log!(
-                "[alloc_id_from_addr] alloc_id={alloc_id:?} memory_kind={memory_kind:?} vaddr={vaddr:#x} paddr={paddr:#x}"
-            );
-        }
-
         // We only use this provenance if it has been exposed.
-        if global_state.exposed.contains(&alloc_id) {
+        if this.machine.alloc_addresses.borrow().exposed.contains(&alloc_id) {
             // This must still be live, since we remove allocations from `int_to_ptr_map` when they get freed.
             debug_assert!(this.is_alloc_live(alloc_id));
             Some(alloc_id)
@@ -601,6 +605,9 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 base_vaddr
             }
         };
+        if vaddr == 0x10000000 {
+            log!("[addr_from_alloc_id] {vaddr:#x}");
+        }
         interp_ok(vaddr)
     }
 
@@ -638,7 +645,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
     }
 
     fn ptr_from_addr_cast(&self, addr: u64) -> InterpResult<'tcx, Pointer> {
-        trace!("Casting {:#x} to a pointer", addr);
+        log!("Casting {:#x} to a pointer", addr);
 
         let this = self.eval_context_ref();
         let global_state = this.machine.alloc_addresses.borrow();
@@ -681,6 +688,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
         // Get a pointer to the beginning of this allocation.
         let base_addr = this.addr_from_alloc_id(alloc_id, Some(kind))?;
+        log!("[adjust_alloc_root_pointer] {base_addr:#x}");
 
         // kmiri: vaddr to paddr
         // kmiri: replace the stack allocation by pointing to the kernel stack region
@@ -799,6 +807,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let this = self.eval_context_ref();
 
         let (tag, vaddr) = ptr.into_raw_parts(); // addr is absolute (Miri provenance)
+        log!("[ptr_get_alloc] vaddr={:#x}", vaddr.bytes());
 
         let alloc_id = if let Provenance::Concrete { alloc_id, .. } = tag {
             alloc_id
@@ -819,8 +828,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let vaddr = vaddr.bytes_usize();
         let mut boot_pt = false;
         let mut paddr_fallback = || {
-            // log!("[ptr_get_alloc - page_walk_or] vaddr={vaddr:#x}");
-
             // kernel_code_vaddr_to_paddr(addr.bytes_usize())
             mirch::try_kernel_code_vaddr_to_paddr(vaddr).unwrap_or_else(|| {
                 let kind = this

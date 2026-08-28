@@ -708,6 +708,8 @@ pub struct MiriMachine<'tcx> {
 
     /// Captured stdout/stderr chunks from the interpreted program for debugger UI.
     pub debugger_output: RefCell<Vec<(bool, String)>>,
+
+    pub kmiri_toml: Option<Box<KMiriConfigToml>>,
 }
 
 impl<'tcx> MiriMachine<'tcx> {
@@ -825,6 +827,7 @@ impl<'tcx> MiriMachine<'tcx> {
                         .collect()
                 })
                 .unwrap_or_default(),
+            kmiri_toml: config.kmiri_toml.as_ref().map(|val | Box::new( val.clone())),
             reachable_function_instances: Default::default(),
             backtrace_style: config.backtrace_style,
             user_relevant_crates,
@@ -909,6 +912,10 @@ impl<'tcx> MiriMachine<'tcx> {
             let drain = out.len().saturating_sub(500);
             out.drain(0..drain);
         }
+    }
+
+    pub(crate) fn is_page_table_enabled(&self) -> bool {
+        self.kmiri_toml.as_ref().map(|val| val.page_table()).unwrap_or(true)
     }
 
     fn allocator_shim_symbols(
@@ -1863,12 +1870,14 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             borrow_tracker.before_memory_write(alloc_id, prov_extra, range, machine)?;
         }
 
-        let paddr = machine.alloc_addresses.borrow().get_base_addr(alloc_id) as usize;
-        if let PageState::Typed { page_type, slot_size: _ } =
-            mirch::physical_mem().page_states[paddr / mirch::page_size()]
-        {
-            if page_type == TypedKind::PageTable {
-                machine.pt_checker = Some(paddr - paddr % mirch::PTE_SIZE);
+        if machine.is_page_table_enabled() {
+            let paddr = machine.alloc_addresses.borrow().get_base_addr(alloc_id) as usize;
+            if let PageState::Typed { page_type, slot_size: _ } =
+                mirch::physical_mem().page_states[paddr / mirch::page_size()]
+            {
+                if page_type == TypedKind::PageTable {
+                    machine.pt_checker = Some(paddr - paddr % mirch::PTE_SIZE);
+                }
             }
         }
 

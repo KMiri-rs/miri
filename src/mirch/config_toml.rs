@@ -6,19 +6,40 @@ use serde::Deserialize;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct KMiriConfigToml {
+    #[serde(default = "config_page_table")]
+    page_table: bool,
     /// The upper limit of physical memory for the kernel.
     total_mem_size: u64,
     /// The key is symbol defined in asm or ld sciprt.
     /// The value is physical address.
     #[serde(default)]
     layout: BTreeMap<String, u64>,
+    #[serde(default)]
+    kalloc: Vec<KAlloc>,
+}
+
+/// Enable page table by default.
+/// FIXME: default to false if asterinas migrates to toml config.
+fn config_page_table() -> bool {
+    true
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct KAlloc {
+    pub name: String,
+    pub base_addr: usize,
+    pub size: usize,
+    pub align: usize,
 }
 
 impl KMiriConfigToml {
     pub fn new(path: &Path) -> Option<Self> {
-        dbg!(path);
         let str = fs::read_to_string(path).ok()?;
         basic_toml::from_str(&str).ok()
+    }
+
+    pub fn page_table(&self) -> bool {
+        self.page_table
     }
 
     pub fn symbol_addr(&self, symbol: &str) -> Option<u64> {
@@ -27,6 +48,10 @@ impl KMiriConfigToml {
 
     pub fn layout_symbols(&self) -> impl Iterator<Item = (&str, u64)> {
         self.layout.iter().map(|(name, addr)| (name.as_str(), *addr))
+    }
+
+    pub fn get_kalloc(&self, base_addr: usize) -> Option<&KAlloc> {
+        self.kalloc.iter().find(|kalloc| kalloc.base_addr == base_addr)
     }
 }
 
