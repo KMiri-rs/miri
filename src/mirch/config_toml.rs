@@ -42,7 +42,7 @@ impl KMiriConfigToml {
         self.total_mem_size
     }
 
-    pub fn page_table(&self) -> bool {
+    pub fn page_table_enabled(&self) -> bool {
         self.page_table
     }
 
