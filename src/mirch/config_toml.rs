@@ -38,6 +38,10 @@ impl KMiriConfigToml {
         basic_toml::from_str(&str).ok()
     }
 
+    pub fn total_mem_size(&self) -> u64 {
+        self.total_mem_size
+    }
+
     pub fn page_table(&self) -> bool {
         self.page_table
     }

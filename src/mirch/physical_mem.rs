@@ -302,6 +302,12 @@ impl PhysicalMemory {
 
         Self { mem, page_states, init_masks: BTreeMap::new(), page_table: None }
     }
+
+    pub fn new_with_toml(toml: &KMiriConfigToml) -> Self {
+        super::config::init(PhysConfig::new_with_toml(toml));
+        let mem = unsafe { std::alloc::alloc_zeroed(Self::mem_buffer_layout()) };
+        Self { mem, page_states: vec![], init_masks: BTreeMap::new(), page_table: None }
+    }
 }
 
 impl PhysicalMemory {
