@@ -15,8 +15,8 @@ static mut PHYSICAL_MEM: PhysicalMemory = PhysicalMemory::empty();
 /// Inits a page-based pseudo physical memory for the KernMiri.
 ///
 /// The memory size and page size are defined in [`self::config`].
-pub fn init_pseudo_physical_mem(config: PhysConfig) {
-    *physical_mem_mut() = PhysicalMemory::new(config);
+pub fn init_pseudo_physical_mem(config: PhysConfig, page_table_enabled: bool) {
+    *physical_mem_mut() = PhysicalMemory::new(config, page_table_enabled);
 }
 
 /// Returns an immutable reference to `PhysicalMemory` instance.
@@ -286,27 +286,26 @@ impl PhysicalMemory {
         Layout::from_size_align(total_mem_size(), page_size()).unwrap()
     }
 
-    pub fn new(config: PhysConfig) -> Self {
+    pub fn new(config: PhysConfig, page_table_enabled: bool) -> Self {
         super::config::init(config);
         let mem = unsafe { std::alloc::alloc_zeroed(Self::mem_buffer_layout()) };
 
-        let mut page_states = vec![PageState::Unused; total_page_num()];
-        #[expect(
-            clippy::needless_range_loop,
-            reason = "kernel code section is the first part in all pages, but there are left space for free pages"
-        )]
-        for i in 0..kernel_code_page_num() {
-            page_states[i] =
-                PageState::Typed { page_type: TypedKind::Interpreter, slot_size: page_size() };
-        }
+        let page_states = if page_table_enabled {
+            let mut page_states = vec![PageState::Unused; total_page_num()];
+            #[expect(
+                clippy::needless_range_loop,
+                reason = "kernel code section is the first part in all pages, but there are left space for free pages"
+            )]
+            for i in 0..kernel_code_page_num() {
+                page_states[i] =
+                    PageState::Typed { page_type: TypedKind::Interpreter, slot_size: page_size() };
+            }
+            page_states
+        } else {
+            vec![]
+        };
 
         Self { mem, page_states, init_masks: BTreeMap::new(), page_table: None }
-    }
-
-    pub fn new_with_toml(toml: &KMiriConfigToml) -> Self {
-        super::config::init(PhysConfig::new_with_toml(toml));
-        let mem = unsafe { std::alloc::alloc_zeroed(Self::mem_buffer_layout()) };
-        Self { mem, page_states: vec![], init_masks: BTreeMap::new(), page_table: None }
     }
 }
 

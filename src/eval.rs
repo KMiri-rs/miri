@@ -535,11 +535,12 @@ pub fn eval_entry<'tcx>(
     config: &MiriConfig,
     genmc_ctx: Option<Rc<GenmcCtx>>,
 ) -> Result<(), NonZeroI32> {
-    mirch::init_pseudo_physical_mem(if let Some(toml) = &config.kmiri_toml {
-        PhysConfig::new_with_toml(toml)
+    let (phys_config, page_table_enabled) = if let Some(toml) = &config.kmiri_toml {
+        (PhysConfig::new_with_toml(toml), toml.page_table_enabled())
     } else {
-        config.pseudo_physical_mem_config
-    });
+        (config.pseudo_physical_mem_config, true)
+    };
+    mirch::init_pseudo_physical_mem(phys_config, page_table_enabled);
 
     // Copy setting before we move `config`.
     let ignore_leaks = config.ignore_leaks;
@@ -553,9 +554,11 @@ pub fn eval_entry<'tcx>(
         }
     };
 
-    unsafe {
-        let page_table = mirch::init_boot_pt();
-        mirch::set_page_table(page_table);
+    if page_table_enabled {
+        unsafe {
+            let page_table = mirch::init_boot_pt();
+            mirch::set_page_table(page_table);
+        }
     }
 
     let mut debugger_tui = None;
