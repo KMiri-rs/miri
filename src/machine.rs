@@ -1575,6 +1575,12 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
                     .extern_static_weak_import_default
                     .expect("`missing_weak_symbol` should have been initialized"),
             )
+        } else if let Some(&addr) = ecx.machine.foreign_symbol_addr_map.get(&link_name) {
+            // Linker-script symbols (e.g. `_sstack`, `_stext`) are declared as `extern static`
+            // in Rust but are never backed by an allocation — their *address* is the value.
+            // Return a Wildcard pointer at that address so that `addr_of!(_sstack)` yields the
+            // correct physical address while no concrete allocation is required.
+            interp_ok(interpret::Pointer::new(Provenance::Wildcard, Size::from_bytes(addr)))
         } else {
             throw_unsup_format!("extern static `{link_name}` is not supported by Miri")
         }
