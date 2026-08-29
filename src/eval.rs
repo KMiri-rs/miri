@@ -535,7 +535,11 @@ pub fn eval_entry<'tcx>(
     config: &MiriConfig,
     genmc_ctx: Option<Rc<GenmcCtx>>,
 ) -> Result<(), NonZeroI32> {
-    mirch::init_pseudo_physical_mem(config.pseudo_physical_mem_config);
+    mirch::init_pseudo_physical_mem(if let Some(toml) = &config.kmiri_toml {
+        PhysConfig::new_with_toml(toml)
+    } else {
+        config.pseudo_physical_mem_config
+    });
 
     // Copy setting before we move `config`.
     let ignore_leaks = config.ignore_leaks;

@@ -2,6 +2,7 @@ use std::{fs, io};
 
 use serde::Deserialize;
 
+use crate::KMiriConfigToml;
 use crate::mirch::try_kernel_code_vaddr_to_paddr;
 
 /// Parses a JSON configuration file into a `PhysConfig` structure.
@@ -104,6 +105,10 @@ impl PhysConfig {
             kernel_code_base_vaddr: 0xffff_ffff_8000_0000,
             boot_pt_linear_mapping_base_vaddr: 0xffff_8000_0000_0000,
         }
+    }
+
+    pub fn new_with_toml(toml: &KMiriConfigToml) -> Self {
+        Self { total_mem_size: toml.total_mem_size() as usize, ..Self::default() }
     }
 }
 
