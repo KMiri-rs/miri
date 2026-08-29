@@ -275,14 +275,14 @@ pub fn find_name_for_local(body: &mir::Body<'_>, local: mir::Local) -> Option<ru
     })
 }
 
-fn capture_frame(
-    ecx: &MiriInterpCx<'_>,
-    frame: &Frame<'_, Provenance, FrameExtra<'_>>,
+fn capture_frame<'tcx>(
+    ecx: &MiriInterpCx<'tcx>,
+    frame: &Frame<'tcx, Provenance, FrameExtra<'tcx>>,
 ) -> FrameInfo {
     let sm = ecx.tcx.sess.source_map();
     let span = frame.current_span();
     FrameInfo {
-        fn_name: instance_name(ecx, frame.instance().def_id()),
+        fn_name: instance_name(ecx, frame.instance()),
         source_file: source_file(sm, span),
         line_start: pos_to_line_nr(sm, span.lo()),
         line_end: pos_to_line_nr(sm, span.hi()),
