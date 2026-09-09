@@ -15,3 +15,6 @@ tests/native-lib/libtestlib.so
 .auto-*
 
 /genmc/
+
+miri_debugger.log
+miri_diagnostics.txt
