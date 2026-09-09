@@ -828,7 +828,10 @@ fn main() -> ExitCode {
             if !path.exists() {
                 fatal_error!("--kmiri-toml `{}` does not exist", path.display());
             }
-            miri_config.kmiri_toml = KMiriConfigToml::new(path);
+            match KMiriConfigToml::new(path) {
+                Ok(cfg) => miri_config.kmiri_toml = Some(cfg),
+                Err(err) => fatal_error!("{err}"),
+            }
         } else {
             // Forward to rustc.
             rustc_args.push(arg);
