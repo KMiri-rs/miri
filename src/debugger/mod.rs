@@ -93,7 +93,7 @@ impl<'tcx> MiriDebuggerHandle<'tcx> {
                     return match ecx
                         .active_thread_stack()
                         .last()
-                        .map(|frame| instance_name(ecx, frame.instance().def_id()))
+                        .map(|frame| instance_name(ecx, frame.instance()))
                     {
                         Some(current_fn) => {
                             if target == current_fn {
