@@ -6,9 +6,9 @@ use rustc_middle::mir::interpret::GlobalAlloc;
 use rustc_middle::mir::{self, BasicBlockData};
 
 use crate::borrow_tracker::stacked_borrows::debugger::DebuggerBorrowStacks;
+use crate::debugger::format_local::format_local;
 use crate::debugger::utils::{instance_name, pos_to_line_nr, render_src, source_file};
 use crate::debugger::{debugger_log, reachability};
-// use crate::mirch::kernel_code_vaddr_to_paddr;
 use crate::*;
 
 #[derive(Clone, Debug)]
@@ -175,7 +175,7 @@ impl DebuggerState {
                 }
             });
 
-        let locals = stack.last().map(capture_locals).unwrap_or_default();
+        let locals = stack.last().map(|frame| capture_locals(ecx, frame)).unwrap_or_default();
         let cfg_lines = stack.last().map(capture_cfg_lines).unwrap_or_default();
         let allocs = capture_allocs(ecx, &locals);
         let function_instances = ecx.machine.reachable_function_instances.clone();
@@ -212,7 +212,10 @@ impl DebuggerState {
     }
 }
 
-fn capture_locals(frame: &Frame<'_, Provenance, FrameExtra<'_>>) -> Vec<LocalInfo> {
+fn capture_locals<'tcx>(
+    ecx: &MiriInterpCx<'tcx>,
+    frame: &Frame<'tcx, Provenance, FrameExtra<'tcx>>,
+) -> Vec<LocalInfo> {
     frame
         .locals
         .iter()
@@ -221,8 +224,7 @@ fn capture_locals(frame: &Frame<'_, Provenance, FrameExtra<'_>>) -> Vec<LocalInf
             let local_idx = mir::Local::from_usize(idx);
             let body = frame.body();
             let local_decl = &body.local_decls[local_idx];
-            let raw = format!("{local:?}");
-            let (value, kind) = prettify_local_value(&raw, &local_decl.ty.to_string());
+            let (value, kind) = format_local(ecx, frame, local_idx);
             let (alloc_id, ptr) = match local.as_mplace_or_imm() {
                 Some(Either::Left((ptr, _))) =>
                     if let Some(prov) = ptr.provenance {
@@ -286,7 +288,7 @@ fn capture_frame<'tcx>(
         source_file: source_file(sm, span),
         line_start: pos_to_line_nr(sm, span.lo()),
         line_end: pos_to_line_nr(sm, span.hi()),
-        locals: capture_locals(frame),
+        locals: capture_locals(ecx, frame),
     }
 }
 
@@ -473,64 +475,6 @@ fn capture_allocs(ecx: &MiriInterpCx<'_>, locals: &[LocalInfo]) -> Vec<AllocInfo
 
     entries.sort_unstable_by_key(|e| e.alloc_id);
     entries
-}
-
-fn prettify_local_value(raw: &str, ty: &str) -> (String, LocalKind) {
-    let lower = raw.to_ascii_lowercase();
-
-    if lower.contains("dead") {
-        return ("-".to_string(), LocalKind::Dead);
-    }
-    if lower.contains("uninit") {
-        return ("uninit".to_string(), LocalKind::Uninitialized);
-    }
-
-    if let Some(hex) = extract_hex_scalar(raw) {
-        if is_pointer_type(ty) {
-            if hex == 0 {
-                return ("null".to_string(), LocalKind::Pointer);
-            }
-            return (format!("ptr(0x{hex:x})"), LocalKind::Pointer);
-        }
-        if ty == "bool" {
-            return ((hex != 0).to_string(), LocalKind::Initialized);
-        }
-        if let Ok(num) = i128::try_from(hex) {
-            return (format!("{num} (0x{num:x})"), LocalKind::Initialized);
-        }
-        return (format!("0x{hex:x}"), LocalKind::Initialized);
-    }
-
-    if is_pointer_type(ty) {
-        return (compact_debug(raw), LocalKind::Pointer);
-    }
-
-    (compact_debug(raw), LocalKind::Initialized)
-}
-
-fn extract_hex_scalar(raw: &str) -> Option<u128> {
-    let scalar_pos = raw.find("Scalar(")?;
-    let tail = &raw[scalar_pos..];
-    let start = tail.find("0x")? + scalar_pos;
-    let rest = &raw[start + 2..];
-    let hex_len = rest.chars().take_while(|c| c.is_ascii_hexdigit()).count();
-    if hex_len == 0 {
-        return None;
-    }
-    u128::from_str_radix(&rest[..hex_len], 16).ok()
-}
-
-fn is_pointer_type(ty: &str) -> bool {
-    ty.contains('*') || ty.contains('&')
-}
-
-fn compact_debug(raw: &str) -> String {
-    raw.replace("LocalState { value: Live(", "")
-        .replace("), ty: No }", "")
-        .replace("Immediate(", "")
-        .replace("Scalar(", "")
-        .trim()
-        .to_string()
 }
 
 /// Renders the source code of a MIR Body and highlights the source range
