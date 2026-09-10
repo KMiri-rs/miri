@@ -688,7 +688,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
         // Get a pointer to the beginning of this allocation.
         let base_addr = this.addr_from_alloc_id(alloc_id, Some(kind))?;
-        log!("[adjust_alloc_root_pointer] {base_addr:#x}");
 
         // kmiri: vaddr to paddr
         // kmiri: replace the stack allocation by pointing to the kernel stack region
@@ -807,7 +806,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let this = self.eval_context_ref();
 
         let (tag, vaddr) = ptr.into_raw_parts(); // addr is absolute (Miri provenance)
-        log!("[ptr_get_alloc] vaddr={:#x}", vaddr.bytes());
 
         let alloc_id = if let Provenance::Concrete { alloc_id, .. } = tag {
             alloc_id
