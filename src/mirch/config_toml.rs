@@ -10,8 +10,9 @@ pub struct KMiriConfigToml {
     page_table: bool,
     /// The upper limit of physical memory for the kernel.
     total_mem_size: u64,
-    /// The key is symbol defined in asm or ld sciprt.
-    /// The value is physical address.
+    /// Linker-script / `extern` symbols that should keep a fixed address.
+    /// Unknown `extern fn` symbols are rejected unless listed here (KMiri#76).
+    /// The value is a physical address.
     #[serde(default)]
     layout: BTreeMap<String, u64>,
     #[serde(default)]
@@ -33,9 +34,11 @@ pub struct KAlloc {
 }
 
 impl KMiriConfigToml {
-    pub fn new(path: &Path) -> Option<Self> {
-        let str = fs::read_to_string(path).ok()?;
-        basic_toml::from_str(&str).ok()
+    pub fn new(path: &Path) -> Result<Self, String> {
+        let text = fs::read_to_string(path)
+            .map_err(|err| format!("failed to read `{}`: {err}", path.display()))?;
+        basic_toml::from_str(&text)
+            .map_err(|err| format!("failed to parse `{}`: {err}", path.display()))
     }
 
     pub fn total_mem_size(&self) -> u64 {

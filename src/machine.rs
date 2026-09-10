@@ -607,7 +607,9 @@ pub struct MiriMachine<'tcx> {
 
     /// Deferred unsupported foreign item error discovered while materializing function pointers.
     /// `fn_ptr` in rustc calls `global_root_pointer(...).unwrap()`, so we cannot report an error
-    /// at that point without causing an ICE; report at the next interpreter checkpoint instead.
+    /// at that point without causing an ICE. Report at the next interpreter checkpoint instead
+    /// (`expose_provenance` for `ptr as usize`, local writes, and terminators). Do not let the
+    /// caller observe the fake address (KMiri#76).
     pub(crate) pending_unsupported_foreign_item: RefCell<Option<String>>,
 
     /// The random number generator used for resolving non-determinism.
@@ -1668,6 +1670,13 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         ecx: &InterpCx<'tcx, Self>,
         provenance: Self::Provenance,
     ) -> InterpResult<'tcx> {
+        // Taking the address of an unknown `extern fn` (e.g. linker `__sinit_array`)
+        // must fail here, before the bits are used as integers. Otherwise the program
+        // can subtract two fake kernel vaddrs and overflow instead of getting a
+        // "unknown foreign function symbol" error (KMiri#76).
+        if let Some(msg) = ecx.machine.pending_unsupported_foreign_item.borrow_mut().take() {
+            throw_machine_stop!(TerminationInfo::UnsupportedForeignItem(msg));
+        }
         ecx.expose_provenance(provenance)
     }
 

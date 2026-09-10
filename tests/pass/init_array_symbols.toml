@@ -1,0 +1,7 @@
+# Allow-list for linker-script / init-array symbols (KMiri#76).
+# `[layout]` values are physical addresses and must fit in a TOML integer (i64).
+total_mem_size = 0x8000000
+
+[layout]
+__sinit_array = 0x80014000
+__einit_array = 0x80014010

@@ -1,0 +1,14 @@
+error: unsupported operation: can't use unknown foreign function symbol `__einit_array`
+  --> tests/fail/unknown_init_array_symbols.rs:LL:CC
+   |
+LL |     let end = __einit_array as *const () as usize;
+   |               ^^^^^^^^^^^^^
+
+error: unsupported operation: can't use unknown foreign function symbol `__sinit_array`
+  --> tests/fail/unknown_init_array_symbols.rs:LL:CC
+   |
+LL |     let start = __sinit_array as *const () as usize;
+   |                 ^^^^^^^^^^^^^
+
+error: aborting due to 2 previous errors
+
