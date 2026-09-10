@@ -1,4 +1,5 @@
 pub mod channel;
+pub mod format_local;
 pub mod reachability;
 pub mod state;
 pub mod tui;
