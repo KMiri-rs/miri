@@ -13,10 +13,19 @@ pub fn miri_dir() -> std::io::Result<PathBuf> {
     Ok(canonicalize(MIRI_SCRIPT_ROOT_DIR)?.parent().unwrap().into())
 }
 
+fn miri_sysroot() -> Option<String> {
+    env::var("MIRI_SYSROOT").ok()
+}
+
 /// Queries the active toolchain for the Miri dir.
 pub fn active_toolchain() -> Result<String> {
     let sh = Shell::new()?;
     sh.change_dir(miri_dir()?);
+
+    if cmd!(sh, "rustup --version").read().is_err() & miri_sysroot().is_some() {
+        // `rustup` is unavailable, but `MIRI_SYSROOT` is set
+        return Ok(String::new());
+    }
     let stdout = cmd!(sh, "rustup show active-toolchain").read()?;
     Ok(stdout.split_whitespace().next().context("Could not obtain active Rust toolchain")?.into())
 }
@@ -56,8 +65,14 @@ impl MiriEnv {
         let sh = Shell::new()?; // we are preserving the current_dir on this one, so paths resolve properly!
         let miri_dir = miri_dir()?;
 
-        let sysroot = cmd!(sh, "rustc +{toolchain} --print sysroot").read()?.into();
-        let target_output = cmd!(sh, "rustc +{toolchain} --version --verbose").read()?;
+        let (sysroot, target_output) = if toolchain.is_empty() {
+            (miri_sysroot().unwrap().into(), cmd!(sh, "rustc --version --verbose").read()?)
+        } else {
+            (
+                cmd!(sh, "rustc +{toolchain} --print sysroot").read()?.into(),
+                cmd!(sh, "rustc +{toolchain} --version --verbose").read()?,
+            )
+        };
         let rustc_meta = rustc_version::version_meta_for(&target_output)?;
         let libdir = path!(sysroot / "lib" / "rustlib" / rustc_meta.host / "lib");
 
@@ -135,12 +150,13 @@ impl MiriEnv {
         cmd: &str,
         features: &[String],
     ) -> Cmd<'_> {
-        let MiriEnv { toolchain, cargo_extra_flags, cargo_bin, .. } = self;
+        let MiriEnv { cargo_extra_flags, cargo_bin, .. } = self;
+        let toolchain = &*self.toolchain();
         let manifest_path = path!(self.miri_dir / crate_dir.as_ref() / "Cargo.toml");
         let features = features_to_args(features);
         cmd!(
             self.sh,
-            "{cargo_bin} +{toolchain} {cmd} {cargo_extra_flags...} --manifest-path {manifest_path} {features...}"
+            "{cargo_bin}{toolchain} {cmd} {cargo_extra_flags...} --manifest-path {manifest_path} {features...}"
         )
     }
 
@@ -152,7 +168,8 @@ impl MiriEnv {
         features: &[String],
         args: impl IntoIterator<Item = impl AsRef<OsStr>>,
     ) -> Result<()> {
-        let MiriEnv { sysroot, toolchain, cargo_extra_flags, cargo_bin, .. } = self;
+        let MiriEnv { sysroot, cargo_extra_flags, cargo_bin, .. } = self;
+        let toolchain = &*self.toolchain();
         let path = path!(self.miri_dir / crate_dir.as_ref());
         let features = features_to_args(features);
         // Install binaries to the miri toolchain's `sysroot` so they do not interact with other toolchains.
@@ -161,7 +178,7 @@ impl MiriEnv {
         // like `--locked --locked` so we need extra logic to avoid that.
         let locked_flag =
             if cargo_extra_flags.iter().any(|f| f == "--locked") { None } else { Some("--locked") };
-        cmd!(self.sh, "{cargo_bin} +{toolchain} install {locked_flag...} {cargo_extra_flags...} --path {path} --force --root {sysroot} {features...} {args...}").run()?;
+        cmd!(self.sh, "{cargo_bin}{toolchain} install {locked_flag...} {cargo_extra_flags...} --path {path} --force --root {sysroot} {features...} {args...}").run()?;
         Ok(())
     }
 
@@ -271,10 +288,10 @@ impl MiriEnv {
         // Format in batches as not all our files fit into Windows' command argument limit.
         for batch in &files.chunks(256) {
             // Build base command.
-            let toolchain = &self.toolchain;
+            let toolchain = &*self.toolchain();
             let mut cmd = cmd!(
                 self.sh,
-                "rustfmt +{toolchain} --edition=2024 --config-path {config_path} --unstable-features --skip-children {flags...}"
+                "rustfmt{toolchain} --edition=2024 --config-path {config_path} --unstable-features --skip-children {flags...}"
             );
             if first {
                 // Log an abbreviating command, and only once.
@@ -297,5 +314,10 @@ impl MiriEnv {
         }
 
         Ok(())
+    }
+
+    fn toolchain(&self) -> String {
+        let toolchain = &*self.toolchain;
+        if toolchain.is_empty() { String::new() } else { format!(" +{toolchain}") }
     }
 }
