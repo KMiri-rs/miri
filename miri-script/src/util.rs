@@ -151,12 +151,12 @@ impl MiriEnv {
         features: &[String],
     ) -> Cmd<'_> {
         let MiriEnv { cargo_extra_flags, cargo_bin, .. } = self;
-        let toolchain = &*self.toolchain();
+        let toolchain = self.toolchain();
         let manifest_path = path!(self.miri_dir / crate_dir.as_ref() / "Cargo.toml");
         let features = features_to_args(features);
         cmd!(
             self.sh,
-            "{cargo_bin}{toolchain} {cmd} {cargo_extra_flags...} --manifest-path {manifest_path} {features...}"
+            "{cargo_bin} {toolchain...} {cmd} {cargo_extra_flags...} --manifest-path {manifest_path} {features...}"
         )
     }
 
@@ -169,7 +169,7 @@ impl MiriEnv {
         args: impl IntoIterator<Item = impl AsRef<OsStr>>,
     ) -> Result<()> {
         let MiriEnv { sysroot, cargo_extra_flags, cargo_bin, .. } = self;
-        let toolchain = &*self.toolchain();
+        let toolchain = self.toolchain();
         let path = path!(self.miri_dir / crate_dir.as_ref());
         let features = features_to_args(features);
         // Install binaries to the miri toolchain's `sysroot` so they do not interact with other toolchains.
@@ -178,7 +178,7 @@ impl MiriEnv {
         // like `--locked --locked` so we need extra logic to avoid that.
         let locked_flag =
             if cargo_extra_flags.iter().any(|f| f == "--locked") { None } else { Some("--locked") };
-        cmd!(self.sh, "{cargo_bin}{toolchain} install {locked_flag...} {cargo_extra_flags...} --path {path} --force --root {sysroot} {features...} {args...}").run()?;
+        cmd!(self.sh, "{cargo_bin} {toolchain...} install {locked_flag...} {cargo_extra_flags...} --path {path} --force --root {sysroot} {features...} {args...}").run()?;
         Ok(())
     }
 
@@ -288,10 +288,10 @@ impl MiriEnv {
         // Format in batches as not all our files fit into Windows' command argument limit.
         for batch in &files.chunks(256) {
             // Build base command.
-            let toolchain = &*self.toolchain();
+            let toolchain = self.toolchain();
             let mut cmd = cmd!(
                 self.sh,
-                "rustfmt{toolchain} --edition=2024 --config-path {config_path} --unstable-features --skip-children {flags...}"
+                "rustfmt {toolchain...} --edition=2024 --config-path {config_path} --unstable-features --skip-children {flags...}"
             );
             if first {
                 // Log an abbreviating command, and only once.
@@ -316,8 +316,8 @@ impl MiriEnv {
         Ok(())
     }
 
-    fn toolchain(&self) -> String {
+    fn toolchain(&self) -> Option<String> {
         let toolchain = &*self.toolchain;
-        if toolchain.is_empty() { String::new() } else { format!(" +{toolchain}") }
+        (!toolchain.is_empty()).then(|| format!("+{toolchain}"))
     }
 }
