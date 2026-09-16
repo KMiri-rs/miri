@@ -5,6 +5,8 @@ MIRI_SYSROOT_REBUILT := /root/.cache/miri
 .PHONY: install asterinas tock test
 
 install:
+	[ -d "$(MIRI_SYSROOT_REBUILT)" ] && MIRI_SYSROOT="$(MIRI_SYSROOT_REBUILT)" || MIRI_SYSROOT="$(SYSROOT)"; \
+	export MIRI_SYSROOT; \
 	cd $(PROJ)/kmiri && ./miri install --debug && \
 	cd $(PROJ)/kmiri-helper && cargo install --path .
 
@@ -34,8 +36,9 @@ test: install
 
 .PHONY: kmiri-setup
 # This generate a precompiled sysroot in `/root/.cache/miri`.
-kmiri-setup:
+kmiri-setup: install
 	export LD_LIBRARY_PATH=$(SYSROOT)/lib/rustlib/x86_64-unknown-linux-gnu/lib && \
+	which cargo-miri && \
     cargo miri setup
 
 .PHONY: test-in-blueos
