@@ -1,0 +1,4 @@
+total_mem_size = 0x8000000
+
+[user_preferred_symbol]
+strlen = true
