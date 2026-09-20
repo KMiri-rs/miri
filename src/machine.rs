@@ -1997,6 +1997,7 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
                 .map(|_| data_race::FrameState::default()),
         };
 
+        // log!("[init_frame] frame={}", kmiri_helper::instance_name(ecx.tcx.tcx, frame.instance()));
         interp_ok(frame.with_extra(extra))
     }
 
@@ -2057,16 +2058,25 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         let ret_ty = ecx.frame().return_place().layout;
         let (size, align) = (ret_ty.layout.size().bytes(), ret_ty.layout.align().bytes());
 
+        // let inst = ecx.frame().instance();
+        // let tcx = ecx.tcx.tcx;
+        // let indent = " ".repeat(ecx.frame_idx());
+        // log!(
+        //     "{indent}[push] {} ({}) ret_ty={:?} (size={} align={})",
+        //     kmiri_helper::instance_name(tcx, inst),
+        //     format!("{:?}", tcx.def_span(inst.def_id()))
+        //         .replace("/opt/sysroot/usr/local/lib/rustlib/src/rust/library/", ""),
+        //     ret_ty.ty,
+        //     ret_ty.layout.size.bytes(),
+        //     ret_ty.layout.align.bytes(),
+        // );
+
         if ecx.frame().extra.user_relevance >= ecx.active_thread_ref().current_user_relevance() {
             // We just pushed a frame that's at least as relevant as the so-far most relevant frame.
             // That means we are now the most relevant frame.
             let stack_len = ecx.active_thread_stack().len();
             ecx.active_thread_mut().set_top_user_relevant_frame(stack_len - 1);
         }
-
-        // Type of return value.
-        let ret_ty = ecx.frame().return_place().layout;
-        let (size, align) = (ret_ty.layout.size().bytes(), ret_ty.layout.align().bytes());
 
         // Pushes the stack pointer.
         let thread = ecx.machine.threads.active_thread_mut();
@@ -2081,11 +2091,26 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         // The address of return value is reserved before all locals in the frame,
         // and base stack address starts after the return value allocation.
         *next_stack_addr = adjust_stack_addr(size, align, *next_stack_addr);
+        // log!("{indent}       sp_record={record:#x} sp_next={next_stack_addr:#x}");
 
         interp_ok(())
     }
 
     fn before_stack_pop(ecx: &mut InterpCx<'tcx, Self>) -> InterpResult<'tcx> {
+        // let ret_ty = ecx.frame().return_place().layout;
+        // let inst = ecx.frame().instance();
+        // let tcx = ecx.tcx.tcx;
+        // let indent = " ".repeat(ecx.frame_idx());
+        // log!(
+        //     "{indent}[bpop] {} ({}) ret_ty={:?} (size={} align={})",
+        //     kmiri_helper::instance_name(tcx, inst),
+        //     format!("{:?}", tcx.def_span(inst.def_id()))
+        //         .replace("/opt/sysroot/usr/local/lib/rustlib/src/rust/library/", ""),
+        //     ret_ty.ty,
+        //     ret_ty.layout.size.bytes(),
+        //     ret_ty.layout.align.bytes(),
+        // );
+
         let frame = ecx.frame();
         // We want this *before* the return value copy, because the return place itself is protected
         // until we do `on_stack_pop` here, and we need to un-protect it to copy the return value.
@@ -2128,6 +2153,20 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
     ) -> InterpResult<'tcx, ReturnAction> {
         let ret_ty = frame.return_place().layout;
 
+        // let inst = frame.instance();
+        // let tcx = ecx.tcx.tcx;
+        // // `ecx.frame_idx()` panics if the stack is empty, so use the len instead.
+        // let indent = " ".repeat(ecx.active_thread_stack().len());
+        // log!(
+        //     "{indent}[pop ] {} ({}) ret_ty={:?} (size={} align={})",
+        //     kmiri_helper::instance_name(tcx, inst),
+        //     format!("{:?}", tcx.def_span(inst.def_id()))
+        //         .replace("/opt/sysroot/usr/local/lib/rustlib/src/rust/library/", ""),
+        //     ret_ty.ty,
+        //     ret_ty.layout.size.bytes(),
+        //     ret_ty.layout.align.bytes(),
+        // );
+
         // Needs to be done after dropping frame to show up on the right nesting level.
         // (Cc https://github.com/rust-lang/miri/issues/2266)
         if !ecx.active_thread_stack().is_empty() {
@@ -2143,6 +2182,9 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             let stack_addr_for_ret_value = record.addr;
             let (size, align) = (record.ret_ty_size, record.ret_ty_align);
             let stack_addr_after_ret_ty = adjust_stack_addr(size, align, stack_addr_for_ret_value);
+            // log!(
+            //     "{indent}       sp_record={stack_addr_for_ret_value:#x} sp_current={current_sp:#x}"
+            // );
 
             // Return value is allowed not to be allocated at all, meaning current address equals stack_addr_for_ret_value.
             // Or the return value is allocated, meaning current address equals stack_addr_after_ret_ty.
