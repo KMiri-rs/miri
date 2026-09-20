@@ -76,6 +76,19 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         // FIXME: avoid allocating memory
         let dest = this.force_allocation(dest)?;
 
+        // If the user configured this symbol to prefer their own implementation,
+        // skip the built-in shim entirely and delegate to the user's body directly.
+        if this
+            .machine
+            .kmiri_toml
+            .as_ref()
+            .is_some_and(|c| c.prefers_user_implementation(link_name.as_str()))
+        {
+            if let Some(body) = this.lookup_exported_symbol(link_name)? {
+                return interp_ok(Some(body));
+            }
+        }
+
         // The rest either implements the logic, or falls back to `lookup_exported_symbol`.
         let res = this.emulate_foreign_item_inner(link_name, abi, args, &dest)?;
         res.jump_to_next_block(this, &dest, ret, Some(unwind), |this| {

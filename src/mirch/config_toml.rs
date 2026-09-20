@@ -17,20 +17,19 @@ pub struct KMiriConfigToml {
     layout: BTreeMap<String, u64>,
     #[serde(default)]
     kalloc: Vec<KAlloc>,
-}
-
-/// Enable page table by default.
-/// FIXME: default to false if asterinas migrates to toml config.
-fn config_page_table() -> bool {
-    true
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct KAlloc {
-    pub name: String,
-    pub base_addr: usize,
-    pub size: usize,
-    pub align: usize,
+    /// Symbols defined in user code that should take precedence over built-in shims.
+    /// This is useful when you have your own implementation of standard library functions
+    /// (like `strlen`, `memcpy`, etc.) and want Miri to use them instead of reporting
+    /// a symbol clash error as in <https://github.com/KMiri-rs/KMiri/issues/171>.
+    ///
+    /// Example:
+    /// ```toml
+    /// [user_preferred_symbol]
+    /// strlen = true
+    /// memcpy = true
+    /// ```
+    #[serde(default)]
+    user_preferred_symbol: BTreeMap<String, bool>,
 }
 
 impl KMiriConfigToml {
@@ -60,6 +59,24 @@ impl KMiriConfigToml {
     pub fn get_kalloc(&self, base_addr: usize) -> Option<&KAlloc> {
         self.kalloc.iter().find(|kalloc| kalloc.base_addr == base_addr)
     }
+
+    pub fn prefers_user_implementation(&self, symbol_name: &str) -> bool {
+        self.user_preferred_symbol.get(symbol_name).copied().unwrap_or(false)
+    }
+}
+
+/// Enable page table by default.
+/// FIXME: default to false if asterinas migrates to toml config.
+fn config_page_table() -> bool {
+    true
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct KAlloc {
+    pub name: String,
+    pub base_addr: usize,
+    pub size: usize,
+    pub align: usize,
 }
 
 #[test]

@@ -214,6 +214,14 @@ fn check_shim_symbol_clash<'tcx>(
             return interp_ok(());
         }
 
+        // Check if the user has explicitly configured this symbol to prefer their
+        // own implementation over the built-in shim.
+        if this.machine.kmiri_toml.as_ref().is_some_and(|config| {
+            config.prefers_user_implementation(link_name.as_str())
+        }) {
+            return interp_ok(());
+        }
+
         throw_machine_stop!(TerminationInfo::SymbolShimClashing {
             link_name,
             span: body.span.data(),
