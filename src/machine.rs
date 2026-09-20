@@ -38,6 +38,7 @@ use crate::alloc_addresses::EvalContextExt;
 use crate::concurrency::cpu_affinity::{self, CpuAffinityMask};
 use crate::concurrency::data_race::{self, NaReadType, NaWriteType};
 use crate::concurrency::sync::SyncObj;
+use crate::concurrency::thread::StackAddrRecord;
 use crate::concurrency::{
     AllocDataRaceHandler, GenmcCtx, GenmcEvalContextExt as _, GlobalDataRaceHandler, weak_memory,
 };
@@ -2098,6 +2099,10 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
 
     #[inline(always)]
     fn after_stack_push(ecx: &mut InterpCx<'tcx, Self>) -> InterpResult<'tcx> {
+        // Type of return value.
+        let ret_ty = ecx.frame().return_place().layout;
+        let (size, align) = (ret_ty.layout.size().bytes(), ret_ty.layout.align().bytes());
+
         if ecx.frame().extra.user_relevance >= ecx.active_thread_ref().current_user_relevance() {
             // We just pushed a frame that's at least as relevant as the so-far most relevant frame.
             // That means we are now the most relevant frame.
@@ -2112,7 +2117,13 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         // Pushes the stack pointer.
         let thread = ecx.machine.threads.active_thread_mut();
         let next_stack_addr = &mut *thread.next_stack_vaddr.borrow_mut();
-        thread.stack_addr_records.push(*next_stack_addr);
+        let record = *next_stack_addr;
+        thread.stack_addr_records.push(StackAddrRecord {
+            addr: record,
+            ret_ty: ret_ty.ty,
+            ret_ty_size: ret_ty.layout.size.bytes(),
+            ret_ty_align: ret_ty.layout.align.bytes(),
+        });
         // The address of return value is reserved before all locals in the frame,
         // and base stack address starts after the return value allocation.
         *next_stack_addr = adjust_stack_addr(size, align, *next_stack_addr);
@@ -2147,8 +2158,9 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
 
         // Resumes the stack pointer for return value.
         let thread = ecx.machine.threads.active_thread_mut();
-        if let Some(stack_addr_for_ret_value) = thread.stack_addr_records.last().copied() {
-            *thread.next_stack_vaddr.borrow_mut() = stack_addr_for_ret_value;
+        if let Some(record) = thread.stack_addr_records.last().cloned() {
+            // record.addr is stack_addr_for_ret_value
+            *thread.next_stack_vaddr.borrow_mut() = record.addr;
         }
 
         interp_ok(())
@@ -2170,20 +2182,42 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
 
         // Check the reserved space of return value is correct, ensuring the stack address is correct.
         let thread = ecx.machine.threads.active_thread_mut();
-        if let Some(stack_addr_for_ret_value) = thread.stack_addr_records.pop() {
+        if let Some(record) = thread.stack_addr_records.pop() {
             let current_sp = *thread.next_stack_vaddr.borrow();
-            let (size, align) = (ret_ty.layout.size().bytes(), ret_ty.layout.align().bytes());
+
+            assert_eq!(ret_ty.ty, record.ret_ty);
+            let stack_addr_for_ret_value = record.addr;
+            let (size, align) = (record.ret_ty_size, record.ret_ty_align);
             let stack_addr_after_ret_ty = adjust_stack_addr(size, align, stack_addr_for_ret_value);
 
             // Return value is allowed not to be allocated at all, meaning current address equals stack_addr_for_ret_value.
             // Or the return value is allocated, meaning current address equals stack_addr_after_ret_ty.
-            assert!(
-                current_sp == stack_addr_for_ret_value || current_sp == stack_addr_after_ret_ty,
-                "the current stack address 0x{current_sp:x} must equal \
-                 0x{stack_addr_for_ret_value:x} or 0x{stack_addr_after_ret_ty:x}\n\
-                 ret_ty: {ret_ty:#?} size={size} align={align}",
-                ret_ty = ret_ty.ty
-            );
+            let panic = |bottom: Option<u64>| {
+                panic!(
+                    "the current stack address 0x{current_sp:x} must equal \
+                    {stack_addr_for_ret_value:#x} or {stack_addr_after_ret_ty:#x}{bot}\n\
+                    ret_ty={ret_ty:?}: size={size} align={align}",
+                    bot = bottom.map(|addr| format!(", or be above {addr:#x}")).unwrap_or_default(),
+                    ret_ty = ret_ty.ty
+                );
+            };
+
+            if !(current_sp == stack_addr_for_ret_value || current_sp == stack_addr_after_ret_ty) {
+                if let Some(caller_frame) = ecx.active_thread_stack().last() {
+                    let caller_frame_ret_ty = caller_frame.return_place().layout;
+                    let size = caller_frame_ret_ty.size.bytes();
+                    let align = caller_frame_ret_ty.align.bytes();
+                    let stack_addr_after_caller_ret_ty =
+                        adjust_stack_addr(size, align, stack_addr_after_ret_ty);
+                    if current_sp < stack_addr_after_caller_ret_ty {
+                        // The stack pointer is below caller return type,
+                        // meaning some unexpected stack allocation happens.
+                        panic(Some(stack_addr_after_caller_ret_ty));
+                    }
+                } else {
+                    panic(None);
+                }
+            }
         }
 
         // Move `frame` into a sub-scope so we control when it will be dropped.

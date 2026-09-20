@@ -14,6 +14,7 @@ use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_index::{Idx, IndexVec};
 use rustc_middle::mir::Mutability;
+use rustc_middle::ty::Ty;
 use rustc_middle::ty::layout::TyAndLayout;
 use rustc_span::{DUMMY_SP, Span};
 use rustc_target::spec::Os;
@@ -163,6 +164,14 @@ enum ThreadJoinStatus {
     Joined,
 }
 
+#[derive(Clone)]
+pub(crate) struct StackAddrRecord<'tcx> {
+    pub addr: u64,
+    pub ret_ty: Ty<'tcx>,
+    pub ret_ty_size: u64,
+    pub ret_ty_align: u64,
+}
+
 /// A thread.
 pub struct Thread<'tcx> {
     state: ThreadState<'tcx>,
@@ -174,7 +183,7 @@ pub struct Thread<'tcx> {
     stack: Vec<Frame<'tcx, Provenance, FrameExtra<'tcx>>>,
 
     /// Records for the addresses of the stack frames in the current thread.
-    pub(crate) stack_addr_records: Vec<u64>,
+    pub(crate) stack_addr_records: Vec<StackAddrRecord<'tcx>>,
 
     /// The stack address for the next stack variable.
     pub(crate) next_stack_vaddr: RefCell<u64>,
@@ -315,7 +324,7 @@ impl<'tcx> Thread<'tcx> {
     pub fn display_stack_records(&self) -> String {
         self.stack_addr_records
             .iter()
-            .map(|addr| format!("  {addr:#x}"))
+            .map(|addr| format!("  {:#x}", addr.addr))
             .collect::<Vec<String>>()
             .join(",\n")
     }
