@@ -38,6 +38,7 @@ use crate::alloc_addresses::EvalContextExt;
 use crate::concurrency::cpu_affinity::{self, CpuAffinityMask};
 use crate::concurrency::data_race::{self, NaReadType, NaWriteType};
 use crate::concurrency::sync::SyncObj;
+use crate::concurrency::thread::StackAddrRecord;
 use crate::concurrency::{
     AllocDataRaceHandler, GenmcCtx, GenmcEvalContextExt as _, GlobalDataRaceHandler, weak_memory,
 };
@@ -1155,52 +1156,6 @@ impl VisitProvenance for MiriMachine<'_> {
             data_race,
             alloc_addresses,
             fds,
-            blocking_io:_,
-            delayed_readiness_updates: _,
-            tcx: _,
-            isolated_op: _,
-            validation: _,
-            monotonic_clock: _,
-            layouts: _,
-            static_roots: _,
-            profiler: _,
-            string_cache: _,
-            exported_symbols_cache: _,
-            reachable_function_instances: _,
-            backtrace_style: _,
-            user_relevant_crates: _,
-            rng: _,
-            allocator: _,
-            tracked_alloc_ids: _,
-            track_alloc_accesses: _,
-            check_alignment: _,
-            cmpxchg_weak_failure_rate: _,
-            preemption_rate: _,
-            report_progress: _,
-            basic_block_count: _,
-            native_lib: _,
-            #[cfg(all(feature = "native-lib", unix))]
-            native_lib_ecx_interchange: _,
-            gc_interval: _,
-            since_gc: _,
-            num_cpus: _,
-            page_size: _,
-            stack_addr: _,
-            stack_size: _,
-            collect_leak_backtraces: _,
-            allocation_spans: _,
-            symbolic_alignment: _,
-            union_data_ranges: _,
-            pthread_mutex_sanity: _,
-            pthread_rwlock_sanity: _,
-            pthread_condvar_sanity: _,
-            allocator_shim_symbols: _,
-            mangle_internal_symbol_cache: _,
-            float_nondet: _,
-            float_rounding_error: _,
-            short_fd_operations: _,
-            debugger: _,
-            debugger_output: _,
             ..
         } = self;
 
@@ -2042,6 +1997,7 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
                 .map(|_| data_race::FrameState::default()),
         };
 
+        // log!("[init_frame] frame={}", kmiri_helper::instance_name(ecx.tcx.tcx, frame.instance()));
         interp_ok(frame.with_extra(extra))
     }
 
@@ -2098,6 +2054,23 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
 
     #[inline(always)]
     fn after_stack_push(ecx: &mut InterpCx<'tcx, Self>) -> InterpResult<'tcx> {
+        // Type of return value.
+        let ret_ty = ecx.frame().return_place().layout;
+        let (size, align) = (ret_ty.layout.size().bytes(), ret_ty.layout.align().bytes());
+
+        // let inst = ecx.frame().instance();
+        // let tcx = ecx.tcx.tcx;
+        // let indent = " ".repeat(ecx.frame_idx());
+        // log!(
+        //     "{indent}[push] {} ({}) ret_ty={:?} (size={} align={})",
+        //     kmiri_helper::instance_name(tcx, inst),
+        //     format!("{:?}", tcx.def_span(inst.def_id()))
+        //         .replace("/opt/sysroot/usr/local/lib/rustlib/src/rust/library/", ""),
+        //     ret_ty.ty,
+        //     ret_ty.layout.size.bytes(),
+        //     ret_ty.layout.align.bytes(),
+        // );
+
         if ecx.frame().extra.user_relevance >= ecx.active_thread_ref().current_user_relevance() {
             // We just pushed a frame that's at least as relevant as the so-far most relevant frame.
             // That means we are now the most relevant frame.
@@ -2105,22 +2078,39 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             ecx.active_thread_mut().set_top_user_relevant_frame(stack_len - 1);
         }
 
-        // Type of return value.
-        let ret_ty = ecx.frame().return_place().layout;
-        let (size, align) = (ret_ty.layout.size().bytes(), ret_ty.layout.align().bytes());
-
         // Pushes the stack pointer.
         let thread = ecx.machine.threads.active_thread_mut();
         let next_stack_addr = &mut *thread.next_stack_vaddr.borrow_mut();
-        thread.stack_addr_records.push(*next_stack_addr);
+        let record = *next_stack_addr;
+        thread.stack_addr_records.push(StackAddrRecord {
+            addr: record,
+            ret_ty: ret_ty.ty,
+            ret_ty_size: ret_ty.layout.size.bytes(),
+            ret_ty_align: ret_ty.layout.align.bytes(),
+        });
         // The address of return value is reserved before all locals in the frame,
         // and base stack address starts after the return value allocation.
         *next_stack_addr = adjust_stack_addr(size, align, *next_stack_addr);
+        // log!("{indent}       sp_record={record:#x} sp_next={next_stack_addr:#x}");
 
         interp_ok(())
     }
 
     fn before_stack_pop(ecx: &mut InterpCx<'tcx, Self>) -> InterpResult<'tcx> {
+        // let ret_ty = ecx.frame().return_place().layout;
+        // let inst = ecx.frame().instance();
+        // let tcx = ecx.tcx.tcx;
+        // let indent = " ".repeat(ecx.frame_idx());
+        // log!(
+        //     "{indent}[bpop] {} ({}) ret_ty={:?} (size={} align={})",
+        //     kmiri_helper::instance_name(tcx, inst),
+        //     format!("{:?}", tcx.def_span(inst.def_id()))
+        //         .replace("/opt/sysroot/usr/local/lib/rustlib/src/rust/library/", ""),
+        //     ret_ty.ty,
+        //     ret_ty.layout.size.bytes(),
+        //     ret_ty.layout.align.bytes(),
+        // );
+
         let frame = ecx.frame();
         // We want this *before* the return value copy, because the return place itself is protected
         // until we do `on_stack_pop` here, and we need to un-protect it to copy the return value.
@@ -2147,8 +2137,9 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
 
         // Resumes the stack pointer for return value.
         let thread = ecx.machine.threads.active_thread_mut();
-        if let Some(stack_addr_for_ret_value) = thread.stack_addr_records.last().copied() {
-            *thread.next_stack_vaddr.borrow_mut() = stack_addr_for_ret_value;
+        if let Some(record) = thread.stack_addr_records.last().cloned() {
+            // record.addr is stack_addr_for_ret_value
+            *thread.next_stack_vaddr.borrow_mut() = record.addr;
         }
 
         interp_ok(())
@@ -2162,6 +2153,20 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
     ) -> InterpResult<'tcx, ReturnAction> {
         let ret_ty = frame.return_place().layout;
 
+        // let inst = frame.instance();
+        // let tcx = ecx.tcx.tcx;
+        // // `ecx.frame_idx()` panics if the stack is empty, so use the len instead.
+        // let indent = " ".repeat(ecx.active_thread_stack().len());
+        // log!(
+        //     "{indent}[pop ] {} ({}) ret_ty={:?} (size={} align={})",
+        //     kmiri_helper::instance_name(tcx, inst),
+        //     format!("{:?}", tcx.def_span(inst.def_id()))
+        //         .replace("/opt/sysroot/usr/local/lib/rustlib/src/rust/library/", ""),
+        //     ret_ty.ty,
+        //     ret_ty.layout.size.bytes(),
+        //     ret_ty.layout.align.bytes(),
+        // );
+
         // Needs to be done after dropping frame to show up on the right nesting level.
         // (Cc https://github.com/rust-lang/miri/issues/2266)
         if !ecx.active_thread_stack().is_empty() {
@@ -2170,20 +2175,45 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
 
         // Check the reserved space of return value is correct, ensuring the stack address is correct.
         let thread = ecx.machine.threads.active_thread_mut();
-        if let Some(stack_addr_for_ret_value) = thread.stack_addr_records.pop() {
+        if let Some(record) = thread.stack_addr_records.pop() {
             let current_sp = *thread.next_stack_vaddr.borrow();
-            let (size, align) = (ret_ty.layout.size().bytes(), ret_ty.layout.align().bytes());
+
+            assert_eq!(ret_ty.ty, record.ret_ty);
+            let stack_addr_for_ret_value = record.addr;
+            let (size, align) = (record.ret_ty_size, record.ret_ty_align);
             let stack_addr_after_ret_ty = adjust_stack_addr(size, align, stack_addr_for_ret_value);
+            // log!(
+            //     "{indent}       sp_record={stack_addr_for_ret_value:#x} sp_current={current_sp:#x}"
+            // );
 
             // Return value is allowed not to be allocated at all, meaning current address equals stack_addr_for_ret_value.
             // Or the return value is allocated, meaning current address equals stack_addr_after_ret_ty.
-            assert!(
-                current_sp == stack_addr_for_ret_value || current_sp == stack_addr_after_ret_ty,
-                "the current stack address 0x{current_sp:x} must equal \
-                 0x{stack_addr_for_ret_value:x} or 0x{stack_addr_after_ret_ty:x}\n\
-                 ret_ty: {ret_ty:#?} size={size} align={align}",
-                ret_ty = ret_ty.ty
-            );
+            let panic = |bottom: Option<u64>| {
+                panic!(
+                    "the current stack address 0x{current_sp:x} must equal \
+                    {stack_addr_for_ret_value:#x} or {stack_addr_after_ret_ty:#x}{bot}\n\
+                    ret_ty={ret_ty:?}: size={size} align={align}",
+                    bot = bottom.map(|addr| format!(", or be above {addr:#x}")).unwrap_or_default(),
+                    ret_ty = ret_ty.ty
+                );
+            };
+
+            if !(current_sp == stack_addr_for_ret_value || current_sp == stack_addr_after_ret_ty) {
+                if let Some(caller_frame) = ecx.active_thread_stack().last() {
+                    let caller_frame_ret_ty = caller_frame.return_place().layout;
+                    let size = caller_frame_ret_ty.size.bytes();
+                    let align = caller_frame_ret_ty.align.bytes();
+                    let stack_addr_after_caller_ret_ty =
+                        adjust_stack_addr(size, align, stack_addr_after_ret_ty);
+                    if current_sp < stack_addr_after_caller_ret_ty {
+                        // The stack pointer is below caller return type,
+                        // meaning some unexpected stack allocation happens.
+                        panic(Some(stack_addr_after_caller_ret_ty));
+                    }
+                } else {
+                    panic(None);
+                }
+            }
         }
 
         // Move `frame` into a sub-scope so we control when it will be dropped.

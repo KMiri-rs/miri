@@ -148,8 +148,8 @@ impl DebuggerState {
             .min_allocated_stack_paddr()
             .map(|(paddr, _)| paddr);
         let last_recorded_stack_ptr =
-            ecx.machine.threads.active_thread_ref().stack_addr_records.last().map(|&vaddr| {
-                let vaddr = vaddr as usize;
+            ecx.machine.threads.active_thread_ref().stack_addr_records.last().map(|record| {
+                let vaddr = record.addr as usize;
                 let paddr_fallback = || {
                     mirch::try_kernel_code_vaddr_to_paddr(vaddr)
                         .unwrap_or_else(|| mirch::try_boot_pt_vaddr_to_paddr(vaddr).unwrap())
