@@ -1066,9 +1066,11 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         if let Some(stack_state) =
             this.machine.threads.stack_pool().iter_mut().find(|s| s.base_vaddr == stack_bottom)
         {
+            assert!(
+                stack_state.using,
+                "{stack_state:?} must be used for stack_bottom={stack_bottom:#x}"
+            );
             stack_state.clear_using();
-        } else {
-            panic!("Could not find stack to recycle for bottom address: {stack_bottom:#x}",);
         }
 
         interp_ok(())
