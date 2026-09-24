@@ -2,19 +2,24 @@ PROJ := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 SYSROOT := $(shell rustc --print sysroot)
 MIRI_SYSROOT_REBUILT := /root/.cache/miri
 
-.PHONY: install asterinas tock test
-
+.PHONY: install
 install:
 	[ -d "$(MIRI_SYSROOT_REBUILT)" ] && MIRI_SYSROOT="$(MIRI_SYSROOT_REBUILT)" || MIRI_SYSROOT="$(SYSROOT)"; \
 	export MIRI_SYSROOT; \
 	cd $(PROJ)/kmiri && ./miri install --debug && \
 	cd $(PROJ)/kmiri-helper && cargo install --path .
 
-asterinas: install
-	cd $(PROJ)/tests/init && \
+.PHONY: install-osdk
+install-osdk:
+	cd $(PROJ)/asterinas && OSDK_LOCAL_DEV=1 make install_osdk
+
+.PHONY: asterinas
+asterinas: install install-osdk
+	cd $(PROJ)/tests/unsafecell && \
 		OSDK_LOCAL_DEV=1 cargo osdk miri test
 
 TOCK_BOARD := $(PROJ)/tock/boards/qemu_rv64_virt
+.PHONY: tock
 tock: install
 	cd $(TOCK_BOARD) && \
 		MIRIFLAGS="-Zkmiri-toml=$(TOCK_BOARD)/kmiri.toml" \
@@ -25,6 +30,7 @@ MIRI_TEST_NAME := debugger_test
 MIRI_TEST := tests/pass/$(MIRI_TEST_NAME).rs
 __KMIRI_DIR_TARGET := $(PROJ)/kmiri/target
 ANALYSIS_DIR := $(__KMIRI_DIR_TARGET)/analysis
+.PHONY: test
 test: install
 	export __KMIRI_DIR_TARGET=$(__KMIRI_DIR_TARGET) && \
 	export LD_LIBRARY_PATH=$(SYSROOT)/lib && \

@@ -10,6 +10,9 @@ pub struct KMiriConfigToml {
     page_table: bool,
     /// The upper limit of physical memory for the kernel.
     total_mem_size: u64,
+    /// The upper limit of a spawned non-main thread.
+    #[serde(default = "config_stack_mem_size")]
+    stack_mem_size: u64,
     /// Linker-script / `extern` symbols that should keep a fixed address.
     /// Unknown `extern fn` symbols are rejected unless listed here (KMiri#76).
     /// The value is a physical address.
@@ -44,6 +47,10 @@ impl KMiriConfigToml {
         self.total_mem_size
     }
 
+    pub fn stack_mem_size(&self) -> u64 {
+        self.stack_mem_size
+    }
+
     pub fn page_table_enabled(&self) -> bool {
         self.page_table
     }
@@ -69,6 +76,10 @@ impl KMiriConfigToml {
 /// FIXME: default to false if asterinas migrates to toml config.
 fn config_page_table() -> bool {
     true
+}
+
+pub fn config_stack_mem_size() -> u64 {
+    0x4000 // 16 KB
 }
 
 #[derive(Clone, Debug, Deserialize)]
