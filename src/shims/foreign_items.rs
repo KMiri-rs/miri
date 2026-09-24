@@ -20,6 +20,7 @@ use rustc_target::spec::Os;
 use super::alloc::EvalContextExt as _;
 use super::backtrace::EvalContextExt as _;
 use crate::concurrency::GenmcEvalContextExt as _;
+use crate::concurrency::thread::Stack;
 use crate::helpers::EvalContextExt as _;
 use crate::mirch::{
     PageState, PageTable, TypedKind, dealloc_pages, insert_init_mask, type_pages_at,
@@ -862,7 +863,10 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     ExternAbi::Rust,
                     func_arg,
                     this.machine.layouts.unit,
-                    Some(stack_end - stack_size..stack_end),
+                    Some(Stack::Range {
+                        start: (stack_end - stack_size) as usize,
+                        end: stack_end as usize,
+                    }),
                 )?;
                 this.set_ap_init_thread(cpu_id as usize, id);
                 this.machine.thread_map.try_insert(task.ptr().addr(), id).unwrap();
@@ -881,7 +885,10 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     ExternAbi::Rust,
                     func_arg,
                     this.machine.layouts.unit,
-                    Some(stack_end - stack_size..stack_end),
+                    Some(Stack::Range {
+                        start: (stack_end - stack_size) as usize,
+                        end: stack_end as usize,
+                    }),
                 )?;
                 this.machine.thread_map.insert(task.ptr().addr(), id);
             }
