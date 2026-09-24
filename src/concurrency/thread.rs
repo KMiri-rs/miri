@@ -3,7 +3,6 @@
 use std::cell::RefCell;
 use std::mem;
 use std::ops::Range;
-use std::sync::atomic::AtomicUsize;
 use std::task::Poll;
 use std::time::{Duration, SystemTime};
 
@@ -434,6 +433,33 @@ pub enum ThreadLookupError {
     Terminated(ThreadId),
 }
 
+/// Represents the state of a thread stack in the memory pool.
+#[derive(Debug, Clone)]
+struct StackState {
+    base_vaddr: u64,
+    size: u64,
+    /// Only true if the stack is being used for a thread.
+    using: bool,
+}
+
+impl StackState {
+    fn new(base_vaddr: u64, size: u64) -> Self {
+        Self { base_vaddr, size, using: false }
+    }
+
+    fn range(&self) -> Range<u64> {
+        self.base_vaddr..(self.base_vaddr + self.size)
+    }
+
+    fn mark_using(&mut self) {
+        self.using = true;
+    }
+
+    fn clear_using(&mut self) {
+        self.using = false;
+    }
+}
+
 /// A set of threads.
 #[derive(Debug)]
 pub struct ThreadManager<'tcx> {
@@ -462,6 +488,16 @@ pub struct ThreadManager<'tcx> {
     fixed_scheduling: bool,
     /// An array records ID of the next thread to execute for each CPU.
     next_thread: [Option<ThreadId>; crate::machine::CPU_NUM],
+    /// Reusable stack allocation regions.
+    stack_pool: StackPool,
+}
+
+#[derive(Debug)]
+struct StackPool {
+    /// Stack state pool tracking all allocated stacks (Best-Fit strategy).
+    stack_pool: Vec<StackState>,
+    /// Next unique ID for allocating new stacks when pool is empty.
+    next_stack_id: usize,
 }
 
 impl VisitProvenance for ThreadManager<'_> {
@@ -478,6 +514,54 @@ impl VisitProvenance for ThreadManager<'_> {
 }
 
 impl<'tcx> ThreadManager<'tcx> {
+    /// Reusable stack memory regions for stack allocations.
+    fn stack_pool(&mut self) -> &mut Vec<StackState> {
+        &mut self.stack_pool.stack_pool
+    }
+
+    /// Get a stack range for a new thread.
+    /// Uses Best-Fit strategy to find the smallest suitable freed stack that fits the required size.
+    fn get_stack_range(&mut self, stack_mem_size: u64) -> Range<u64> {
+        // Find the best-fit entry from stack pool (smallest freed stack that fits)
+        let best_fit = self
+            .stack_pool()
+            .iter()
+            .enumerate()
+            .rev()
+            .filter(|(_, s)| !s.using && s.size >= stack_mem_size)
+            .min_by_key(|(_, s)| s.size);
+
+        if let Some((idx, _)) = best_fit {
+            let stack = &mut self.stack_pool()[idx];
+            assert!(!stack.using, "The stack {stack:?} must not be using!");
+            stack.mark_using();
+            return stack.range();
+        }
+
+        // Allocate a new stack when no suitable fit is found
+        let id = self.stack_pool.next_stack_id;
+        self.stack_pool.next_stack_id += 1;
+
+        let step = stack_mem_size as usize;
+        let base = kernel_stack_end_addr();
+        let start = base + id * step;
+        let end = base + (id + 1) * step;
+        assert!(end < total_mem_size());
+
+        let vaddr_base = kernel_code_paddr_to_vaddr(start) as u64;
+        let vaddr_end = kernel_code_paddr_to_vaddr(end) as u64;
+        let range = vaddr_base..vaddr_end;
+
+        // Add to stack pool with using=true
+        self.stack_pool().push({
+            let mut stack = StackState::new(vaddr_base, stack_mem_size);
+            stack.mark_using();
+            stack
+        });
+
+        range
+    }
+
     pub(crate) fn new(config: &MiriConfig) -> Self {
         let mut threads = IndexVec::new();
         // Create the main thread and add it to the list of threads.
@@ -501,6 +585,7 @@ impl<'tcx> ThreadManager<'tcx> {
             yield_active_thread: false,
             fixed_scheduling: config.fixed_scheduling,
             next_thread: [None; CPU_NUM],
+            stack_pool: StackPool { stack_pool: Vec::new(), next_stack_id: 1 },
         }
     }
 
@@ -584,8 +669,12 @@ impl<'tcx> ThreadManager<'tcx> {
     fn create_thread(
         &mut self,
         on_stack_empty: StackEmptyCallback<'tcx>,
-        stack_range: Range<u64>,
+        stack: Stack,
     ) -> ThreadId {
+        let stack_range = match stack {
+            Stack::Range { start, end } => start as u64..end as u64,
+            Stack::Size(size) => self.get_stack_range(size as u64),
+        };
         self.threads.push(Thread::new(None, Some(on_stack_empty), stack_range))
     }
 
@@ -754,6 +843,11 @@ impl<'tcx> ThreadManager<'tcx> {
     }
 }
 
+pub enum Stack {
+    Range { start: usize, end: usize },
+    Size(usize),
+}
+
 // Public interface to thread management.
 impl<'tcx> EvalContextExt<'tcx> for crate::MiriInterpCx<'tcx> {}
 pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
@@ -819,34 +913,22 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         start_abi: ExternAbi,
         func_arg: ImmTy<'tcx>,
         ret_layout: TyAndLayout<'tcx>,
-        stack_range: Option<Range<u64>>,
+        stack_range: Option<Stack>,
     ) -> InterpResult<'tcx, ThreadId> {
         let this = self.eval_context_ref();
-        let stack_mem_size = this
-            .machine
-            .kmiri_toml
-            .as_ref()
-            .map(|t| t.stack_mem_size())
-            .unwrap_or_else(config_stack_mem_size);
-        this.get_total_thread_count();
-
-        static STACK_ID: AtomicUsize = AtomicUsize::new(0);
         let stack_range = stack_range.unwrap_or_else(|| {
-            let id = STACK_ID.fetch_add(1, std::sync::atomic::Ordering::Acquire);
-            let step = stack_mem_size as usize;
-            // FIXME(tockos): we need a new layout for tockos, but here free pages
-            // are used to stack allocation for each thread.
-            let base = kernel_stack_end_addr();
-            let start = base + id * step;
-            let end = base + (id + 1) * step;
-            assert!(end < total_mem_size());
-            kernel_code_paddr_to_vaddr(start) as u64..kernel_code_paddr_to_vaddr(end) as u64
+            Stack::Size(
+                this.machine
+                    .kmiri_toml
+                    .as_ref()
+                    .map(|t| t.stack_mem_size())
+                    .unwrap_or_else(config_stack_mem_size) as usize,
+            )
         });
 
         let this = self.eval_context_mut();
 
-        // Create the new thread
-        // let current_span = this.machine.current_user_relevant_span();
+        // Create the new thread with automatic stack allocation/reuse
         let current_span = this.machine.debugger_current_span();
         let new_thread_id = this.machine.threads.create_thread(
             {
@@ -918,16 +1000,20 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let this = self.eval_context_mut();
 
         // Mark thread as terminated.
+        let thread_id = this.active_thread();
         let thread = this.active_thread_mut();
         assert!(thread.stack.is_empty(), "only threads with an empty stack can be terminated");
+
+        // Save stack bottom for recycling (we use it to find the corresponding StackState)
+        let stack_bottom = thread.stack_bottom;
+
         thread.state = ThreadState::Terminated;
 
         // Deallocate TLS.
-        let gone_thread = this.active_thread();
         {
             let mut free_tls_statics = Vec::new();
-            this.machine.threads.thread_local_allocs.retain(|&(_def_id, thread), &mut alloc_id| {
-                if thread != gone_thread {
+            this.machine.threads.thread_local_allocs.retain(|&(_def_id, tid), &mut alloc_id| {
+                if tid != thread_id {
                     // A different thread, keep this static around.
                     return true;
                 }
@@ -965,7 +1051,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         }
 
         // Unblock joining threads.
-        let unblock_reason = BlockReason::Join(gone_thread);
+        let unblock_reason = BlockReason::Join(thread_id);
         let threads = &this.machine.threads.threads;
         let joining_threads = threads
             .iter_enumerated()
@@ -974,6 +1060,15 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             .collect::<Vec<_>>();
         for thread in joining_threads {
             this.unblock_thread(thread, unblock_reason)?;
+        }
+
+        // Mark the corresponding StackState as not using (Best-Fit strategy)
+        if let Some(stack_state) =
+            this.machine.threads.stack_pool().iter_mut().find(|s| s.base_vaddr == stack_bottom)
+        {
+            stack_state.clear_using();
+        } else {
+            panic!("Could not find stack to recycle for bottom address: {stack_bottom:#x}",);
         }
 
         interp_ok(())
