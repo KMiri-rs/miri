@@ -7,6 +7,6 @@ mod page_table;
 mod physical_mem;
 
 pub use self::config::*;
-pub use self::config_toml::KMiriConfigToml;
+pub use self::config_toml::*;
 pub use self::page_table::*;
 pub use self::physical_mem::*;

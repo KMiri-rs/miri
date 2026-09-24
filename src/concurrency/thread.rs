@@ -22,7 +22,9 @@ use rustc_target::spec::Os;
 use crate::concurrency::GlobalDataRaceHandler;
 use crate::concurrency::scheduler::SchedulingAction;
 use crate::machine::CPU_NUM;
-use crate::mirch::{self, kernel_code_paddr_to_vaddr, kernel_stack_end_addr, total_mem_size};
+use crate::mirch::{
+    self, config_stack_mem_size, kernel_code_paddr_to_vaddr, kernel_stack_end_addr, total_mem_size,
+};
 use crate::shims::tls;
 use crate::*;
 
@@ -348,6 +350,7 @@ impl<'tcx> Thread<'tcx> {
         on_stack_empty: Option<StackEmptyCallback<'tcx>>,
         stack_range: Range<u64>,
     ) -> Self {
+        log!("[Thread::new] stack_range={:#x}..{:#x}", stack_range.start, stack_range.end);
         Self {
             state: ThreadState::Enabled,
             thread_name: name.map(|name| Vec::from(name.as_bytes())),
@@ -819,12 +822,18 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         stack_range: Option<Range<u64>>,
     ) -> InterpResult<'tcx, ThreadId> {
         let this = self.eval_context_ref();
+        let stack_mem_size = this
+            .machine
+            .kmiri_toml
+            .as_ref()
+            .map(|t| t.stack_mem_size())
+            .unwrap_or_else(config_stack_mem_size);
         this.get_total_thread_count();
 
         static STACK_ID: AtomicUsize = AtomicUsize::new(0);
         let stack_range = stack_range.unwrap_or_else(|| {
             let id = STACK_ID.fetch_add(1, std::sync::atomic::Ordering::Acquire);
-            let step = 0x4000;
+            let step = stack_mem_size as usize;
             // FIXME(tockos): we need a new layout for tockos, but here free pages
             // are used to stack allocation for each thread.
             let base = kernel_stack_end_addr();
