@@ -215,16 +215,21 @@ pub fn remove_init_mask(paddr: usize) {
 }
 
 /// Checks the page state of the page at `paddr`.
-pub fn check_page_state(paddr: usize, page_state: PageState) {
+pub fn check_page_state<'tcx>(paddr: usize, page_state: PageState) -> InterpResult<'tcx, ()> {
     let index = paddr / page_size();
     let physical_mem = physical_mem();
-    let current = physical_mem.page_states[index];
+    let Some(&current) = physical_mem.page_states.get(index) else {
+        throw_ub_format!(
+            "Page state UB: current page (paddr=0x{paddr:x}, index={index}) is out of range"
+        );
+    };
     if current != page_state {
-        panic!(
+        throw_ub_format!(
             "Page state UB: current page (paddr=0x{paddr:x}, index={index}) state is {current:?}, \
              while the expected should be {page_state:?}"
         );
     }
+    interp_ok(())
 }
 
 /// Sets the page state of the page at `paddr`.
@@ -315,11 +320,17 @@ impl PhysicalMemory {
     }
 
     #[expect(unused)]
-    pub fn check_page_state(&self, paddr: usize, page_state: PageState) {
+    pub fn page_state_matches(&self, paddr: usize, page_state: PageState) -> InterpResult<'_, ()> {
         let index = paddr / page_size();
-        if self.page_states[index] != page_state {
-            panic!("Page state UB: current page state is {:?}", self.page_states[index]);
+        let Some(&current) = self.page_states.get(index) else {
+            throw_ub_format!(
+                "Page state UB: current page (paddr=0x{paddr:x}, index={index}) is out of range"
+            );
+        };
+        if current != page_state {
+            throw_ub_format!("Page state UB: current page state is {current:?}");
         }
+        interp_ok(())
     }
 
     pub fn set_page_state(&mut self, paddr: usize, page_state: PageState) {

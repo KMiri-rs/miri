@@ -911,7 +911,7 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 let page_size = mirch::page_size();
                 for i in 0..count {
                     let addr = paddr + i * page_size;
-                    mirch::check_page_state(addr, PageState::Unused);
+                    mirch::check_page_state(addr, PageState::Unused)?;
                     mirch::set_page_state(addr, PageState::Untyped);
                     insert_init_mask(this, addr, this.machine.get_default_alloc_params());
                 }
@@ -952,7 +952,7 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 let page_size = mirch::page_size();
                 assert_eq!(page_size % slot_size, 0);
                 for page_index in 0..count {
-                    mirch::check_page_state(paddr + page_index * page_size, PageState::Untyped);
+                    mirch::check_page_state(paddr + page_index * page_size, PageState::Untyped)?;
                 }
                 type_pages_at(paddr, count, slot_size, TypedKind::from_usize(page_type).unwrap())?;
             }
