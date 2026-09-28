@@ -14,8 +14,9 @@ install-osdk:
 	cd $(PROJ)/asterinas && OSDK_LOCAL_DEV=1 make install_osdk
 
 .PHONY: asterinas
+ASTERINAS_TEST := init
 asterinas: install install-osdk
-	cd $(PROJ)/tests/unsafecell && \
+	cd $(PROJ)/tests/$(ASTERINAS_TEST) && \
 		OSDK_LOCAL_DEV=1 cargo osdk miri test
 
 TOCK_BOARD := $(PROJ)/tock/boards/qemu_rv64_virt
