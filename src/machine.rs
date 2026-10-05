@@ -1732,6 +1732,11 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
                 rustc_middle::mir::interpret::alloc_range(Size::ZERO, origin_alloc.size());
             let init_mask = origin_alloc.init_mask();
 
+            // A fully uninitialized source still has a mask to preserve. The
+            // backing bytes cannot turn its unknown value into initialized data.
+            let init_copy = init_mask.prepare_copy((0..alloc_size_usize).into());
+            new_allocation.init_mask_apply_copy(init_copy, alloc_range, 1);
+
             if !init_mask.is_range_initialized(alloc_range).is_err_and(|range| {
                 range.start == alloc_range.start && range.size == alloc_range.size
             }) {
@@ -1741,10 +1746,6 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
                 unsafe {
                     core::ptr::copy(src_ptr, dst_ptr, alloc_size_usize);
                 }
-
-                // Copy mask
-                let init_copy = init_mask.prepare_copy((0..alloc_size_usize).into());
-                new_allocation.init_mask_apply_copy(init_copy, alloc_range, 1);
 
                 // Copy provenance
                 // FIXME: not sure if the code here is correct, because provenance API has changed.

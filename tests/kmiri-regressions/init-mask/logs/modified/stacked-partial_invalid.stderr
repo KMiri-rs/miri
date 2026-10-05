@@ -1,0 +1,18 @@
+error: Undefined Behavior: constructing invalid value of type u8: encountered uninitialized memory, but expected an integer
+    --> /blueos/experiments/roadmap-20261003/legacy-pair/toolchain/lib/rustlib/src/rust/library/core/src/mem/mod.rs:1264:14
+     |
+1264 |     unsafe { intrinsics::transmute_unchecked(src) }
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+     |
+     = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+     = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+     = note: stack backtrace:
+             0: core::mem::transmute_neo::<core::mem::MaybeUninit<u8>, u8>
+                 at /blueos/experiments/roadmap-20261003/legacy-pair/toolchain/lib/rustlib/src/rust/library/core/src/mem/mod.rs:1264:14: 1264:50
+             1: core::mem::MaybeUninit::<u8>::assume_init
+                 at /blueos/experiments/roadmap-20261003/legacy-pair/toolchain/lib/rustlib/src/rust/library/core/src/mem/maybe_uninit.rs:729:13: 729:32
+             2: miri_start
+                 at /blueos/experiments/side-g0-publication-20261005/fixtures-public/init-mask/probe.rs:37:25: 37:49
+
+error: aborting due to 1 previous error
+

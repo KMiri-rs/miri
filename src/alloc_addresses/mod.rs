@@ -725,6 +725,11 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     );
                     let init_mask = old_allocation.init_mask();
 
+                    // Preserve unknown bytes when moving a stack allocation
+                    // onto physical backing, even if every byte is uninitialized.
+                    let init_copy = init_mask.prepare_copy((0..alloc_size_usize).into());
+                    allocation.init_mask_apply_copy(init_copy, alloc_range, 1);
+
                     if !init_mask.is_range_initialized(alloc_range).is_err_and(|range| {
                         range.start == alloc_range.start && range.size == alloc_range.size
                     }) {
@@ -734,10 +739,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                         unsafe {
                             core::ptr::copy(src_ptr, dst_ptr, alloc_size_usize);
                         }
-
-                        // Copy mask
-                        let init_copy = init_mask.prepare_copy((0..alloc_size_usize).into());
-                        allocation.init_mask_apply_copy(init_copy, alloc_range, 1);
 
                         // Copy provenance
                         let provenance_copy =
