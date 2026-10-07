@@ -295,6 +295,37 @@ pub fn physical_copy<'tcx>(
     interp_ok(())
 }
 
+pub fn physical_write_bytes<'tcx>(
+    paddr: usize,
+    bytes: &[u8],
+    ecx: &MiriInterpCx<'_>,
+) -> InterpResult<'tcx, ()> {
+    // Copy `len` bytes out of the Miri allocation `data` into physical
+    // memory at `paddr`, then mark them initialized. Generalizes
+    // `kern_miri_zero` to arbitrary byte patterns (still only usable
+    // on `Untyped` pages, like the zeroing shim).
+    let actual_ptr = mirch::paddr_to_mem(paddr);
+    unsafe {
+        core::ptr::copy_nonoverlapping(bytes.as_ptr(), actual_ptr, bytes.len());
+    }
+    // Mark the touched bytes initialized in their pages' init-mask
+    // shadows; a range may span several pages.
+    let page_size = mirch::page_size();
+    let mut remaining = bytes.len();
+    let mut addr = paddr;
+    while remaining > 0 {
+        let offset = addr % page_size;
+        let chunk = core::cmp::min(remaining, page_size - offset);
+        let init_masks = &mut mirch::physical_mem_mut().init_masks;
+        let mask_allocation = init_masks.get_mut(&(addr - offset)).unwrap();
+        let _ = mask_allocation
+            .get_bytes_unchecked_for_overwrite_ptr(ecx, (offset..offset + chunk).into());
+        remaining -= chunk;
+        addr += chunk;
+    }
+    interp_ok(())
+}
+
 /// Removes the initialization mask for the page at `paddr`.
 /// `paddr` is the start of a page.
 #[expect(dead_code)]

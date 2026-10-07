@@ -942,6 +942,17 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                         .get_bytes_unchecked_for_overwrite_ptr(this, (0..page_size).into());
                 }
             }
+            "kern_miri_write_bytes" => {
+                let [paddr, data, len] =
+                    this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                let paddr = this.read_target_usize(paddr)? as usize;
+                let bytes = {
+                    let data = this.read_pointer(data)?;
+                    let len = this.read_target_usize(len)?;
+                    this.read_bytes_ptr_strip_provenance(data, Size::from_bytes(len))?
+                };
+                mirch::physical_write_bytes(paddr, bytes, this)?;
+            }
             "kern_miri_retype_pages" => {
                 let [paddr, count, page_type, slot_size] =
                     this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
