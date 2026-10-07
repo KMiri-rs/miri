@@ -14,7 +14,7 @@
 
 use std::ptr;
 
-#[path = "../../dev/test_utils/physical_copy.rs"]
+#[path = "../../../dev/test_utils/physical_copy.rs"]
 mod utils;
 
 use utils::*;
