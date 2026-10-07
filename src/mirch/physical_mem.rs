@@ -476,6 +476,7 @@ pub enum PageState {
     },
 }
 
+#[repr(usize)]
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum TypedKind {
     Slab = 1,
