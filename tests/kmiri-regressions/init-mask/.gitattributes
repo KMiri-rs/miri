@@ -1,3 +1,0 @@
-# Preserve literal interpreter output, including final blank lines.
-logs/** -text -whitespace
-recorded-g0-results.json text eol=lf
