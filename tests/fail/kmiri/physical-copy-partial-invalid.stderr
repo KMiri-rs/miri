@@ -1,5 +1,5 @@
 error: Undefined Behavior: reading memory at ALLOC[0x0..0x1], but memory is uninitialized at [0x0..0x1], and this operation requires initialized memory
-  --> tests/fail/physical-copy-partial-invalid.rs:LL:CC
+  --> tests/fail/kmiri/physical-copy-partial-invalid.rs:LL:CC
    |
 LL |         black_box(p.read());
    |                   ^^^^^^^^ Undefined Behavior occurred here

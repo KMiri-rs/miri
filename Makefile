@@ -41,11 +41,9 @@ debugger: install
 	mv $(ANALYSIS_DIR)/*.json $(__KMIRI_DIR_TARGET)/analysis.json && \
 	MIRIFLAGS="$(MIRIFLAGS) --debugger" ./miri run $(MIRI_TEST_FILE)
 
-# Run Miri's ui test suite (pass + fail), e.g. `make test-fail` runs all
-# `physical-copy*` tests: pass cases under tests/pass and fail cases under
-# tests/fail (in-file `//~` annotations + `.stderr` reference files).
-# Add `BLESS=1` to regenerate the `.stderr` files.
-MIRI_TEST_FILTER ?= physical-copy
+# This filter can be a substring in the path, e.g. a prefix `no-paging`
+# to run all pass and fail tests. The default filter is for all kmiri tests.
+MIRI_TEST_FILTER ?= kmiri
 BLESS ?=
 .PHONY: test
 test: install
