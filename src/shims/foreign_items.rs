@@ -942,6 +942,17 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                         .get_bytes_unchecked_for_overwrite_ptr(this, (0..page_size).into());
                 }
             }
+            "kern_miri_write_bytes" => {
+                let [paddr, data, len] =
+                    this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                let paddr = this.read_target_usize(paddr)? as usize;
+                let bytes = {
+                    let data = this.read_pointer(data)?;
+                    let len = this.read_target_usize(len)?;
+                    this.read_bytes_ptr_strip_provenance(data, Size::from_bytes(len))?
+                };
+                mirch::physical_write_bytes(paddr, bytes, this)?;
+            }
             "kern_miri_retype_pages" => {
                 let [paddr, count, page_type, slot_size] =
                     this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
@@ -999,21 +1010,10 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
             "kern_miri_copy_untyped" => {
                 let [dst, src, len] =
                     this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
-                let mut dst = this.read_target_usize(dst)? as usize;
-                let mut src = this.read_target_usize(src)? as usize;
-                let mut len = this.read_target_usize(len)? as usize;
-                while len > 0 {
-                    let dst_remain = mirch::page_size() - dst % mirch::page_size();
-                    let src_remain = mirch::page_size() - src % mirch::page_size();
-                    let remain = core::cmp::min(dst_remain, src_remain);
-                    let real_dst = mirch::page_walk_or(dst, || dst).unwrap();
-                    let real_src = mirch::page_walk_or(src, || src).unwrap();
-                    let real_len = core::cmp::min(len, remain);
-                    mirch::physical_copy(real_dst, real_src, real_len);
-                    len -= real_len;
-                    src += real_len;
-                    dst += real_len;
-                }
+                let dst = this.read_target_usize(dst)? as usize;
+                let src = this.read_target_usize(src)? as usize;
+                let len = this.read_target_usize(len)? as usize;
+                mirch::physical_copy(dst, src, len)?;
             }
 
             // Fallback to shims in submodules.

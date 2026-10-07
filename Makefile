@@ -28,18 +28,28 @@ tock: install
 		cargo miri run --target riscv64imac-unknown-none-elf
 
 MIRI_TEST_NAME := debugger_test
-MIRI_TEST := tests/pass/$(MIRI_TEST_NAME).rs
+MIRI_TEST_FILE := tests/pass/$(MIRI_TEST_NAME).rs
 __KMIRI_DIR_TARGET := $(PROJ)/kmiri/target
 ANALYSIS_DIR := $(__KMIRI_DIR_TARGET)/analysis
-.PHONY: test
-test: install
+.PHONY: debugger
+debugger: install
 	export __KMIRI_DIR_TARGET=$(__KMIRI_DIR_TARGET) && \
 	export LD_LIBRARY_PATH=$(SYSROOT)/lib && \
     trap 'rm -f $(MIRI_TEST_NAME)' EXIT && \
 	rm -rf $(ANALYSIS_DIR) && \
-	kmiri-helper $(MIRI_TEST) && \
+	kmiri-helper $(MIRI_TEST_FILE) --emit=metadata && \
 	mv $(ANALYSIS_DIR)/*.json $(__KMIRI_DIR_TARGET)/analysis.json && \
-	MIRIFLAGS=--debugger ./miri run $(MIRI_TEST)
+	MIRIFLAGS="$(MIRIFLAGS) --debugger" ./miri run $(MIRI_TEST_FILE)
+
+# Run Miri's ui test suite (pass + fail), e.g. `make test-fail` runs all
+# `physical-copy*` tests: pass cases under tests/pass and fail cases under
+# tests/fail (in-file `//~` annotations + `.stderr` reference files).
+# Add `BLESS=1` to regenerate the `.stderr` files.
+MIRI_TEST_FILTER ?= physical-copy
+BLESS ?=
+.PHONY: test
+test: install
+	./miri test $(if $(BLESS),--bless) $(MIRI_TEST_FILTER)
 
 .PHONY: kmiri-setup
 # This generate a precompiled sysroot in `/root/.cache/miri`.

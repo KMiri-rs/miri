@@ -194,16 +194,136 @@ pub fn type_pages_at<'tcx>(
     interp_ok(())
 }
 
-/// Copies `len` bytes from `src` to `dst` in the simulated physical memory.
-pub fn physical_copy(dst: usize, src: usize, len: usize) {
-    unsafe {
-        let src_ptr = paddr_to_mem(src);
-        let dst_ptr = paddr_to_mem(dst);
-
-        core::ptr::copy(src_ptr, dst_ptr, len);
+/// Copies an untyped range `(dst, src, len)` given in virtual addresses.
+/// The range is split into page-bounded physical chunks by walking the page
+/// table. Every source is snapshotted before writing: virtual mappings can
+/// physically overlap. Typed objects must use interpreter memory operations,
+/// not this byte-only effect.
+pub fn physical_copy<'tcx>(
+    mut dst: usize,
+    mut src: usize,
+    mut len: usize,
+) -> InterpResult<'tcx, ()> {
+    // The caller hands us virtual addresses, so reject ranges that don't fit in
+    // `usize` or the backing memory before the split loop below, where an
+    // overflowing `src += chunk_len` could otherwise wrap around forever.
+    if dst.checked_add(len).is_none() || src.checked_add(len).is_none() || len > total_mem_size() {
+        throw_unsup_format!("untyped physical copy virtual range overflow or too large");
     }
 
-    // todo: mask copy
+    let page_size = page_size();
+    let mem = physical_mem();
+
+    // Walk the virtual range page by page, splitting it into page-bounded
+    // chunks (the init-mask shadow is tracked per page, so no chunk may cross
+    // a page boundary on either side) and snapshotting each source chunk.
+    // Sources are snapshotted before any write because distinct virtual ranges
+    // can map onto the same physical page: writing one chunk first would
+    // clobber the bytes another chunk has yet to read (memmove-like overlap).
+    let mut snapshots = Vec::new();
+    while len > 0 {
+        // Bytes left until the end of the current page on each side; the
+        // smaller one is the longest copy that keeps both sides within a page.
+        // Translate each virtual address to physical via the page table,
+        // falling back to the identity map when no page table is installed.
+        let Some(real_dst) = page_walk_or(dst, || dst) else {
+            throw_unsup_format!("untyped physical copy unmapped destination");
+        };
+        let Some(real_src) = page_walk_or(src, || src) else {
+            throw_unsup_format!("untyped physical copy unmapped source");
+        };
+        // Bytes to copy this iteration: capped by the remaining total and by
+        // the page boundary on both sides.
+        let chunk_len = {
+            let dst_remain = page_size - dst % page_size;
+            let src_remain = page_size - src % page_size;
+            let remain = core::cmp::min(dst_remain, src_remain);
+            core::cmp::min(len, remain)
+        };
+
+        for addr in [real_src, real_dst] {
+            // Only untyped pages may be copied byte-for-byte; typed pages must
+            // go through interpreter memory operations to preserve their tags.
+            if mem.page_states.get(addr / page_size) != Some(&PageState::Untyped) {
+                throw_unsup_format!("untyped physical copy requires exclusively untyped pages");
+            }
+            // Every page carries an init-mask allocation that shadows its
+            // per-byte initialization state; without it there is nothing to copy.
+            let Some(mask) = mem.init_masks.get(&(addr - addr % page_size)) else {
+                throw_unsup_format!("untyped physical copy missing initialization shadow");
+            };
+            // Raw bytes cannot represent pointer provenance, so refuse to copy
+            // a page that carries any.
+            if mask.provenance().provenances().next().is_some() {
+                throw_unsup_format!("untyped physical copy cannot represent pointer provenance");
+            }
+        }
+
+        // Capture both the raw bytes and their init bitmask: a byte-level copy
+        // must move the values *and* which of them are initialized.
+        let src_offset = real_src % page_size;
+        let source = &mem.init_masks[&(real_src - src_offset)];
+        let range = (src_offset..src_offset + chunk_len).into();
+        // `.to_vec()` makes this an owned snapshot: `get_bytes_unchecked` returns
+        // a slice straight into the physical buffer, and a later write of an
+        // earlier chunk must not clobber bytes a later chunk has yet to read.
+        let bytes = source.get_bytes_unchecked(range).to_vec();
+        let mask = source.init_mask().prepare_copy(range);
+        snapshots.push((real_dst, bytes, mask));
+
+        len -= chunk_len;
+        src += chunk_len;
+        dst += chunk_len;
+    }
+
+    // Apply the snapshots. Bounds/state/provenance were checked for every chunk
+    // above. Unknown bytes remain unknown; this is a plain byte copy that does
+    // not create a new typed allocation or tag.
+    let mem = physical_mem_mut();
+    for (dst, bytes, mask) in snapshots {
+        let dst_offset = dst % page_size;
+        let target = mem.init_masks.get_mut(&(dst - dst_offset)).unwrap();
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                bytes.as_ptr(),
+                target.get_bytes_unchecked_raw_mut().add(dst_offset),
+                bytes.len(),
+            );
+        }
+        target.init_mask_apply_copy(mask, (dst_offset..dst_offset + bytes.len()).into(), 1);
+    }
+    interp_ok(())
+}
+
+pub fn physical_write_bytes<'tcx>(
+    paddr: usize,
+    bytes: &[u8],
+    ecx: &MiriInterpCx<'_>,
+) -> InterpResult<'tcx, ()> {
+    // Copy `len` bytes out of the Miri allocation `data` into physical
+    // memory at `paddr`, then mark them initialized. Generalizes
+    // `kern_miri_zero` to arbitrary byte patterns (still only usable
+    // on `Untyped` pages, like the zeroing shim).
+    let actual_ptr = mirch::paddr_to_mem(paddr);
+    unsafe {
+        core::ptr::copy_nonoverlapping(bytes.as_ptr(), actual_ptr, bytes.len());
+    }
+    // Mark the touched bytes initialized in their pages' init-mask
+    // shadows; a range may span several pages.
+    let page_size = mirch::page_size();
+    let mut remaining = bytes.len();
+    let mut addr = paddr;
+    while remaining > 0 {
+        let offset = addr % page_size;
+        let chunk = core::cmp::min(remaining, page_size - offset);
+        let init_masks = &mut mirch::physical_mem_mut().init_masks;
+        let mask_allocation = init_masks.get_mut(&(addr - offset)).unwrap();
+        let _ = mask_allocation
+            .get_bytes_unchecked_for_overwrite_ptr(ecx, (offset..offset + chunk).into());
+        remaining -= chunk;
+        addr += chunk;
+    }
+    interp_ok(())
 }
 
 /// Removes the initialization mask for the page at `paddr`.
@@ -356,6 +476,7 @@ pub enum PageState {
     },
 }
 
+#[repr(usize)]
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum TypedKind {
     Slab = 1,

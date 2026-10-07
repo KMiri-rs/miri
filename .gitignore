@@ -18,3 +18,5 @@ tests/native-lib/libtestlib.so
 
 miri_debugger.log
 miri_diagnostics.txt
+*.rmeta
+*.o
