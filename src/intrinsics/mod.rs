@@ -130,6 +130,20 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 this.write_pointer(Pointer::new(ptr.provenance, masked_addr), dest)?;
             }
 
+            // Volatile accesses whose pointer does not have to be aligned.
+            "unaligned_volatile_load" => {
+                let [ptr] = check_intrinsic_arg_count(args)?;
+                let ptr = this.read_pointer(ptr)?;
+                let place = this.ptr_to_mplace_unaligned(ptr, dest.layout);
+                this.copy_op(&place, dest)?;
+            }
+            "unaligned_volatile_store" => {
+                let [ptr, val] = check_intrinsic_arg_count(args)?;
+                let ptr = this.read_pointer(ptr)?;
+                let place = this.ptr_to_mplace_unaligned(ptr, val.layout);
+                this.copy_op(val, &place)?;
+            }
+
             // We want to return either `true` or `false` at random, or else something like
             // ```
             // if !is_val_statically_known(0) { unreachable_unchecked(); }
