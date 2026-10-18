@@ -1,0 +1,13 @@
+error: Undefined Behavior: Page state UB: zeroing page (paddr=$HEX) that was not allocated by kern_miri_alloc_pages
+  --> tests/fail/kmiri/zero-unallocated-page.rs:LL:CC
+   |
+LL |         kern_miri_zero(DST, 2);
+   |         ^^^^^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+   = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+
