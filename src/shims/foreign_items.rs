@@ -929,6 +929,16 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 let paddr = this.read_target_usize(paddr)? as usize;
                 let page_count = this.read_target_usize(page_count)? as usize;
                 let page_size = mirch::page_size();
+                // Only pages allocated by `kern_miri_alloc_pages` have an init mask. Check all of
+                // them before writing so that a bad range does not touch the physical memory.
+                for i in 0..page_count {
+                    let paddr_page = paddr + i * page_size;
+                    if !mirch::physical_mem().init_masks.contains_key(&paddr_page) {
+                        throw_ub_format!(
+                            "Page state UB: zeroing page (paddr=0x{paddr_page:x}) that was not allocated by kern_miri_alloc_pages"
+                        );
+                    }
+                }
                 let actual_ptr = mirch::paddr_to_mem(paddr);
                 unsafe {
                     core::ptr::write_bytes(actual_ptr, 0, page_count * page_size);
