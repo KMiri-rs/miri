@@ -6,8 +6,8 @@ MIRI_SYSROOT_REBUILT := /root/.cache/miri
 install:
 	[ -d "$(MIRI_SYSROOT_REBUILT)" ] && MIRI_SYSROOT="$(MIRI_SYSROOT_REBUILT)" || MIRI_SYSROOT="$(SYSROOT)"; \
 	export MIRI_SYSROOT; \
-	cd $(PROJ)/kmiri && ./miri install --debug && \
-	cd $(PROJ)/kmiri-helper && cargo install --path .
+	cd $(PROJ)/kmiri && ./miri install --debug &> /dev/null && \
+	cd $(PROJ)/kmiri-helper && cargo install --path . &> /dev/null
 
 .PHONY: install-osdk
 install-osdk:
@@ -18,6 +18,14 @@ ASTERINAS_TEST := init
 asterinas: install install-osdk
 	cd $(PROJ)/tests/$(ASTERINAS_TEST) && \
 		OSDK_LOCAL_DEV=1 cargo osdk miri test
+
+ASTERINAS_TESTS := init frame-realloc page-table-realloc segment-zeroed task-switch-back
+.PHONY: asterinas-test-all
+asterinas-test-all: install install-osdk
+	for test in $(ASTERINAS_TESTS); do \
+		cd $(PROJ)/tests/$$test && \
+		OSDK_LOCAL_DEV=1 cargo osdk miri test; \
+	done
 
 TOCK_BOARD := $(PROJ)/tock/boards/qemu_rv64_virt
 .PHONY: tock
