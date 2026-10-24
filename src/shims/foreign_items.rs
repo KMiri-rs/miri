@@ -892,7 +892,7 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 )?;
                 this.machine.thread_map.insert(task.ptr().addr(), id);
             }
-            "miri_switch_to" => {
+            "miri_switch_to" | "miri_switch_to_after_return" => {
                 let [task] = this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
                 let task = this.deref_pointer(task)?;
                 let Some(thread_id) = this.machine.thread_map.get(&task.ptr().addr()) else {
@@ -900,7 +900,22 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                         "the program aborted execution due to wrong switch".to_owned()
                     ))
                 };
-                this.machine.threads.switch_to(*thread_id);
+                let thread_id = *thread_id;
+                if link_name.as_str() == "miri_switch_to" {
+                    this.machine.threads.switch_to(thread_id);
+                } else {
+                    // An exiting kernel task must finish its entry and TLS destructors
+                    // before switching away, so its stack is reclaimed normally.
+                    let mut on_stack_empty =
+                        this.active_thread_mut().on_stack_empty.take().unwrap();
+                    this.active_thread_mut().on_stack_empty = Some(Box::new(move |this| {
+                        let result = on_stack_empty(this)?;
+                        if result.is_ready() {
+                            this.machine.threads.switch_to(thread_id);
+                        }
+                        interp_ok(result)
+                    }));
+                }
             }
             // OS memory
             "kern_miri_alloc_pages" => {

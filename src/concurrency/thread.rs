@@ -799,11 +799,8 @@ impl<'tcx> ThreadManager<'tcx> {
     pub fn schedule_switch_thread_and_cpu(
         &mut self,
     ) -> Option<InterpResult<'tcx, SchedulingAction>> {
-        if let ThreadState::Terminated = self.threads[self.active_thread].state {
-            self.active_thread = ThreadId::MAIN_THREAD;
-            return Some(interp_ok(SchedulingAction::ExecuteStep));
-        }
-        // Switch to the next thread.
+        // A terminating kernel task may have queued a successor from on_stack_empty.
+        // Honor it before falling back to the main thread.
         if let Some(id) = self.next_thread[self.active_cpu] {
             assert_ne!(self.active_thread, id);
             let old_id = self.active_thread;
@@ -832,6 +829,10 @@ impl<'tcx> ThreadManager<'tcx> {
                     .into(),
                 );
             }
+        }
+        if let ThreadState::Terminated = self.threads[self.active_thread].state {
+            self.active_thread = ThreadId::MAIN_THREAD;
+            return Some(interp_ok(SchedulingAction::ExecuteStep));
         }
         if let Some(next_cpu) = self.next_cpu {
             self.active_cpu = next_cpu;
@@ -1060,6 +1061,23 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             .collect::<Vec<_>>();
         for thread in joining_threads {
             this.unblock_thread(thread, unblock_reason)?;
+        }
+
+        // Kernel tasks return to their queued successor, or to the bootstrap
+        // thread. That handoff waits for this entry and its destructors to end.
+        // Ordinary std/pthread threads must still use their explicit join path.
+        if this.machine.thread_map.values().any(|&id| id == thread_id) {
+            let next = this.machine.threads.next_thread[this.machine.threads.active_cpu]
+                .unwrap_or(ThreadId::MAIN_THREAD);
+            let old = this.machine.threads.set_active_thread(next);
+            match &mut this.machine.data_race {
+                GlobalDataRaceHandler::None => {}
+                GlobalDataRaceHandler::Vclocks(data_race) =>
+                    data_race.thread_joined(&this.machine.threads, thread_id),
+                GlobalDataRaceHandler::Genmc(genmc_ctx) =>
+                    genmc_ctx.handle_thread_join(next, thread_id)?,
+            }
+            this.machine.threads.set_active_thread(old);
         }
 
         // Mark the corresponding StackState as not using (Best-Fit strategy)
