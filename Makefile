@@ -19,7 +19,8 @@ asterinas: install install-osdk
 	cd $(PROJ)/tests/$(ASTERINAS_TEST) && \
 		OSDK_LOCAL_DEV=1 cargo osdk miri test
 
-ASTERINAS_TESTS := init frame-realloc page-table-realloc segment-zeroed task-switch-back
+ASTERINAS_TESTS := init frame-realloc page-table-realloc segment-zeroed \
+                   task-switch-back task-exit-last task-exit-with-runnable
 .PHONY: asterinas-test-all
 asterinas-test-all: install install-osdk
 	for test in $(ASTERINAS_TESTS); do \
