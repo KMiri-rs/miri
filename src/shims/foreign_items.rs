@@ -1043,6 +1043,13 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
             // Fallback to shims in submodules.
             _ => {
+                if let res = shims::kmiri_passthrough::EvalContextExt::emulate_bitmap_passthrough(
+                    this, link_name, abi, args, dest,
+                )? && !matches!(res, EmulateItemResult::NotSupported)
+                {
+                    return interp_ok(res);
+                }
+
                 // Math shims
                 if let res = shims::math::EvalContextExt::emulate_foreign_item_inner(
                     this, link_name, abi, args, dest,

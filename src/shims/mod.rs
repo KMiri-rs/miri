@@ -4,6 +4,7 @@ mod alloc;
 mod backtrace;
 mod files;
 mod math;
+mod kmiri_passthrough;
 #[cfg(all(feature = "native-lib", unix))]
 pub mod native_lib;
 mod unix;
