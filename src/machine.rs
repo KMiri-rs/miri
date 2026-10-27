@@ -1021,6 +1021,11 @@ impl<'tcx> MiriMachine<'tcx> {
             return if resolved { interp_ok(None) } else { interp_ok(Some(link_name)) };
         }
 
+        // Rust for Linux symbols:
+        if matches!(link_name.as_str(), "rust_helper_krealloc_node_align" | "krealloc_node_align") {
+            return interp_ok(None);
+        }
+
         let tcx = ecx.tcx.tcx;
         let mut resolved = false;
         crate::helpers::iter_exported_symbols(tcx, |_cnum, def_id| {
