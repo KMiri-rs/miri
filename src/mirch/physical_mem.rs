@@ -415,20 +415,8 @@ impl PhysicalMemory {
         super::config::init(config);
         let mem = unsafe { std::alloc::alloc_zeroed(Self::mem_buffer_layout()) };
 
-        let page_states = if page_table_enabled {
-            let mut page_states = vec![PageState::Unused; total_page_num()];
-            #[expect(
-                clippy::needless_range_loop,
-                reason = "kernel code section is the first part in all pages, but there are left space for free pages"
-            )]
-            for i in 0..kernel_code_page_num() {
-                page_states[i] =
-                    PageState::Typed { page_type: TypedKind::Interpreter, slot_size: page_size() };
-            }
-            page_states
-        } else {
-            vec![]
-        };
+        let page_states =
+            if page_table_enabled { vec![PageState::Unused; total_page_num()] } else { vec![] };
 
         Self { mem, page_states, init_masks: BTreeMap::new(), page_table: None }
     }

@@ -364,7 +364,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
     /// If the `paddr` is not referred to a typed slot, it returns `None`.
     fn lazy_alloc_typed_slot_allocation(&self, paddr: usize) -> Option<AllocId> {
         let page_index = paddr / mirch::page_size();
-        let page_info = mirch::physical_mem().page_states[page_index];
+        let page_info = *mirch::physical_mem().page_states.get(page_index)?;
 
         if let PageState::Typed { page_type: _, slot_size } = page_info {
             return Some(self.kernel_allocation_at(paddr, slot_size, slot_size));
