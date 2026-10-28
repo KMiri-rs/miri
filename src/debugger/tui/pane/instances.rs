@@ -332,9 +332,8 @@ mod tests {
 
     #[test]
     fn records_only_consecutive_duplicates() {
-        let mut search = StackSearchState::default();
-
-        search.query = "alpha".to_string();
+        let mut search =
+            StackSearchState { query: "alpha".to_string(), ..StackSearchState::default() };
         search.record_current_query();
         search.record_current_query();
 
@@ -349,9 +348,11 @@ mod tests {
 
     #[test]
     fn history_navigation_restores_draft() {
-        let mut search = StackSearchState::default();
-        search.history = vec!["first".to_string(), "second".to_string()];
-        search.query = "draft".to_string();
+        let mut search = StackSearchState {
+            history: vec!["first".to_string(), "second".to_string()],
+            query: "draft".to_string(),
+            ..StackSearchState::default()
+        };
 
         search.previous_history_entry();
         assert_eq!(search.query, "second");

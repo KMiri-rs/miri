@@ -612,10 +612,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             throw_unsup_format!("`NtWriteFile` `Key` parameter is non-null, which is unsupported");
         }
 
-        let fd = match handle {
-            Handle::File(fd) => fd,
-            _ => this.invalid_handle("NtWriteFile")?,
-        };
+        let Handle::File(fd) = handle else { this.invalid_handle("NtWriteFile")? };
 
         let Some(_desc) = this.machine.fds.get(fd) else { this.invalid_handle("NtWriteFile")? };
 
