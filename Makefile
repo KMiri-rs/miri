@@ -3,14 +3,14 @@ SYSROOT := $(shell rustc --print sysroot)
 MIRI_SYSROOT_REBUILT := /root/.cache/miri
 
 ASTERINAS_TOML := $(PROJ)/tests/asterinas.toml
-ASTERINAS_ENV_VARS := OSDK_LOCAL_DEV=1 MIRIFLAGS="-Zkmiri-toml=$(ASTERINAS_TOML)"
+ASTERINAS_ENV_VARS := OSDK_LOCAL_DEV=1 MIRIFLAGS="-Zkmiri-toml=$(ASTERINAS_TOML) -Zmiri-permissive-provenance"
 
 .PHONY: install
 install:
 	[ -d "$(MIRI_SYSROOT_REBUILT)" ] && MIRI_SYSROOT="$(MIRI_SYSROOT_REBUILT)" || MIRI_SYSROOT="$(SYSROOT)"; \
 	export MIRI_SYSROOT; \
-	cd $(PROJ)/kmiri && ./miri install --debug &> /dev/null && \
-	cd $(PROJ)/kmiri-helper && cargo install --path . &> /dev/null
+	cd $(PROJ)/kmiri && ./miri install --debug && \
+	cd $(PROJ)/kmiri-helper && cargo install --path .
 
 .PHONY: install-osdk
 install-osdk:
@@ -27,6 +27,7 @@ ASTERINAS_TESTS := init frame-realloc page-table-realloc segment-zeroed \
                    task-switch-back task-exit-last task-exit-with-runnable
 .PHONY: asterinas-test-all
 asterinas-test-all: install install-osdk
+	set -eu; \
 	for test in $(ASTERINAS_TESTS); do \
 		cd $(PROJ)/tests/$${test} && \
 		echo "Running test: $${test}" && \
