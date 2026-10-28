@@ -261,12 +261,13 @@ impl DebuggerSpan {
             let source_file = source_file(sm, body_span);
             DebuggerSpan {
                 src: if body_span.is_dummy() || source_file != source_file_hi {
-                    let mut src = RenderSrc::default();
-                    src.lines = Text::from(format!(
-                        "fn_name: {fn_name}\nbody span: {body_span:?}\nspan: {highlighted_span:?}"
-                    ))
-                    .lines;
-                    src
+                    RenderSrc {
+                        lines: Text::from(format!(
+                            "fn_name: {fn_name}\nbody span: {body_span:?}\nspan: {highlighted_span:?}"
+                        ))
+                        .lines,
+                        ..RenderSrc::default()
+                    }
                 } else {
                     render_src(body_span, highlighted_span, sm)
                 },

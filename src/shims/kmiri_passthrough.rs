@@ -1,12 +1,11 @@
-use std::collections::HashMap;
-use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
+use std::{fs, io};
 
 use rustc_abi::{Align, CanonAbi, Size};
+use rustc_data_structures::fx::FxHashMap;
 use rustc_middle::ty::Ty;
 use rustc_span::Symbol;
 use rustc_target::callconv::FnAbi;
@@ -14,7 +13,7 @@ use rustc_target::callconv::FnAbi;
 use crate::*;
 
 static PT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-static PT_ALLOCS: OnceLock<Mutex<HashMap<u64, (u64, u64)>>> = OnceLock::new();
+static PT_ALLOCS: OnceLock<Mutex<FxHashMap<u64, (u64, u64)>>> = OnceLock::new();
 static PT_REQ_SEQ: AtomicU64 = AtomicU64::new(1);
 
 impl<'tcx> EvalContextExt<'tcx> for crate::MiriInterpCx<'tcx> {}
@@ -38,18 +37,15 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
         match link_name.as_str() {
             "bitmap_zalloc" => {
-                let [nbits, flags] = this.check_shim_sig_lenient(abi, CanonAbi::C, link_name, args)?;
+                let [nbits, flags] =
+                    this.check_shim_sig_lenient(abi, CanonAbi::C, link_name, args)?;
                 let nbits = this.read_scalar(nbits)?.to_u32()?;
                 let flags = u64::from(this.read_scalar(flags)?.to_u32()?);
                 let _ = send_request(&format!("bitmap_zalloc {nbits} {flags}"));
 
-                let bits_per_long = this.pointer_size().bytes() * 8;
-                let words = if nbits == 0 {
-                    0
-                } else {
-                    u64::from(nbits).div_ceil(bits_per_long)
-                };
-                let size_bytes = words * this.pointer_size().bytes();
+                let bits_per_long = this.pointer_size().bytes().checked_mul(8).unwrap();
+                let words = if nbits == 0 { 0 } else { u64::from(nbits).div_ceil(bits_per_long) };
+                let size_bytes = words.checked_mul(this.pointer_size().bytes()).unwrap();
                 let align = this.pointer_size().bytes();
 
                 let alloc_bytes = size_bytes.max(1);
@@ -61,7 +57,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 )?;
                 let key = crate::Pointer::from(ptr).addr().bytes();
                 PT_ALLOCS
-                    .get_or_init(|| Mutex::new(HashMap::new()))
+                    .get_or_init(Default::default)
                     .lock()
                     .expect("passthrough alloc map poisoned")
                     .insert(key, (alloc_bytes, align));
@@ -77,7 +73,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 if ptr.addr().bytes() != 0 {
                     let key = ptr.addr().bytes();
                     if let Some((size_bytes, align)) = PT_ALLOCS
-                        .get_or_init(|| Mutex::new(HashMap::new()))
+                        .get_or_init(Default::default)
                         .lock()
                         .expect("passthrough alloc map poisoned")
                         .remove(&key)
@@ -91,16 +87,20 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 }
                 return interp_ok(crate::shims::EmulateItemResult::NeedsReturn);
             }
-            "rust_helper___set_bit" | "rust_helper_set_bit" | "rust_helper___clear_bit"
+            "rust_helper___set_bit"
+            | "rust_helper_set_bit"
+            | "rust_helper___clear_bit"
             | "rust_helper_clear_bit" => {
-                let [index, ptr] = this.check_shim_sig_lenient(abi, CanonAbi::C, link_name, args)?;
+                let [index, ptr] =
+                    this.check_shim_sig_lenient(abi, CanonAbi::C, link_name, args)?;
                 let index = this.read_target_usize(index)?;
                 let ptr = this.read_pointer(ptr)?;
 
                 let (alloc_id, _, _) = this.ptr_get_alloc_id(ptr, 0)?;
                 let alloc_size = this.get_alloc_info(alloc_id).size.bytes();
-                let nbits = alloc_size * 8;
-                let bytes = this.read_bytes_ptr_strip_provenance(ptr, Size::from_bytes(alloc_size))?;
+                let nbits = alloc_size.checked_mul(8).unwrap();
+                let bytes =
+                    this.read_bytes_ptr_strip_provenance(ptr, Size::from_bytes(alloc_size))?;
                 let hex = hex_encode(bytes);
                 let op = match link_name.as_str() {
                     "rust_helper___set_bit" => "set_bit",
@@ -115,7 +115,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     .map_err(|e| err_unsup_format!("kmiri passthrough parse failed: {e}"))?;
                 let new_bytes = hex_decode(&hex_out)
                     .map_err(|e| err_unsup_format!("kmiri passthrough hex failed: {e}"))?;
-                this.write_bytes_ptr(ptr, new_bytes.into_iter())?;
+                this.write_bytes_ptr(ptr, new_bytes)?;
                 return interp_ok(crate::shims::EmulateItemResult::NeedsReturn);
             }
             "_find_next_bit" | "_find_next_zero_bit" => {
@@ -140,7 +140,8 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 return interp_ok(crate::shims::EmulateItemResult::NeedsReturn);
             }
             "_find_last_bit" => {
-                let [ptr, nbits] = this.check_shim_sig_lenient(abi, CanonAbi::C, link_name, args)?;
+                let [ptr, nbits] =
+                    this.check_shim_sig_lenient(abi, CanonAbi::C, link_name, args)?;
                 let ptr = this.read_pointer(ptr)?;
                 let nbits = this.read_target_usize(nbits)?;
                 let nbytes = nbits.div_ceil(8);
@@ -180,7 +181,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     .map_err(|e| err_unsup_format!("kmiri passthrough parse failed: {e}"))?;
                 let out = hex_decode(&hex_out)
                     .map_err(|e| err_unsup_format!("kmiri passthrough hex failed: {e}"))?;
-                this.write_bytes_ptr(dst_ptr, out.into_iter())?;
+                this.write_bytes_ptr(dst_ptr, out)?;
                 return interp_ok(crate::shims::EmulateItemResult::NeedsReturn);
             }
             _ => {}
@@ -270,7 +271,7 @@ enum PassthroughEndpoint {
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
+    let mut out = String::with_capacity(bytes.len().checked_mul(2).unwrap());
     for b in bytes {
         use std::fmt::Write as _;
         let _ = write!(&mut out, "{b:02x}");
@@ -279,17 +280,18 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 fn hex_decode(hex: &str) -> Result<Vec<u8>, String> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return Err("odd hex length".to_string());
     }
-    let mut out = Vec::with_capacity(hex.len() / 2);
-    let mut i = 0;
-    while i < hex.len() {
-        let byte = u8::from_str_radix(&hex[i..i + 2], 16).map_err(|e| e.to_string())?;
-        out.push(byte);
-        i += 2;
-    }
-    Ok(out)
+    hex.as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| {
+            let s = std::str::from_utf8(pair).map_err(|e| e.to_string())?;
+            u8::from_str_radix(s, 16).map_err(|e| e.to_string())
+        })
+        .collect()
 }
 
 fn parse_ok_ret(resp: &str) -> Result<u64, String> {

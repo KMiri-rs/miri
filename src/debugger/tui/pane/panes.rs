@@ -455,11 +455,10 @@ impl Panes {
                     self.instances.search.backspace();
                     self.instances.refresh(state);
                 },
-            KeyCode::Char(c) =>
-                if self.focus == FocusPane::Instances {
-                    self.instances.search.type_char(c);
-                    self.instances.refresh(state);
-                },
+            KeyCode::Char(c) if self.focus == FocusPane::Instances => {
+                self.instances.search.type_char(c);
+                self.instances.refresh(state);
+            }
             _ => {}
         }
     }

@@ -96,15 +96,12 @@ impl<'tcx> MiriDebuggerHandle<'tcx> {
                         .last()
                         .map(|frame| instance_name(ecx, frame.instance()))
                     {
-                        Some(current_fn) => {
-                            if target == current_fn {
-                                self.set_current_mode(DebuggerMode::Step(1));
-                                // Send the DebuggerState.
-                                false
-                            } else {
-                                true
-                            }
+                        Some(current_fn) if target == current_fn => {
+                            self.set_current_mode(DebuggerMode::Step(1));
+                            // Send the DebuggerState.
+                            false
                         }
+                        Some(_) => true,
                         None => true,
                     },
                 DebuggerMode::RunToSrcLine(src_line) => {

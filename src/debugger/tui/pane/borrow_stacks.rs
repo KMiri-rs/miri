@@ -64,8 +64,7 @@ impl PaneBorrowStacks {
                     .then_some((idx_alloc, alloc))
             })
             .flat_map(|(idx_alloc, alloc)| {
-                let mut idx = InverseIdx::default();
-                idx.alloc = idx_alloc;
+                let mut idx = InverseIdx { alloc: idx_alloc, ..InverseIdx::default() };
                 alloc.borrow_stacks.to_table_rows(alloc, &mut idx, |iidx| {
                     self.inverse_idx.insert(rows_idx, iidx);
                     rows_idx += 1;
