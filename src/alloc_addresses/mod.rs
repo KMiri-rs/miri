@@ -401,15 +401,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             global_state.set_exposed_kernel_padd(alloc_id, actual_paddr);
         }
 
-        // Re-expose the root tag so wildcard/raw-pointer accesses can find a
-        // writable provenance after the typed-slot allocation is created.
-        let root_tag = {
-            let mut borrow_tracker = ecx.machine.borrow_tracker.as_ref().unwrap().borrow_mut();
-            borrow_tracker.root_ptr_tag(alloc_id, &ecx.machine)
-        };
-        ecx.expose_tag(alloc_id, root_tag).discard_err().unwrap_or_else(|| {
-            panic!("paddr={paddr:#x} ({alloc_id:?}) with {root_tag:?} has been exposed")
-        });
+        expose_tag(paddr, alloc_id, ecx);
         alloc_id
     }
 
@@ -442,18 +434,18 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             }
             paddr
         } else {
-            log!("vaddr <-> paddr = {vaddr:#x}");
-            vaddr
+            let vaddr_usize = vaddr as usize;
+            let paddr = mirch::try_kernel_code_vaddr_to_paddr(vaddr_usize)
+                .or_else(|| mirch::try_boot_pt_vaddr_to_paddr(vaddr_usize))
+                .unwrap_or(vaddr_usize) as u64;
+            log!("vaddr -> paddr (no-pt) = {vaddr:#x} -> {paddr:#x}");
+            paddr
         };
 
         // We always search the allocation to the right of this address. So if the size is strictly
         // negative, we have to search for `addr-1` instead.
         let addr = if size >= 0 { paddr } else { paddr.saturating_sub(1) };
         let pos = global_state.int_to_ptr_map.binary_search_by_key(&addr, |(addr, _)| *addr);
-
-        if paddr == 0x10000000 {
-            log!("addr={addr:#x} paddr={paddr:#x} pos={pos:?}");
-        }
 
         // Determine the in-bounds provenance for this pointer.
         let alloc_id = match pos {
@@ -519,7 +511,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
     ) -> InterpResult<'tcx, u64> {
         let this = self.eval_context_ref();
         let mut global_state = this.machine.alloc_addresses.borrow_mut();
-        let global_state = &mut *global_state;
 
         let vaddr = match global_state.base_paddr.get(&alloc_id) {
             Some(&paddr) =>
@@ -533,7 +524,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 let memory_kind =
                     memory_kind.expect("memory_kind is required since alloc_id is not cached");
                 let base_vaddr =
-                    this.addr_from_alloc_id_uncached(global_state, alloc_id, memory_kind)?;
+                    this.addr_from_alloc_id_uncached(&mut global_state, alloc_id, memory_kind)?;
 
                 // The addr is 0 for TypeId AllocKind.
                 if base_vaddr == 0 {
@@ -593,14 +584,17 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                         }
                     };
                     global_state.int_to_ptr_map.insert(pos, (base_paddr, alloc_id));
+
+                    drop(global_state);
+                    if mirch::is_in_cpu_local_section(base_paddr as usize) {
+                        log!("expose cpu local alloc: {alloc_id:?}");
+                        expose_tag(base_paddr as usize, alloc_id, this);
+                    }
                 }
 
                 base_vaddr
             }
         };
-        if vaddr == 0x10000000 {
-            log!("[addr_from_alloc_id] {vaddr:#x}");
-        }
         interp_ok(vaddr)
     }
 
@@ -851,6 +845,19 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let this = self.eval_context_ref();
         this.machine.alloc_addresses.borrow().exposed.iter().copied().collect()
     }
+}
+
+fn expose_tag<'tcx>(paddr: usize, alloc_id: AllocId, ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
+    // Re-expose the root tag so wildcard/raw-pointer accesses can find a
+    // writable provenance after the typed-slot allocation is created.
+    let root_tag = {
+        let mut borrow_tracker = ecx.machine.borrow_tracker.as_ref().unwrap().borrow_mut();
+        borrow_tracker.root_ptr_tag(alloc_id, &ecx.machine)
+    };
+    ecx.machine.alloc_addresses.borrow_mut().exposed.insert(alloc_id);
+    ecx.expose_tag(alloc_id, root_tag).discard_err().unwrap_or_else(|| {
+        panic!("paddr={paddr:#x} ({alloc_id:?}) with {root_tag:?} has been exposed")
+    });
 }
 
 impl<'tcx> MiriMachine<'tcx> {

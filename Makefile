@@ -2,6 +2,9 @@ PROJ := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 SYSROOT := $(shell rustc --print sysroot)
 MIRI_SYSROOT_REBUILT := /root/.cache/miri
 
+ASTERINAS_TOML := $(PROJ)/tests/asterinas.toml
+ASTERINAS_ENV_VARS := OSDK_LOCAL_DEV=1 MIRIFLAGS="-Zkmiri-toml=$(ASTERINAS_TOML)"
+
 .PHONY: install
 install:
 	[ -d "$(MIRI_SYSROOT_REBUILT)" ] && MIRI_SYSROOT="$(MIRI_SYSROOT_REBUILT)" || MIRI_SYSROOT="$(SYSROOT)"; \
@@ -16,16 +19,18 @@ install-osdk:
 .PHONY: asterinas
 ASTERINAS_TEST := init
 asterinas: install install-osdk
+	echo $(ASTERINAS_TESTS)
 	cd $(PROJ)/tests/$(ASTERINAS_TEST) && \
-		OSDK_LOCAL_DEV=1 cargo osdk miri test
+		$(ASTERINAS_ENV_VARS) cargo osdk miri test
 
 ASTERINAS_TESTS := init frame-realloc page-table-realloc segment-zeroed \
                    task-switch-back task-exit-last task-exit-with-runnable
 .PHONY: asterinas-test-all
 asterinas-test-all: install install-osdk
 	for test in $(ASTERINAS_TESTS); do \
-		cd $(PROJ)/tests/$$test && \
-		OSDK_LOCAL_DEV=1 cargo osdk miri test; \
+		cd $(PROJ)/tests/$${test} && \
+		echo "Running test: $${test}" && \
+		$(ASTERINAS_ENV_VARS) cargo osdk miri test; \
 	done
 
 TOCK_BOARD := $(PROJ)/tock/boards/qemu_rv64_virt
