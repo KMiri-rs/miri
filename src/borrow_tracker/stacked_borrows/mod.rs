@@ -598,7 +598,7 @@ impl Stacks {
         range: AllocRange,
         machine: &MiriMachine<'tcx>,
     ) -> InterpResult<'tcx> {
-        let print = alloc_id.0.get() == crate::TARGET_ALLOC_ID;
+        let print = false;
         let mut buf = String::with_capacity(1024);
         if print {
             writeln!(
