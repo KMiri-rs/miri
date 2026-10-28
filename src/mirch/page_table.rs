@@ -17,6 +17,7 @@ pub fn kernel_code_paddr_to_vaddr(paddr: usize) -> usize {
     paddr + super::kernel_code_base_vaddr()
 }
 
+#[expect(unused)]
 pub fn kernel_code_vaddr_to_paddr(vaddr: usize) -> usize {
     vaddr - super::kernel_code_base_vaddr()
 }

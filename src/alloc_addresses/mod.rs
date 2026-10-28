@@ -364,7 +364,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
     /// If the `paddr` is not referred to a typed slot, it returns `None`.
     fn lazy_alloc_typed_slot_allocation(&self, paddr: usize) -> Option<AllocId> {
         let page_index = paddr / mirch::page_size();
-        let page_info = mirch::physical_mem().page_states[page_index];
+        let page_info = *mirch::physical_mem().page_states.get(page_index)?;
 
         if let PageState::Typed { page_type: _, slot_size } = page_info {
             return Some(self.kernel_allocation_at(paddr, slot_size, slot_size));
@@ -393,13 +393,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 allocation.align,
             )
             .unwrap();
-            if alloc_id.0.get() == crate::TARGET_ALLOC_ID {
-                log!(
-                    "{:?}: borrow_tracker={:?}",
-                    crate::TARGET_ALLOC_ID,
-                    extra.borrow_tracker.as_ref().unwrap()
-                );
-            }
             allocation.with_extra(extra)
         };
         ecx.memory.alloc_map().insert(alloc_id, (kind, allocation));
@@ -434,7 +427,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let page_table_enabled = this.machine.is_page_table_enabled();
         let paddr = if page_table_enabled {
             let vaddr = vaddr as usize;
-            let mut boot_pt = false;
+            let boot_pt = false;
             let paddr_fallback = || {
                 // log!("[alloc_id_from_addr - page_walk_or] vaddr={vaddr:#x}");
                 mirch::try_kernel_code_vaddr_to_paddr(vaddr).unwrap_or_else(|| {
@@ -825,8 +818,8 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let base_paddr = *this.machine.alloc_addresses.borrow().base_paddr.get(&alloc_id).unwrap();
 
         let vaddr = vaddr.bytes_usize();
-        let mut boot_pt = false;
-        let mut paddr_fallback = || {
+        let boot_pt = false;
+        let paddr_fallback = || {
             // kernel_code_vaddr_to_paddr(addr.bytes_usize())
             mirch::try_kernel_code_vaddr_to_paddr(vaddr).unwrap_or_else(|| {
                 let kind = this
@@ -841,7 +834,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             })
         };
         let actual_paddr =
-            mirch::page_walk_or(vaddr, &mut paddr_fallback).unwrap_or_else(paddr_fallback) as u64;
+            mirch::page_walk_or(vaddr, paddr_fallback).unwrap_or_else(paddr_fallback) as u64;
         if boot_pt {
             log!("[ptr_get_alloc] boot_pt paddr={actual_paddr:#x} size={size}");
         }
@@ -859,8 +852,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         this.machine.alloc_addresses.borrow().exposed.iter().copied().collect()
     }
 }
-
-const TEST_VADDR: usize = 0xffff80000210ff80;
 
 impl<'tcx> MiriMachine<'tcx> {
     pub fn free_alloc_id(&mut self, dead_id: AllocId, size: Size, align: Align, kind: MemoryKind) {

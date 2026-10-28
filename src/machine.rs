@@ -918,7 +918,10 @@ impl<'tcx> MiriMachine<'tcx> {
     }
 
     pub(crate) fn is_page_table_enabled(&self) -> bool {
-        self.kmiri_toml.as_ref().map(|val| val.page_table_enabled()).unwrap_or(true)
+        self.kmiri_toml
+            .as_ref()
+            .map(|val| val.page_table_enabled())
+            .unwrap_or(DEFAULT_ENABLE_PAGE_TABLE)
     }
 
     fn allocator_shim_symbols(
@@ -1019,6 +1022,11 @@ impl<'tcx> MiriMachine<'tcx> {
             ecx.machine.foreign_symbol_resolution_cache.borrow().get(&link_name)
         {
             return if resolved { interp_ok(None) } else { interp_ok(Some(link_name)) };
+        }
+
+        // Rust for Linux symbols:
+        if matches!(link_name.as_str(), "rust_helper_krealloc_node_align" | "krealloc_node_align") {
+            return interp_ok(None);
         }
 
         let tcx = ecx.tcx.tcx;
@@ -1900,12 +1908,6 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             }
         }
         if let Some(borrow_tracker) = &mut alloc_extra.borrow_tracker {
-            if alloc_id.0.get() == crate::TARGET_ALLOC_ID {
-                log!(
-                    "[before_memory_deallocation] {alloc_id} borrow_tracker={:#?}",
-                    borrow_tracker
-                );
-            }
             borrow_tracker.before_memory_deallocation(alloc_id, prove_extra, size, machine)?;
         }
         // Check if there are any sync objects that would like to prevent freeing this memory.

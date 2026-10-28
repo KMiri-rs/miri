@@ -194,6 +194,7 @@ pub fn kernel_code_end() -> usize {
 }
 
 /// Returns number of pages in kernel code section
+#[expect(unused)]
 pub fn kernel_code_page_num() -> usize {
     config().kernel_code_size / page_size()
 }
