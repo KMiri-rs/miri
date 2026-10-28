@@ -49,6 +49,10 @@ pub fn is_in_physical_mem(ptr: *const ()) -> bool {
         .contains(&(ptr as usize))
 }
 
+pub fn is_in_cpu_local_section(paddr: usize) -> bool {
+    (cpu_local_start_addr()..cpu_local_end_addr()).contains(&paddr)
+}
+
 /// Creates an `Allocation` at `paddr` with `layout`.
 ///
 /// The `paddr` is the physical address in the OS. This method will
