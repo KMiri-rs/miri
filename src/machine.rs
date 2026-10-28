@@ -918,7 +918,10 @@ impl<'tcx> MiriMachine<'tcx> {
     }
 
     pub(crate) fn is_page_table_enabled(&self) -> bool {
-        self.kmiri_toml.as_ref().map(|val| val.page_table_enabled()).unwrap_or(true)
+        self.kmiri_toml
+            .as_ref()
+            .map(|val| val.page_table_enabled())
+            .unwrap_or(DEFAULT_ENABLE_PAGE_TABLE)
     }
 
     fn allocator_shim_symbols(

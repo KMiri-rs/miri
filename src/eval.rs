@@ -538,7 +538,7 @@ pub fn eval_entry<'tcx>(
     let (phys_config, page_table_enabled) = if let Some(toml) = &config.kmiri_toml {
         (PhysConfig::new_with_toml(toml), toml.page_table_enabled())
     } else {
-        (config.pseudo_physical_mem_config, true)
+        (config.pseudo_physical_mem_config, DEFAULT_ENABLE_PAGE_TABLE)
     };
     mirch::init_pseudo_physical_mem(phys_config, page_table_enabled);
 
