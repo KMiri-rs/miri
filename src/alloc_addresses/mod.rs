@@ -79,6 +79,8 @@ pub struct GlobalStateInner {
     /// This is used for allocating addresses for stack allocations.
     #[expect(unused)]
     next_stack_vaddr: u64,
+    /// Next virtual address cursor for non-global allocations.
+    next_dyn_vaddr: u64,
 }
 
 impl VisitProvenance for GlobalStateInner {
@@ -94,6 +96,7 @@ impl VisitProvenance for GlobalStateInner {
             next_base_vaddr: _,
             next_cpu_local_paddr: _,
             next_stack_vaddr: _,
+            next_dyn_vaddr: _,
         } = self;
         // Though base_addr, int_to_ptr_map, and exposed contain AllocIds, we do not want to visit them.
         // int_to_ptr_map and exposed must contain only live allocations, and those
@@ -123,6 +126,7 @@ impl GlobalStateInner {
             next_base_vaddr: kernel_code_paddr_to_vaddr(mirch::kernel_static_start_addr()) as u64,
             next_stack_vaddr: kernel_code_paddr_to_vaddr(mirch::kernel_stack_end_addr()) as u64,
             next_cpu_local_paddr: kernel_code_paddr_to_vaddr(mirch::cpu_local_start_addr()) as u64,
+            next_dyn_vaddr: kernel_code_paddr_to_vaddr(mirch::total_mem_size()) as u64,
         }
     }
 
@@ -296,7 +300,9 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 *next_stack_vaddr = base_vaddr;
 
                 base_vaddr
-            } else {
+            } else if this.machine.cpu_local_alloc_set.borrow().contains(&alloc_id)
+                || memory_kind == MiriMemoryKind::Global.into()
+            {
                 let (next_vaddr, limit) =
                     if this.machine.cpu_local_alloc_set.borrow().contains(&alloc_id) {
                         (
@@ -334,12 +340,37 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     .ok_or_else(|| err_exhaust!(AddressSpaceFull))?;
                 // Even if `Size` didn't overflow, we might still have filled up the address space.
                 if *next_vaddr > this.target_usize_max() {
+                    throw_exhaust!(AddressSpaceFull);
+                }
+                base_vaddr
+            } else {
+                // FIXME: Need a extensible way to support kernel and user code.
+                // This case is for user code to put heap allocations.
+                // Kernel code usually shouldn't fall into this, and we haven't avoid these pages
+                // from collapsing with this allocation.
+                // Non-global allocations (e.g. Rust/C heap) use free physical pages.
+                // Allocate from the top down to avoid colliding with thread stacks, which grow
+                // upward from `kernel_stack_end_addr()`.
+                let size = info.size.bytes().max(1);
+                let slack = rng.random_range(0..16);
+
+                let end_vaddr = global_state
+                    .next_dyn_vaddr
+                    .checked_sub(slack)
+                    .ok_or_else(|| err_exhaust!(AddressSpaceFull))?;
+                let unaligned_base =
+                    end_vaddr.checked_sub(size).ok_or_else(|| err_exhaust!(AddressSpaceFull))?;
+                let base_vaddr = unaligned_base - (unaligned_base % info.align.bytes());
+
+                let lower = kernel_code_paddr_to_vaddr(mirch::kernel_stack_end_addr()) as u64;
+                if base_vaddr < lower {
                     log!(
-                        "[addr_from_alloc_id_uncached - error] `next_vaddr={next_vaddr:#x} > target_usize_max={:#x}` makes AddressSpaceFull",
-                        this.target_usize_max()
+                        "[addr_from_alloc_id_uncached - error] `base_addr={base_vaddr:#x} < lower={lower:#x}` makes AddressSpaceFull",
                     );
                     throw_exhaust!(AddressSpaceFull);
                 }
+
+                global_state.next_dyn_vaddr = base_vaddr;
                 base_vaddr
             };
 
