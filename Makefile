@@ -5,11 +5,13 @@ MIRI_SYSROOT_REBUILT := /root/.cache/miri
 ASTERINAS_TOML := $(PROJ)/tests/asterinas.toml
 ASTERINAS_ENV_VARS := OSDK_LOCAL_DEV=1 MIRIFLAGS="-Zkmiri-toml=$(ASTERINAS_TOML) -Zmiri-permissive-provenance"
 
+DEBUG := --debug
+
 .PHONY: install
 install:
 	[ -d "$(MIRI_SYSROOT_REBUILT)" ] && MIRI_SYSROOT="$(MIRI_SYSROOT_REBUILT)" || MIRI_SYSROOT="$(SYSROOT)"; \
 	export MIRI_SYSROOT; \
-	cd $(PROJ)/kmiri && ./miri install --debug && \
+	cd $(PROJ)/kmiri && ./miri install $(DEBUG) && \
 	cd $(PROJ)/kmiri-helper && cargo install --path .
 
 .PHONY: install-osdk
