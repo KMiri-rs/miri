@@ -33,14 +33,88 @@ pub struct KMiriConfigToml {
     /// ```
     #[serde(default)]
     user_preferred_symbol: BTreeMap<String, bool>,
+    /// Configuration for KMiri's optional interrupt model.
+    #[serde(default)]
+    irq: IrqConfigToml,
+}
+
+/// Configuration for deterministic and randomized interrupt injection.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct IrqConfigToml {
+    enabled: bool,
+    tick_interval_basic_blocks: u64,
+    inject_at_basic_blocks: Vec<u64>,
+    random_injection_rate: f64,
+    random_seed: u64,
+    handler_budget_basic_blocks: u64,
+    trace: bool,
+}
+
+impl Default for IrqConfigToml {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            tick_interval_basic_blocks: 0,
+            inject_at_basic_blocks: Vec::new(),
+            random_injection_rate: 0.0,
+            random_seed: 0,
+            handler_budget_basic_blocks: 10_000,
+            trace: false,
+        }
+    }
+}
+
+impl IrqConfigToml {
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn tick_interval_basic_blocks(&self) -> u64 {
+        self.tick_interval_basic_blocks
+    }
+
+    pub fn inject_at_basic_blocks(&self) -> &[u64] {
+        &self.inject_at_basic_blocks
+    }
+
+    pub fn random_injection_rate(&self) -> f64 {
+        self.random_injection_rate
+    }
+
+    pub fn random_seed(&self) -> u64 {
+        self.random_seed
+    }
+
+    pub fn handler_budget_basic_blocks(&self) -> u64 {
+        self.handler_budget_basic_blocks
+    }
+
+    pub fn trace(&self) -> bool {
+        self.trace
+    }
 }
 
 impl KMiriConfigToml {
     pub fn new(path: &Path) -> Result<Self, String> {
         let text = fs::read_to_string(path)
             .map_err(|err| format!("failed to read `{}`: {err}", path.display()))?;
-        basic_toml::from_str(&text)
-            .map_err(|err| format!("failed to parse `{}`: {err}", path.display()))
+        let config: Self = basic_toml::from_str(&text)
+            .map_err(|err| format!("failed to parse `{}`: {err}", path.display()))?;
+        let rate = config.irq.random_injection_rate;
+        if !rate.is_finite() || !(0.0..=1.0).contains(&rate) {
+            return Err(format!(
+                "invalid `[irq].random_injection_rate` in `{}`: expected a value in 0.0..=1.0",
+                path.display()
+            ));
+        }
+        if config.irq.enabled && config.irq.handler_budget_basic_blocks == 0 {
+            return Err(format!(
+                "invalid `[irq].handler_budget_basic_blocks` in `{}`: expected a non-zero value when IRQ simulation is enabled",
+                path.display()
+            ));
+        }
+        Ok(config)
     }
 
     pub fn total_mem_size(&self) -> u64 {
@@ -69,6 +143,10 @@ impl KMiriConfigToml {
 
     pub fn prefers_user_implementation(&self, symbol_name: &str) -> bool {
         self.user_preferred_symbol.get(symbol_name).copied().unwrap_or(false)
+    }
+
+    pub fn irq(&self) -> &IrqConfigToml {
+        &self.irq
     }
 }
 
@@ -111,4 +189,34 @@ _eappmem = 0x80400000
     assert_eq!(config.layout["_stext"], 0x80000000);
     assert_eq!(config.layout["_sapps"], 0x80100000);
     assert_eq!(config.layout["_eappmem"], 0x80400000);
+}
+
+#[test]
+fn irq_defaults_and_values() {
+    let config: KMiriConfigToml = basic_toml::from_str("total_mem_size = 0x8000000\n").unwrap();
+    assert!(!config.irq().enabled());
+    assert_eq!(config.irq().handler_budget_basic_blocks(), 10_000);
+
+    let config: KMiriConfigToml = basic_toml::from_str(
+        r#"
+total_mem_size = 0x8000000
+
+[irq]
+enabled = true
+tick_interval_basic_blocks = 8
+inject_at_basic_blocks = [12, 20]
+random_injection_rate = 0.25
+random_seed = 7
+handler_budget_basic_blocks = 64
+trace = true
+"#,
+    )
+    .unwrap();
+    assert!(config.irq().enabled());
+    assert_eq!(config.irq().tick_interval_basic_blocks(), 8);
+    assert_eq!(config.irq().inject_at_basic_blocks(), [12, 20]);
+    assert_eq!(config.irq().random_injection_rate(), 0.25);
+    assert_eq!(config.irq().random_seed(), 7);
+    assert_eq!(config.irq().handler_budget_basic_blocks(), 64);
+    assert!(config.irq().trace());
 }

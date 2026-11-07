@@ -848,6 +848,90 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 let current_cpu = this.machine.threads.active_cpu;
                 this.machine.threads.cpu_local_base[current_cpu] = cpu_base as usize;
             }
+            "kern_miri_irq_is_enabled" => {
+                let [] = this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                if !this.machine.irq_config.enabled() {
+                    throw_machine_stop!(TerminationInfo::Abort(
+                        "IRQ shim used while KMiri IRQ simulation is disabled".to_owned()
+                    ));
+                }
+                let cpu = this.machine.threads.active_cpu;
+                this.write_scalar(Scalar::from_bool(this.machine.irq_cpus[cpu].enabled), dest)?;
+            }
+            "kern_miri_irq_disable" => {
+                let [] = this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                if !this.machine.irq_config.enabled() {
+                    throw_machine_stop!(TerminationInfo::Abort(
+                        "IRQ shim used while KMiri IRQ simulation is disabled".to_owned()
+                    ));
+                }
+                let cpu = this.machine.threads.active_cpu;
+                this.machine.irq_cpus[cpu].enabled = false;
+                if this.machine.irq_config.trace() {
+                    eprintln!(
+                        "KMiri IRQ: cpu={cpu} thread={:?} action=disable block_count={} pending={}",
+                        this.machine.threads.active_thread(),
+                        this.machine.basic_block_count,
+                        this.machine.irq_cpus[cpu].pending.len(),
+                    );
+                }
+            }
+            "kern_miri_irq_enable" => {
+                let [] = this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                if !this.machine.irq_config.enabled() {
+                    throw_machine_stop!(TerminationInfo::Abort(
+                        "IRQ shim used while KMiri IRQ simulation is disabled".to_owned()
+                    ));
+                }
+                let cpu = this.machine.threads.active_cpu;
+                this.machine.irq_cpus[cpu].enabled = true;
+                if this.machine.irq_config.trace() {
+                    eprintln!(
+                        "KMiri IRQ: cpu={cpu} thread={:?} action=enable block_count={} pending={}",
+                        this.machine.threads.active_thread(),
+                        this.machine.basic_block_count,
+                        this.machine.irq_cpus[cpu].pending.len(),
+                    );
+                }
+            }
+            "kern_miri_register_timer_irq" => {
+                let [handler] =
+                    this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                if !this.machine.irq_config.enabled() {
+                    throw_machine_stop!(TerminationInfo::Abort(
+                        "timer IRQ registered while KMiri IRQ simulation is disabled".to_owned()
+                    ));
+                }
+                let handler = this.get_ptr_fn(this.read_pointer(handler)?)?.as_instance()?;
+                this.machine.timer_irq_handler = Some(handler);
+                if this.machine.irq_config.trace() {
+                    eprintln!(
+                        "KMiri IRQ: cpu={} action=timer-registered block_count={}",
+                        this.machine.threads.active_cpu, this.machine.basic_block_count,
+                    );
+                }
+            }
+            "kern_miri_test_raise_irq" => {
+                let [handler] =
+                    this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                if !this.machine.irq_config.enabled() {
+                    throw_machine_stop!(TerminationInfo::Abort(
+                        "test IRQ raised while KMiri IRQ simulation is disabled".to_owned()
+                    ));
+                }
+                let handler = this.get_ptr_fn(this.read_pointer(handler)?)?.as_instance()?;
+                let cpu = this.machine.threads.active_cpu;
+                let event_id = this.machine.queue_irq(cpu, handler);
+                if this.machine.irq_config.trace() {
+                    eprintln!(
+                        "KMiri IRQ: event={event_id} cpu={cpu} thread={:?} action=queued block_count={} pending={} IF={}",
+                        this.machine.threads.active_thread(),
+                        this.machine.basic_block_count,
+                        this.machine.irq_cpus[cpu].pending.len(),
+                        this.machine.irq_cpus[cpu].enabled,
+                    );
+                }
+            }
             "kern_miri_init_ap" => {
                 let [cpu_id, func, args, task, stack_end, stack_size] =
                     this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
