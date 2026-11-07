@@ -62,6 +62,8 @@ fn kernel_main() {
 }
 ```
 
+`#[ostd::ktest::miri_main]` registers `kernel_main` as the test callback and generates the `__ostd_main` wrapper entry point. Under KMiri, OSDK enters the kernel through OSTD's `miri_boot`, which first fully initializes kernel state with `ostd::init` and then invokes that wrapper; the wrapper calls `kernel_main`. From the test's perspective, the essential boot flow is two steps—initialize kernel state, then run the test callback—so `kernel_main` runs after OSTD initialization.
+
 Keep the test focused on one behavior. Add a comment describing the invariant or regression, and make success or failure observable through an assertion, panic, or distinctive `ostd::miri_println!` message. Use the generated `Cargo.toml` and nearby cases as references rather than hand-writing a package manifest.
 
 ## Run one Asterinas test
