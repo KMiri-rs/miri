@@ -7,8 +7,10 @@ use std::task::Poll;
 use std::time::Duration;
 
 use rand::seq::IteratorRandom;
+use rustc_abi::ExternAbi;
 use rustc_const_eval::CTRL_C_RECEIVED;
 use rustc_index::Idx;
+use rustc_middle::mir;
 use rustc_span::DUMMY_SP;
 
 use crate::mirch::PageState;
@@ -52,6 +54,14 @@ trait EvalContextPrivExt<'tcx>: MiriInterpCxExt<'tcx> {
     /// If GenMC mode is active, the scheduling is instead handled by GenMC.
     fn schedule(&mut self) -> InterpResult<'tcx, SchedulingAction> {
         let this = self.eval_context_mut();
+
+        // A simulated IRQ runs synchronously on the interrupted thread and CPU.
+        // Do not honor a pending preemption or CPU switch until its handler returns.
+        let cpu = this.machine.threads.active_cpu;
+        if this.machine.irq_cpus[cpu].active.is_some() {
+            this.machine.threads.yield_active_thread = false;
+            return interp_ok(SchedulingAction::ExecuteStep);
+        }
 
         // In GenMC mode, we let GenMC do the scheduling.
         if this.machine.data_race.as_genmc_ref().is_some() {
@@ -180,6 +190,8 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
     /// Public because this is used by Priroda.
     fn step_current_thread(&mut self) -> InterpResult<'tcx> {
         let this = self.eval_context_mut();
+        let basic_blocks_before = this.machine.basic_block_count;
+        let cpu = this.machine.threads.active_cpu;
 
         if !this.step()? {
             // See if this thread can do something else.
@@ -189,6 +201,99 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     this.terminate_active_thread(TlsAllocAction::Deallocate)?;
                 }
             }
+        }
+
+        let blocks_executed = this.machine.basic_block_count - basic_blocks_before;
+        if blocks_executed != 0 {
+            let budget = this.machine.irq_config.handler_budget_basic_blocks();
+            let watchdog = this.machine.irq_cpus[cpu].active.as_mut().and_then(|active| {
+                active.blocks += blocks_executed;
+                (active.blocks > budget).then_some((
+                    active.event_id,
+                    active.stack_depth,
+                    active.blocks,
+                ))
+            });
+            if let Some((event_id, interrupted_depth, blocks)) = watchdog {
+                let stack = this.active_thread_stack();
+                let handler_stack = stack[interrupted_depth..]
+                    .iter()
+                    .rev()
+                    .take(8)
+                    .map(|frame| kmiri_helper::instance_name(this.tcx.tcx, frame.instance()))
+                    .collect::<Vec<_>>();
+                let interrupted_stack = stack[..interrupted_depth]
+                    .iter()
+                    .rev()
+                    .take(8)
+                    .map(|frame| kmiri_helper::instance_name(this.tcx.tcx, frame.instance()))
+                    .collect::<Vec<_>>();
+                let thread = this.machine.threads.active_thread();
+                let pending = this.machine.irq_cpus[cpu].pending.len();
+                let irq_enabled = this.machine.irq_cpus[cpu].enabled;
+                let global_block_count = this.machine.basic_block_count;
+                throw_machine_stop!(TerminationInfo::Abort(format!(
+                    "IRQ watchdog: possible self-deadlock; event={event_id} cpu={cpu} thread={thread:?} global_block_count={global_block_count} handler_blocks={blocks} budget={budget} pending={pending} IF={irq_enabled} handler_stack={handler_stack:?} interrupted_stack={interrupted_stack:?}"
+                )));
+            }
+        }
+
+        let current_stack_depth = this.active_thread_stack().len();
+        if let Some((event_id, was_enabled)) =
+            this.machine.finish_irq_if_returned(cpu, current_stack_depth)
+        {
+            if this.machine.irq_config.trace() {
+                eprintln!(
+                    "KMiri IRQ: event={event_id} cpu={cpu} action=returned block_count={} IF={}",
+                    this.machine.basic_block_count, this.machine.irq_cpus[cpu].enabled
+                );
+            }
+            debug_assert_eq!(this.machine.irq_cpus[cpu].enabled, was_enabled);
+        }
+
+        // `before_terminator` queues timer events before the terminator executes.
+        // Dispatch only after `step` completed, so the interrupted MIR frame is at
+        // a stable block boundary and the handler returns to its successor block.
+        let top_frame = this.active_thread_stack().last();
+        if blocks_executed != 0
+            && this.machine.irq_config.enabled()
+            && this.machine.irq_cpus[cpu].active.is_none()
+            && this.machine.irq_cpus[cpu].enabled
+            && !this.machine.irq_cpus[cpu].pending.is_empty()
+            && let Some(frame) = top_frame
+            && let Some(loc) = frame.current_loc().left()
+        {
+            let pending = this.machine.irq_cpus[cpu].pending.pop_front().unwrap();
+            let interrupted_depth = this.active_thread_stack().len();
+            let event_id = pending.event_id;
+            let handler = pending.handler;
+            let return_block = loc.block;
+            this.machine.irq_cpus[cpu].active = Some(crate::machine::ActiveIrq {
+                event_id,
+                stack_depth: interrupted_depth,
+                was_enabled: true,
+                blocks: 0,
+            });
+            this.machine.irq_cpus[cpu].enabled = false;
+            if this.machine.irq_config.trace() {
+                eprintln!(
+                    "KMiri IRQ: event={event_id} cpu={cpu} thread={:?} action=delivered global_block_count={} return_block={} pending={} IF=0",
+                    this.machine.threads.active_thread(),
+                    this.machine.basic_block_count,
+                    return_block.index(),
+                    this.machine.irq_cpus[cpu].pending.len(),
+                );
+            }
+            this.call_function(
+                handler,
+                ExternAbi::Rust,
+                &[],
+                None,
+                ReturnContinuation::Goto {
+                    ret: Some(return_block),
+                    unwind: mir::UnwindAction::Continue,
+                },
+            )?;
         }
 
         interp_ok(())

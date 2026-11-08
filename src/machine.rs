@@ -4,7 +4,7 @@
 use std::alloc::Layout;
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
 use std::rc::Rc;
 use std::{fmt, process};
@@ -44,7 +44,7 @@ use crate::concurrency::{
 };
 use crate::debugger::reachability;
 use crate::helpers::{adjust_stack_addr, is_no_core};
-use crate::mirch::{self, PageState, TypedKind};
+use crate::mirch::{self, IrqConfigToml, PageState, TypedKind};
 use crate::shims::readiness::DelayedReadinessUpdates;
 use crate::*;
 
@@ -493,6 +493,31 @@ impl<'tcx> PrimitiveLayouts<'tcx> {
 /// The number of CPUs that KernMiri emulates.
 pub const CPU_NUM: usize = 2;
 
+/// A pending simulated interrupt. Its handler runs on the current Miri thread.
+pub(crate) struct PendingIrq<'tcx> {
+    pub(crate) handler: Instance<'tcx>,
+    pub(crate) event_id: u64,
+}
+
+pub(crate) struct ActiveIrq {
+    pub(crate) event_id: u64,
+    pub(crate) stack_depth: usize,
+    pub(crate) was_enabled: bool,
+    pub(crate) blocks: u64,
+}
+
+pub(crate) struct CpuIrqState<'tcx> {
+    pub(crate) enabled: bool,
+    pub(crate) pending: VecDeque<PendingIrq<'tcx>>,
+    pub(crate) active: Option<ActiveIrq>,
+}
+
+impl CpuIrqState<'_> {
+    fn new() -> Self {
+        Self { enabled: true, pending: VecDeque::new(), active: None }
+    }
+}
+
 /// The machine itself.
 ///
 /// If you add anything here that stores machine values, remember to update
@@ -640,6 +665,13 @@ pub struct MiriMachine<'tcx> {
     // The total number of blocks that have been executed.
     pub(crate) basic_block_count: u64,
 
+    /// KMiri's optional IRQ model, configured only through `-Zkmiri-toml`.
+    pub(crate) irq_config: IrqConfigToml,
+    pub(crate) irq_cpus: Vec<CpuIrqState<'tcx>>,
+    pub(crate) irq_rng: StdRng,
+    pub(crate) next_irq_event_id: u64,
+    pub(crate) timer_irq_handler: Option<Instance<'tcx>>,
+
     /// Handle of the optional shared object file for native functions.
     #[cfg(all(feature = "native-lib", unix))]
     pub native_lib: Vec<(libloading::Library, std::path::PathBuf)>,
@@ -716,6 +748,46 @@ pub struct MiriMachine<'tcx> {
 }
 
 impl<'tcx> MiriMachine<'tcx> {
+    pub(crate) fn queue_irq(&mut self, cpu: usize, handler: Instance<'tcx>) -> u64 {
+        let event_id = self.next_irq_event_id;
+        self.next_irq_event_id = self.next_irq_event_id.wrapping_add(1);
+        self.irq_cpus[cpu].pending.push_back(PendingIrq { handler, event_id });
+        event_id
+    }
+
+    pub(crate) fn maybe_queue_timer_irq(&mut self, cpu: usize) -> Option<u64> {
+        if !self.irq_config.enabled() || self.irq_cpus[cpu].active.is_some() {
+            return None;
+        }
+
+        let block_count = self.basic_block_count;
+        let periodic = self.irq_config.tick_interval_basic_blocks() != 0
+            && block_count.is_multiple_of(self.irq_config.tick_interval_basic_blocks());
+        let fixed = self.irq_config.inject_at_basic_blocks().contains(&block_count);
+        let random = self.irq_config.random_injection_rate() > 0.0
+            && self.irq_rng.random_bool(self.irq_config.random_injection_rate());
+        if !(periodic || fixed || random) {
+            return None;
+        }
+
+        let handler = self.timer_irq_handler.clone()?;
+        Some(self.queue_irq(cpu, handler))
+    }
+
+    pub(crate) fn finish_irq_if_returned(
+        &mut self,
+        cpu: usize,
+        current_stack_depth: usize,
+    ) -> Option<(u64, bool)> {
+        let active = self.irq_cpus[cpu].active.as_ref()?;
+        if current_stack_depth > active.stack_depth {
+            return None;
+        }
+        let active = self.irq_cpus[cpu].active.take().unwrap();
+        self.irq_cpus[cpu].enabled = active.was_enabled;
+        Some((active.event_id, active.was_enabled))
+    }
+
     /// Create a new MiriMachine.
     ///
     /// Invariant: `genmc_ctx.is_some() == config.genmc_config.is_some()`
@@ -740,6 +812,9 @@ impl<'tcx> MiriMachine<'tcx> {
             let path = Path::new(out).join(filename);
             measureme::Profiler::new(path).expect("Couldn't create `measureme` profiler")
         });
+        let irq_config =
+            config.kmiri_toml.as_ref().map(|toml| toml.irq().clone()).unwrap_or_default();
+        let irq_rng = StdRng::seed_from_u64(irq_config.random_seed());
         let rng = StdRng::seed_from_u64(config.seed.unwrap_or(0));
         let borrow_tracker = config.borrow_tracker.map(|bt| bt.instantiate_global_state(config));
         let data_race = if config.genmc_config.is_some() {
@@ -848,6 +923,11 @@ impl<'tcx> MiriMachine<'tcx> {
             preemption_rate: config.preemption_rate,
             report_progress: config.report_progress,
             basic_block_count: 0,
+            irq_config,
+            irq_cpus: (0..CPU_NUM).map(|_| CpuIrqState::new()).collect(),
+            irq_rng,
+            next_irq_event_id: 0,
+            timer_irq_handler: None,
             monotonic_clock: MonotonicClock::new(config.isolated_op == IsolatedOp::Allow),
             #[cfg(all(feature = "native-lib", unix))]
             native_lib: config.native_lib.iter().map(|lib_file_path| {
@@ -2041,6 +2121,20 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             ecx.machine.since_gc = 0;
             ecx.run_provenance_gc();
             ecx.machine.blocking_io.run_gc();
+        }
+
+        // Timer IRQs are queued here, but scheduler.rs delivers them only after
+        // the current MIR terminator has completed.
+        if let Some(event_id) = ecx.machine.maybe_queue_timer_irq(ecx.machine.threads.active_cpu) {
+            if ecx.machine.irq_config.trace() {
+                eprintln!(
+                    "KMiri IRQ: event={event_id} cpu={} action=timer-queued block={} IF={} pending={}",
+                    ecx.machine.threads.active_cpu,
+                    ecx.machine.basic_block_count,
+                    ecx.machine.irq_cpus[ecx.machine.threads.active_cpu].enabled,
+                    ecx.machine.irq_cpus[ecx.machine.threads.active_cpu].pending.len(),
+                );
+            }
         }
 
         // These are our preemption points.

@@ -1,0 +1,6 @@
+KMiri IRQ: cpu=0 thread=ThreadId(0) action=disable block_count=370 pending=0
+KMiri IRQ: cpu=0 thread=ThreadId(0) action=disable block_count=374 pending=0
+KMiri IRQ: event=0 cpu=0 thread=ThreadId(0) action=queued block_count=393 pending=1 IF=false
+KMiri IRQ: cpu=0 thread=ThreadId(0) action=enable block_count=454 pending=1
+KMiri IRQ: event=0 cpu=0 thread=ThreadId(0) action=delivered global_block_count=454 return_block=2 pending=0 IF=0
+KMiri IRQ: event=0 cpu=0 action=returned block_count=505 IF=true
