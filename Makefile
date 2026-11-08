@@ -5,6 +5,19 @@ MIRI_SYSROOT_REBUILT := /root/.cache/miri
 ASTERINAS_TOML := $(PROJ)/tests/asterinas.toml
 ASTERINAS_ENV_VARS := OSDK_LOCAL_DEV=1 MIRIFLAGS="-Zkmiri-toml=$(ASTERINAS_TOML) -Zmiri-permissive-provenance"
 
+define RUN_IRQ_DEADLOCK_TEST
+log=$$(mktemp); \
+if (cd $(PROJ)/tests/irq-deadlock && $(ASTERINAS_ENV_VARS) cargo osdk miri test) >"$$log" 2>&1; then \
+	cat "$$log"; rm -f "$$log"; echo "irq-deadlock unexpectedly completed without aborting"; exit 1; \
+fi; \
+cat "$$log"; \
+if grep -F "IRQ watchdog: possible self-deadlock" "$$log" >/dev/null; then \
+	echo "Observed expected IRQ watchdog deadlock diagnostic."; rm -f "$$log"; \
+else \
+	rm -f "$$log"; echo "irq-deadlock failed without the expected watchdog diagnostic"; exit 1; \
+fi
+endef
+
 DEBUG := --debug
 
 .PHONY: install
@@ -20,20 +33,30 @@ install-osdk:
 
 .PHONY: asterinas
 ASTERINAS_TEST := init
+ifeq ($(ASTERINAS_TEST),irq-deadlock)
 asterinas: install install-osdk
-	echo $(ASTERINAS_TESTS)
+	$(RUN_IRQ_DEADLOCK_TEST)
+
+else
+asterinas: install install-osdk
+	echo $(ASTERINAS_TEST)
 	cd $(PROJ)/tests/$(ASTERINAS_TEST) && \
 		$(ASTERINAS_ENV_VARS) cargo osdk miri test
+endif
 
 ASTERINAS_TESTS := init frame-realloc page-table-realloc segment-zeroed \
-                   task-switch-back task-exit-last task-exit-with-runnable
+                   task-switch-back task-exit-last task-exit-with-runnable \
+                   irq-simulation irq-deadlock
 .PHONY: asterinas-test-all
 asterinas-test-all: install install-osdk
 	set -eu; \
 	for test in $(ASTERINAS_TESTS); do \
-		cd $(PROJ)/tests/$${test} && \
-		echo "Running test: $${test}" && \
-		$(ASTERINAS_ENV_VARS) cargo osdk miri test; \
+		echo "Running test: $${test}"; \
+		if [ "$${test}" = irq-deadlock ]; then \
+			$(RUN_IRQ_DEADLOCK_TEST); \
+		else \
+			(cd $(PROJ)/tests/$${test} && $(ASTERINAS_ENV_VARS) cargo osdk miri test); \
+		fi; \
 	done
 
 TOCK_BOARD := $(PROJ)/tock/boards/qemu_rv64_virt
