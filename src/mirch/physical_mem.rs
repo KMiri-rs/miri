@@ -398,6 +398,7 @@ pub struct PhysicalMemory {
     pub mem: *mut u8,
     pub page_states: Vec<PageState>,
     pub init_masks: BTreeMap<usize, Allocation<Provenance, (), MiriAllocBytes>>,
+    pub heap_slot_next: BTreeMap<usize, usize>,
     pub page_table: Option<PageTable>,
 }
 
@@ -407,6 +408,7 @@ impl PhysicalMemory {
             mem: std::ptr::null_mut(),
             page_states: Vec::new(),
             init_masks: BTreeMap::new(),
+            heap_slot_next: BTreeMap::new(),
             page_table: None,
         }
     }
@@ -422,7 +424,13 @@ impl PhysicalMemory {
         let page_states =
             if page_table_enabled { vec![PageState::Unused; total_page_num()] } else { vec![] };
 
-        Self { mem, page_states, init_masks: BTreeMap::new(), page_table: None }
+        Self {
+            mem,
+            page_states,
+            init_masks: BTreeMap::new(),
+            heap_slot_next: BTreeMap::new(),
+            page_table: None,
+        }
     }
 }
 

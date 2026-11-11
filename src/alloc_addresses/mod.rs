@@ -404,6 +404,46 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         None
     }
 
+    fn dealloc_heap_slot(
+        &mut self,
+        ptr: Pointer,
+        slot_size: usize,
+    ) -> InterpResult<'tcx, ()> {
+        let this = self.eval_context_ref();
+        let (alloc_id, _, _) = this.ptr_get_alloc_id(ptr, 0)?;
+        if this.memory.alloc_map().get(alloc_id).is_none() {
+            return interp_ok(());
+        }
+
+        // The pointer passed back by the kernel allocator may have been
+        // invalidated while the allocator wrote its freelist metadata. Use
+        // the allocation's root tag for the actual deallocation, just as
+        // Miri's allocator shims do with their allocation pointer.
+        let root_tag = this
+            .machine
+            .borrow_tracker
+            .as_ref()
+            .unwrap()
+            .borrow_mut()
+            .root_ptr_tag(alloc_id, &this.machine);
+        let ptr = Pointer::new(
+            Some(Provenance::Concrete { alloc_id, tag: root_tag }),
+            ptr.addr(),
+        );
+        let kind = MemoryKind::Machine(MiriMemoryKind::Kernel);
+        self.eval_context_mut().deallocate_ptr(
+            ptr,
+            Some((Size::from_bytes(slot_size as u64), Align::from_bytes(slot_size as u64).unwrap())),
+            kind,
+        )?;
+        interp_ok(())
+    }
+
+    fn alloc_heap_slot(&self, ptr: Pointer) -> InterpResult<'tcx, ()> {
+        self.eval_context_ref().ptr_get_alloc_id(ptr, 0)?;
+        interp_ok(())
+    }
+
     /// Construct a new alloc when a fresh paddr is accessed the first time.
     fn kernel_allocation_at(&self, paddr: usize, size: usize, align: usize) -> AllocId {
         let ecx = self.eval_context_ref();
