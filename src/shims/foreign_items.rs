@@ -1022,6 +1022,35 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 let count = this.read_target_usize(count)? as usize;
                 dealloc_pages(this, paddr, count)?;
             }
+            "kern_miri_dealloc_heap_slot" => {
+                let [ptr, slot_size] =
+                    this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                let ptr = this.read_pointer(ptr)?;
+                let slot_size = this.read_target_usize(slot_size)? as usize;
+                this.dealloc_heap_slot(ptr, slot_size)?;
+            }
+            "kern_miri_alloc_heap_slot" => {
+                let [ptr] =
+                    this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                let ptr = this.read_pointer(ptr)?;
+                this.alloc_heap_slot(ptr)?;
+            }
+            "kern_miri_set_heap_slot_next" => {
+                let [ptr, next] =
+                    this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                let ptr = this.read_pointer(ptr)?;
+                let next = this.read_target_usize(next)? as usize;
+                let addr = ptr.addr().bytes() as usize;
+                mirch::physical_mem_mut().heap_slot_next.insert(addr, next);
+            }
+            "kern_miri_get_heap_slot_next" => {
+                let [ptr] =
+                    this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                let ptr = this.read_pointer(ptr)?;
+                let addr = ptr.addr().bytes() as usize;
+                let next = mirch::physical_mem_mut().heap_slot_next.remove(&addr).unwrap();
+                this.write_scalar(Scalar::from_target_usize(next as u64, this), dest)?;
+            }
             "kern_miri_zero" => {
                 let [paddr, page_count] =
                     this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;

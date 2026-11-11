@@ -18,6 +18,19 @@ else \
 fi
 endef
 
+define RUN_IRQ_RCU_UAF_TEST
+log=$$(mktemp); \
+if (cd $(PROJ)/tests/irq-rcu-uaf && $(ASTERINAS_ENV_VARS) cargo osdk miri test) >"$$log" 2>&1; then \
+	cat "$$log"; rm -f "$$log"; echo "irq-rcu-uaf unexpectedly completed without aborting"; exit 1; \
+fi; \
+cat "$$log"; \
+if awk '/Undefined Behavior: deallocating while item / && / is weakly protected/ { found = 1 } END { exit !found }' "$$log"; then \
+	echo "Observed expected RCU weak-protection diagnostic."; rm -f "$$log"; \
+else \
+	rm -f "$$log"; echo "irq-rcu-uaf failed without the expected weak-protection diagnostic"; exit 1; \
+fi
+endef
+
 DEBUG := --debug
 
 .PHONY: install
@@ -37,6 +50,10 @@ ifeq ($(ASTERINAS_TEST),irq-deadlock)
 asterinas: install install-osdk
 	$(RUN_IRQ_DEADLOCK_TEST)
 
+else ifeq ($(ASTERINAS_TEST),irq-rcu-uaf)
+asterinas: install install-osdk
+	$(RUN_IRQ_RCU_UAF_TEST)
+
 else
 asterinas: install install-osdk
 	echo $(ASTERINAS_TEST)
@@ -46,7 +63,7 @@ endif
 
 ASTERINAS_TESTS := init frame-realloc page-table-realloc segment-zeroed \
                    task-switch-back task-exit-last task-exit-with-runnable \
-                   irq-simulation irq-deadlock
+                   irq-simulation irq-deadlock irq-rcu-uaf
 .PHONY: asterinas-test-all
 asterinas-test-all: install install-osdk
 	set -eu; \
@@ -54,6 +71,8 @@ asterinas-test-all: install install-osdk
 		echo "Running test: $${test}"; \
 		if [ "$${test}" = irq-deadlock ]; then \
 			$(RUN_IRQ_DEADLOCK_TEST); \
+		elif [ "$${test}" = irq-rcu-uaf ]; then \
+			$(RUN_IRQ_RCU_UAF_TEST); \
 		else \
 			(cd $(PROJ)/tests/$${test} && $(ASTERINAS_ENV_VARS) cargo osdk miri test); \
 		fi; \
