@@ -4,6 +4,8 @@ MIRI_SYSROOT_REBUILT := /root/.cache/miri
 
 ASTERINAS_TOML := $(PROJ)/tests/asterinas.toml
 ASTERINAS_ENV_VARS := OSDK_LOCAL_DEV=1 MIRIFLAGS="-Zkmiri-toml=$(ASTERINAS_TOML) -Zmiri-permissive-provenance"
+# A test kernel may bring its own KMiri configuration in tests/<name>/kmiri.toml.
+asterinas_test_toml = $(or $(wildcard $(PROJ)/tests/$(1)/kmiri.toml),$(ASTERINAS_TOML))
 
 define RUN_IRQ_DEADLOCK_TEST
 log=$$(mktemp); \
@@ -57,14 +59,16 @@ asterinas: install install-osdk
 else
 asterinas: install install-osdk
 	echo $(ASTERINAS_TEST)
-	cd $(PROJ)/tests/$(ASTERINAS_TEST) && \
-		$(ASTERINAS_ENV_VARS) cargo osdk miri test
+	cd $(PROJ)/tests/$(ASTERINAS_TEST) && OSDK_LOCAL_DEV=1 \
+		MIRIFLAGS="-Zkmiri-toml=$(call asterinas_test_toml,$(ASTERINAS_TEST)) -Zmiri-permissive-provenance" \
+		cargo osdk miri test
 endif
 
 ASTERINAS_TESTS := init frame-realloc page-table-realloc segment-zeroed \
                    task-switch-back task-exit-last task-exit-with-runnable \
                    irq-simulation irq-trap-path irq-deadlock irq-rcu-uaf \
-                   irq-rcu-uaf-lifo heap-box-drop
+                   irq-rcu-uaf-lifo heap-box-drop heap-large-object \
+                   heap-slot-end-pointer tsc-read dyn-cpu-local
 .PHONY: asterinas-test-all
 asterinas-test-all: install install-osdk
 	set -eu; \
@@ -75,9 +79,29 @@ asterinas-test-all: install install-osdk
 		elif [ "$${test}" = irq-rcu-uaf ]; then \
 			$(RUN_IRQ_RCU_UAF_TEST); \
 		else \
-			(cd $(PROJ)/tests/$${test} && $(ASTERINAS_ENV_VARS) cargo osdk miri test); \
+			toml=$(PROJ)/tests/$${test}/kmiri.toml; [ -f "$$toml" ] || toml=$(ASTERINAS_TOML); \
+			(cd $(PROJ)/tests/$${test} && OSDK_LOCAL_DEV=1 \
+				MIRIFLAGS="-Zkmiri-toml=$$toml -Zmiri-permissive-provenance" cargo osdk miri test); \
 		fi; \
 	done
+
+# Runs the full Asterinas kernel (`asterinas/kernel`, the real `#[ostd::main]`
+# entry). KMiri has no user mode yet, so the kernel is expected to boot until
+# it looks for an init process to start, and to stop there.
+ASTERINAS_KERNEL_TOML := $(PROJ)/tests/asterinas-kernel.toml
+ASTERINAS_KERNEL_STOP := neither an initramfs init nor a usable root filesystem was available
+.PHONY: asterinas-kernel
+asterinas-kernel: install install-osdk
+	log=$$(mktemp); \
+	(cd $(PROJ)/asterinas/kernel && OSDK_LOCAL_DEV=1 VDSO_LIBRARY_DIR=$(PROJ)/env/linux_vdso \
+		MIRIFLAGS="-Zkmiri-toml=$(ASTERINAS_KERNEL_TOML) -Zmiri-permissive-provenance" \
+		cargo osdk miri) >"$$log" 2>&1; \
+	cat "$$log"; \
+	if grep -F "$(ASTERINAS_KERNEL_STOP)" "$$log" >/dev/null; then \
+		echo "The kernel reached the expected stop: there is no init process to run."; rm -f "$$log"; \
+	else \
+		rm -f "$$log"; echo "the kernel stopped before it looked for an init process"; exit 1; \
+	fi
 
 TOCK_BOARD := $(PROJ)/tock/boards/qemu_rv64_virt
 .PHONY: tock

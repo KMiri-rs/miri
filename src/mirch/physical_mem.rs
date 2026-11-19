@@ -73,17 +73,21 @@ pub fn create_allocation_at(
             params,
         );
 
-        let offset = paddr % page_size();
-        if offset + layout.size() <= page_size() {
-            let init_masks = &physical_mem().init_masks;
-            if let Some(mask_allocation) = init_masks.get(&(paddr - offset)) {
-                let init_copy = mask_allocation
-                    .init_mask()
-                    .prepare_copy((offset..offset + layout.size()).into());
-                allocation.init_mask_apply_copy(init_copy, (0..layout.size()).into(), 1);
+        // Take the initialization state from the per-page shadows. An
+        // allocation can span several pages (a large heap object), so walk
+        // it one page at a time.
+        let init_masks = &physical_mem().init_masks;
+        let mut done = 0;
+        while done < layout.size() {
+            let offset = (paddr + done) % page_size();
+            let chunk = (page_size() - offset).min(layout.size() - done);
+            if let Some(mask_allocation) = init_masks.get(&(paddr + done - offset)) {
+                let init_copy =
+                    mask_allocation.init_mask().prepare_copy((offset..offset + chunk).into());
+                allocation.init_mask_apply_copy(init_copy, (done..done + chunk).into(), 1);
             }
+            done += chunk;
         }
-        // FIXME: what should we do when the allocation needs crossing pages?
         allocation
     }
 }
@@ -299,6 +303,126 @@ pub fn physical_copy<'tcx>(
     interp_ok(())
 }
 
+/// Translates a kernel virtual address the way a memory access does: through
+/// the page table if one is installed, else through the fixed kernel code and
+/// boot linear mappings.
+pub fn kernel_vaddr_to_paddr(vaddr: usize) -> Option<usize> {
+    page_walk_or(vaddr, || vaddr)
+        .or_else(|| super::try_kernel_code_vaddr_to_paddr(vaddr))
+        .or_else(|| super::try_boot_pt_vaddr_to_paddr(vaddr))
+}
+
+/// Whether the `len` bytes at virtual address `vaddr` lie on untyped pages
+/// (`true`) or in interpreter memory (`false`). A range that mixes both, or
+/// that is not mapped, is not supported.
+fn range_is_untyped<'tcx>(vaddr: usize, len: usize) -> InterpResult<'tcx, bool> {
+    let page_size = page_size();
+    let mem = physical_mem();
+    let mut untyped = None;
+    let mut page = vaddr - vaddr % page_size;
+    while page < vaddr + len {
+        let Some(paddr) = kernel_vaddr_to_paddr(page.max(vaddr)) else {
+            throw_unsup_format!("kernel copy touches the unmapped address {:#x}", page.max(vaddr));
+        };
+        let this_untyped = mem.page_states.get(paddr / page_size) == Some(&PageState::Untyped);
+        if *untyped.get_or_insert(this_untyped) != this_untyped {
+            throw_unsup_format!(
+                "kernel copy range {vaddr:#x}..{:#x} mixes untyped pages and interpreter memory",
+                vaddr + len
+            );
+        }
+        page += page_size;
+    }
+    interp_ok(untyped.unwrap())
+}
+
+/// Copies `len` bytes from virtual address `src` to virtual address `dst`.
+///
+/// Each side is either untyped pages (raw bytes with a per-byte
+/// initialization shadow, e.g. the frames behind a page cache) or interpreter
+/// memory (Miri allocations, e.g. the kernel's Rust objects). This is what a
+/// kernel's `memcpy` between its own buffers and frames needs.
+///
+/// Interpreter memory is accessed through the address alone, i.e. like through
+/// a pointer cast from an integer, with all the usual checks. Bytes copied
+/// between the two kinds of memory lose pointer provenance. Bytes read from
+/// untyped pages keep their initialization state; bytes written to untyped
+/// pages must be initialized.
+pub fn kernel_copy<'tcx>(
+    this: &mut MiriInterpCx<'tcx>,
+    dst: usize,
+    src: usize,
+    len: usize,
+) -> InterpResult<'tcx, ()> {
+    if len == 0 {
+        return interp_ok(());
+    }
+    if dst.checked_add(len).is_none() || src.checked_add(len).is_none() {
+        throw_unsup_format!("kernel copy virtual range overflow");
+    }
+    let page_size = page_size();
+    let wildcard = |vaddr: usize| {
+        Pointer::new(Some(Provenance::Wildcard), Size::from_bytes(vaddr as u64))
+    };
+
+    match (range_is_untyped(dst, len)?, range_is_untyped(src, len)?) {
+        (true, true) => physical_copy(dst, src, len),
+        (false, false) =>
+            this.mem_copy(wildcard(src), wildcard(dst), Size::from_bytes(len as u64), false),
+        // Interpreter memory -> untyped pages.
+        (true, false) => {
+            let bytes = this
+                .read_bytes_ptr_strip_provenance(wildcard(src), Size::from_bytes(len as u64))?
+                .to_vec();
+            let mut done = 0;
+            while done < len {
+                let vaddr = dst + done;
+                let chunk = (page_size - vaddr % page_size).min(len - done);
+                let paddr = kernel_vaddr_to_paddr(vaddr).unwrap();
+                physical_write_bytes(paddr, &bytes[done..done + chunk], this)?;
+                done += chunk;
+            }
+            interp_ok(())
+        }
+        // Untyped pages -> interpreter memory.
+        (false, true) => {
+            let mut done = 0;
+            while done < len {
+                let vaddr = src + done;
+                let chunk = (page_size - vaddr % page_size).min(len - done);
+                let paddr = kernel_vaddr_to_paddr(vaddr).unwrap();
+                let offset = paddr % page_size;
+                let Some(mask) = physical_mem().init_masks.get(&(paddr - offset)) else {
+                    throw_unsup_format!("kernel copy missing initialization shadow");
+                };
+                let bytes = mask.get_bytes_unchecked((offset..offset + chunk).into()).to_vec();
+                // The uninitialized runs of the source chunk.
+                let mut uninit = Vec::new();
+                let mut pos = offset;
+                while pos < offset + chunk {
+                    match mask.init_mask().is_range_initialized((pos..offset + chunk).into()) {
+                        Ok(()) => break,
+                        Err(run) => {
+                            pos = run.end().bytes_usize();
+                            uninit.push(run);
+                        }
+                    }
+                }
+
+                this.write_bytes_ptr(wildcard(dst + done), bytes)?;
+                for run in uninit {
+                    let ptr = wildcard(dst + done + run.start.bytes_usize() - offset);
+                    if let Some(mut alloc) = this.get_ptr_alloc_mut(ptr, run.size)? {
+                        alloc.write_uninit_full();
+                    }
+                }
+                done += chunk;
+            }
+            interp_ok(())
+        }
+    }
+}
+
 pub fn physical_write_bytes<'tcx>(
     paddr: usize,
     bytes: &[u8],
@@ -488,6 +612,10 @@ pub enum TypedKind {
     PageTable = 2,
     Stack = 3,
     Interpreter = 4,
+    /// A slab page of the kernel heap. Unlike in a `Slab` page, the objects
+    /// in its slots are created and ended explicitly, by
+    /// `kern_miri_alloc_heap_slot` and `kern_miri_dealloc_heap_slot`.
+    Heap = 5,
 }
 
 impl TypedKind {
@@ -497,6 +625,7 @@ impl TypedKind {
             2 => Some(TypedKind::PageTable),
             3 => Some(TypedKind::Stack),
             4 => Some(TypedKind::Interpreter),
+            5 => Some(TypedKind::Heap),
             _ => None,
         }
     }

@@ -19,7 +19,7 @@ use crate::alloc_addresses::address_generator::align_addr;
 use crate::concurrency::VClock;
 use crate::diagnostics::SpanDedupDiagnostic;
 use crate::helpers::adjust_stack_addr;
-use crate::mirch::{CodeSection, PageState, kernel_code_paddr_to_vaddr};
+use crate::mirch::{CodeSection, PageState, TypedKind, kernel_code_paddr_to_vaddr};
 use crate::*;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -298,6 +298,7 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                     throw_exhaust!(AddressSpaceFull);
                 }
                 *next_stack_vaddr = base_vaddr;
+                thread.live_stack_allocs.borrow_mut().insert(base_vaddr, alloc_id);
 
                 base_vaddr
             } else if this.machine.cpu_local_alloc_set.borrow().contains(&alloc_id)
@@ -397,7 +398,14 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let page_index = paddr / mirch::page_size();
         let page_info = *mirch::physical_mem().page_states.get(page_index)?;
 
-        if let PageState::Typed { page_type: _, slot_size } = page_info {
+        if let PageState::Typed { page_type, slot_size } = page_info {
+            // Objects in `Heap` pages only come into existence through
+            // `kern_miri_alloc_heap_slot`. An address in a free slot must not
+            // create one: the one-past-the-end pointer of an object is the
+            // address of the next slot.
+            if page_type == TypedKind::Heap {
+                return None;
+            }
             // A heap object gets an allocation of exactly its own size, like a
             // Rust heap allocation in Miri; other typed slots span the slot.
             let size = mirch::physical_mem_mut().pending_heap_slot_size.take().unwrap_or(slot_size);
@@ -436,8 +444,79 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         interp_ok(())
     }
 
+    /// Creates the allocation for a new heap object whose lifetime the kernel
+    /// reports explicitly. The object is either
+    ///
+    /// - in a slot of a `Heap` page, or
+    /// - directly on frames from the frame allocator (untyped pages), if it is
+    ///   too large for a slot.
+    ///
+    /// It gets an allocation of exactly `size` bytes. Returns `false` if
+    /// `vaddr` is on any other kind of page.
+    fn alloc_heap_object(&self, vaddr: u64, size: usize) -> InterpResult<'tcx, bool> {
+        let this = self.eval_context_ref();
+        if !this.machine.is_page_table_enabled() {
+            return interp_ok(false);
+        }
+        let page_size = mirch::page_size();
+        let vaddr = vaddr as usize;
+        let paddr = mirch::page_walk_or(vaddr, || unreachable!())
+            .or_else(|| mirch::try_kernel_code_vaddr_to_paddr(vaddr))
+            .or_else(|| mirch::try_boot_pt_vaddr_to_paddr(vaddr));
+        let Some(paddr) = paddr else {
+            return interp_ok(false);
+        };
+        let page_state = |paddr: usize| mirch::physical_mem().page_states.get(paddr / page_size);
+
+        // The range that must not hold a live allocation, and the alignment.
+        let (reserved, align) = match page_state(paddr) {
+            Some(PageState::Typed { page_type: TypedKind::Heap, slot_size }) => {
+                let slot_size = *slot_size;
+                if paddr % slot_size != 0 || size > slot_size {
+                    throw_unsup_format!(
+                        "KMiri: {size}-byte heap object at {vaddr:#x} does not fit a {slot_size}-byte heap slot"
+                    );
+                }
+                (slot_size, slot_size)
+            }
+            Some(PageState::Untyped) => {
+                if paddr % page_size != 0 {
+                    throw_unsup_format!(
+                        "KMiri: large heap object at {vaddr:#x} does not start on a page boundary"
+                    );
+                }
+                let bad = (paddr..paddr + size)
+                    .step_by(page_size)
+                    .find(|page| page_state(*page) != Some(&PageState::Untyped));
+                if let Some(bad) = bad {
+                    throw_unsup_format!(
+                        "KMiri: {size}-byte large heap object at {vaddr:#x} covers the page at paddr {bad:#x}, which is not an allocated untyped page"
+                    );
+                }
+                (size, page_size)
+            }
+            _ => return interp_ok(false),
+        };
+        {
+            let global_state = this.machine.alloc_addresses.borrow();
+            let pos = global_state.int_to_ptr_map.partition_point(|(addr, _)| *addr < paddr as u64);
+            if let Some((live, _)) = global_state.int_to_ptr_map.get(pos) {
+                if *live < (paddr + reserved) as u64 {
+                    throw_unsup_format!(
+                        "KMiri: {size}-byte heap object at {vaddr:#x} overlaps a live allocation at paddr {live:#x}"
+                    );
+                }
+            }
+        }
+        this.kernel_allocation_at(paddr, size, align);
+        interp_ok(true)
+    }
+
     fn alloc_heap_slot(&self, ptr: Pointer, size: usize) -> InterpResult<'tcx, ()> {
         let this = self.eval_context_ref();
+        if this.alloc_heap_object(ptr.addr().bytes(), size)? {
+            return interp_ok(());
+        }
         // Look the slot up by address, so that a fresh allocation of `size`
         // bytes is created here even if `ptr` still carries the provenance of
         // the object that previously lived in this slot.
@@ -972,6 +1051,15 @@ impl<'tcx> MiriMachine<'tcx> {
         // We can also remove it from `exposed`, since this allocation can anyway not be returned by
         // `alloc_id_from_addr` any more.
         global_state.exposed.remove(&dead_id);
+        // Give the stack addresses of a dead stack variable back to its thread.
+        if kind == MemoryKind::Stack {
+            let vaddr = global_state
+                .paddr_to_vaddr
+                .get(&paddr)
+                .copied()
+                .unwrap_or_else(|| kernel_code_paddr_to_vaddr(paddr as usize) as u64);
+            self.threads.active_thread_mut().reclaim_stack_addr(vaddr, dead_id);
+        }
         // Also remember this address for future reuse.
         if let Some((_addr_gen, reuse)) = global_state.address_generation.as_mut() {
             let thread = self.threads.active_thread();
