@@ -840,6 +840,15 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 let since_epoch = now.duration_since(UNIX_EPOCH).unwrap();
                 this.machine.record.push(since_epoch);
             }
+            // The machine's clock: nanoseconds since it started. A kernel's
+            // arch layer reads it as its time-stamp counter. With isolation
+            // this is Miri's virtual clock, which is deterministic.
+            "kern_miri_monotonic_nanos" => {
+                let [] = this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
+                let clock = &this.machine.monotonic_clock;
+                let nanos = clock.now().duration_since(clock.epoch()).as_nanos();
+                this.write_scalar(Scalar::from_u64(u64::try_from(nanos).unwrap()), dest)?;
+            }
             // OS thread operations
             "kern_miri_get_cpu_local_base" => {
                 let current_cpu = this.machine.threads.active_cpu;
